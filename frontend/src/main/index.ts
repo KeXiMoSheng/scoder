@@ -24,6 +24,8 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    // 启动即铺满工作区（保留系统栏）；先最大化再显示，避免窗口先以默认尺寸闪现
+    mainWindow.maximize()
     mainWindow.show()
   })
 
