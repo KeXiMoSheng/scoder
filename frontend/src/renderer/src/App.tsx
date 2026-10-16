@@ -14,9 +14,6 @@ import { useTheme } from './hooks/useTheme'
 import { isAtOrUnder } from './lib/filePath'
 import { APP_THEMES } from './lib/theme'
 
-// 后端 API 地址，与 backend/.env 的 PORT 保持一致
-const API_BASE = 'http://127.0.0.1:39200'
-
 /** 左侧文件树面板宽度（px） */
 const SIDEBAR_DEFAULT_WIDTH = 280
 const SIDEBAR_MIN_WIDTH = 160
@@ -81,8 +78,16 @@ function TerminalIcon(): React.JSX.Element {
   )
 }
 
+/** 工具栏图标按钮样式：激活态用选中底色，非激活态透明背景 + 悬停高亮 */
+function toolbarIconButton(active: boolean): string {
+  const base =
+    'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-none p-0 transition-colors'
+  return active
+    ? `${base} bg-selection text-fg`
+    : `${base} bg-transparent text-dim hover:bg-hover hover:text-fg`
+}
+
 function App(): React.JSX.Element {
-  const [status, setStatus] = useState('正在连接后端…')
   const [projectPath, setProjectPath] = useState<string | null>(null)
   // 多标签文件状态（打开/激活/关闭/路径同步）
   const {
@@ -117,13 +122,6 @@ function App(): React.JSX.Element {
   const terminalPanelRef = useRef<TerminalPanelHandle | null>(null)
   // 拖拽开始时的面板尺寸（宽度或高度，任一时刻只会有一个分隔条处于拖拽中）
   const dragStartSizeRef = useRef(0)
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/v1/health`)
-      .then((res) => res.json())
-      .then((data: { service: string }) => setStatus(`后端已连接：${data.service}`))
-      .catch(() => setStatus('后端未启动'))
-  }, [])
 
   /** 工作区可用宽度（拖拽与窗口变化时用于约束面板上限） */
   const getWorkspaceWidth = useCallback((): number => {
@@ -337,18 +335,21 @@ function App(): React.JSX.Element {
   }, [toggleTerminal, openTerminal])
 
   return (
-    <div className="app">
+    <div className="flex h-full flex-col">
       <TitleBar />
-      <header className="toolbar">
-        <button type="button" className="toolbar__button" onClick={handleOpenProject}>
+      <header className="flex shrink-0 items-center gap-3 border-b border-line bg-elevated px-3 py-2">
+        <button
+          type="button"
+          className="shrink-0 cursor-pointer rounded-[3px] border-none bg-accent px-[14px] py-1 text-[13px] text-accent-fg transition-colors hover:bg-accent-hover"
+          onClick={handleOpenProject}
+        >
           打开项目
         </button>
-        <span className="toolbar__path" title={projectPath ?? undefined}>
+        <span className="min-w-0 flex-1 truncate text-dim" title={projectPath ?? undefined}>
           {projectPath ?? '未打开项目'}
         </span>
-        <span className="toolbar__status">{status}</span>
         <select
-          className="toolbar__theme"
+          className="shrink-0 cursor-pointer rounded-[3px] border border-line bg-base px-1.5 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors hover:border-accent-hover focus:border-accent-hover"
           value={themeId}
           onChange={(event) => setThemeId(event.target.value)}
           title="切换主题"
@@ -362,11 +363,7 @@ function App(): React.JSX.Element {
         </select>
         <button
           type="button"
-          className={
-            aiPanelVisible
-              ? 'toolbar__icon-button toolbar__icon-button--active'
-              : 'toolbar__icon-button'
-          }
+          className={toolbarIconButton(aiPanelVisible)}
           onClick={() => setAiPanelVisible((prev) => !prev)}
           title={aiPanelVisible ? '收起 AI 助手' : '展开 AI 助手'}
           aria-label="切换 AI 助手侧边栏"
@@ -376,11 +373,7 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
-          className={
-            terminalVisible
-              ? 'toolbar__icon-button toolbar__icon-button--active'
-              : 'toolbar__icon-button'
-          }
+          className={toolbarIconButton(terminalVisible)}
           onClick={toggleTerminal}
           title={terminalVisible ? '收起命令行面板（Ctrl+`）' : '展开命令行面板（Ctrl+`）'}
           aria-label="切换命令行面板"
@@ -389,8 +382,11 @@ function App(): React.JSX.Element {
           <TerminalIcon />
         </button>
       </header>
-      <div ref={workspaceRef} className="workspace">
-        <aside className="sidebar" style={{ width: sidebarWidth }}>
+      <div ref={workspaceRef} className="flex min-h-0 flex-1">
+        <aside
+          className="flex shrink-0 flex-col border-r border-line bg-elevated"
+          style={{ width: sidebarWidth }}
+        >
           {projectPath ? (
             <FileTree
               key={projectPath}
@@ -403,7 +399,7 @@ function App(): React.JSX.Element {
               onEntryDeleted={handleEntryDeleted}
             />
           ) : (
-            <p className="sidebar__hint">点击左上角「打开项目」选择代码目录</p>
+            <p className="mx-3 my-4 leading-[1.6] text-dim">点击左上角「打开项目」选择代码目录</p>
           )}
         </aside>
         <ResizeHandle
@@ -411,8 +407,8 @@ function App(): React.JSX.Element {
           onResizeStart={handleSidebarResizeStart}
           onResize={handleSidebarResize}
         />
-        <main ref={editorAreaRef} className="editor-area">
-          <div className="editor-pane">
+        <main ref={editorAreaRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {files.length > 0 ? (
               <EditorTabs
                 files={files}

@@ -157,7 +157,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
       return
     }
     const container = document.createElement('div')
-    container.className = 'terminal-panel__session'
+    container.className = 'h-full w-full'
     body.appendChild(container)
 
     const term = new Terminal({
@@ -366,12 +366,16 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
 
   return (
     <section
-      className="terminal-panel"
+      className="flex min-h-0 shrink-0 flex-col overflow-hidden border-t border-line bg-base"
       style={{ height, display: visible ? undefined : 'none' }}
       aria-hidden={!visible}
     >
-      <header className="terminal-panel__header">
-        <div className="terminal-tabs" role="tablist" aria-label="终端会话">
+      <header className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line bg-elevated px-1.5 text-[12px] text-dim">
+        <div
+          className="scrollbar-none flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden"
+          role="tablist"
+          aria-label="终端会话"
+        >
           {tabs.map((tab) => {
             const active = tab.uid === activeUid
             return (
@@ -379,14 +383,22 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
                 key={tab.uid}
                 role="tab"
                 aria-selected={active}
-                className={active ? 'terminal-tab terminal-tab--active' : 'terminal-tab'}
+                className={
+                  active
+                    ? 'group inline-flex h-[22px] max-w-[160px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[3px] bg-base pl-2.5 pr-1 text-fg select-none hover:bg-hover'
+                    : 'group inline-flex h-[22px] max-w-[160px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[3px] pl-2.5 pr-1 select-none hover:bg-hover'
+                }
                 title={tab.title}
                 onClick={() => activateSession(tab.uid)}
               >
-                <span className="terminal-tab__name">{tab.title}</span>
+                <span className="truncate">{tab.title}</span>
                 <button
                   type="button"
-                  className="terminal-tab__close"
+                  className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit transition-opacity hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)] hover:text-fg ${
+                    active
+                      ? 'pointer-events-auto opacity-100'
+                      : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100'
+                  }`}
                   aria-label={`关闭 ${tab.title}`}
                   title="关闭终端"
                   onClick={(event) => {
@@ -401,10 +413,10 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
             )
           })}
         </div>
-        <div className="terminal-panel__actions">
+        <div className="inline-flex shrink-0 items-center gap-0.5">
           <button
             type="button"
-            className="terminal-panel__action"
+            className="inline-flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
             onClick={createSession}
             title="新建终端（Ctrl+Shift+`）"
             aria-label="新建终端"
@@ -413,7 +425,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
           </button>
           <button
             type="button"
-            className="terminal-panel__action"
+            className="inline-flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
             onClick={onRequestHide}
             title="收起命令行面板（Ctrl+`）"
             aria-label="收起命令行面板"
@@ -422,7 +434,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
           </button>
         </div>
       </header>
-      <div ref={bodyRef} className="terminal-panel__body" />
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-hidden" />
     </section>
   )
 })

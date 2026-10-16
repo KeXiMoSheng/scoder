@@ -57,7 +57,7 @@ export default function ContextMenu({
   return (
     <div
       ref={menuRef}
-      className="context-menu"
+      className="fixed z-[100] min-w-[128px] rounded-md border border-line bg-elevated p-1 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
       style={{ left: position.x, top: position.y }}
       role="menu"
     >
@@ -67,7 +67,7 @@ export default function ContextMenu({
             key={entry.id}
             type="button"
             role="menuitem"
-            className="context-menu__item"
+            className="block w-full cursor-pointer whitespace-nowrap rounded-[3px] border-none bg-transparent px-2.5 py-1 text-left font-[inherit] text-[13px] text-fg transition-colors enabled:hover:bg-selection disabled:cursor-default disabled:text-dim"
             disabled={entry.disabled}
             title={entry.disabled ? entry.disabledReason : undefined}
             onClick={() => {
@@ -78,7 +78,7 @@ export default function ContextMenu({
             {entry.label}
           </button>
         ) : (
-          <div key={`separator-${index}`} className="context-menu__separator" role="separator" />
+          <div key={`separator-${index}`} className="mx-1.5 my-1 h-px bg-line" role="separator" />
         )
       )}
     </div>

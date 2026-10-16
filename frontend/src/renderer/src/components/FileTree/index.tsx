@@ -129,7 +129,7 @@ function ChevronIcon({ open }: { open: boolean }): React.JSX.Element {
       viewBox="0 0 16 16"
       width="12"
       height="12"
-      className={open ? 'tree-icon tree-icon--open' : 'tree-icon'}
+      className={open ? 'text-dim transition-transform duration-100 rotate-90' : 'text-dim'}
       aria-hidden="true"
     >
       <path
@@ -146,7 +146,7 @@ function ChevronIcon({ open }: { open: boolean }): React.JSX.Element {
 
 function FolderIcon(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="tree-icon" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" className="text-dim" aria-hidden="true">
       <path
         d="M1.8 3.6c0-.6.5-1 1-1h3.1l1.3 1.4h6c.6 0 1 .4 1 1v7.4c0 .6-.4 1-1 1H2.8c-.5 0-1-.4-1-1V3.6z"
         fill="currentColor"
@@ -158,7 +158,7 @@ function FolderIcon(): React.JSX.Element {
 
 function FileIcon(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="tree-icon" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" className="text-dim" aria-hidden="true">
       <path
         d="M4 1.8h5l3.2 3.2v9.2c0 .4-.3.8-.8.8H4.6c-.5 0-.8-.4-.8-.8V2.6c0-.4.3-.8.7-.8z"
         fill="none"
@@ -171,7 +171,7 @@ function FileIcon(): React.JSX.Element {
 
 function RefreshIcon(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="tree-icon" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
       <path
         d="M14 8a6 6 0 1 1-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33"
         fill="none"
@@ -208,7 +208,7 @@ function RenameInput({ node }: { node: NodeApi<FileNode> }): React.JSX.Element {
   return (
     <input
       ref={inputRef}
-      className="tree-node__rename"
+      className="min-w-0 flex-1 rounded-[2px] border border-accent-hover bg-base px-1 font-[inherit] text-[13px] text-fg outline-none"
       defaultValue={node.data.name}
       spellCheck={false}
       autoFocus
@@ -238,12 +238,15 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
   const dirtyPaths = useContext(DirtyPathsContext)
   const openContextMenu = useContext(OpenContextMenuContext)
   const isDirty = !node.data.isDirectory && dirtyPaths.has(node.data.path)
+  const rowClass = node.isSelected
+    ? 'flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
+    : 'flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
   return (
     <div
       // 编辑中不挂拖拽源，避免拖动选中重命名文本时误触发节点拖拽
       ref={node.isEditing ? undefined : dragHandle}
       style={style}
-      className={node.isSelected ? 'tree-node tree-node--selected' : 'tree-node'}
+      className={rowClass}
       onContextMenu={(event) => {
         // 拦截系统默认行为，改由文件树展示自定义菜单
         event.preventDefault()
@@ -256,18 +259,23 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
         }
       }}
     >
-      <span className="tree-node__arrow">
+      <span className="inline-flex w-4 shrink-0 items-center justify-center text-dim">
         {node.isInternal ? <ChevronIcon open={node.isOpen} /> : null}
       </span>
-      <span className="tree-node__icon">
+      <span className="inline-flex shrink-0 items-center text-[#dcb67a]">
         {node.data.isDirectory ? <FolderIcon /> : <FileIcon />}
       </span>
       {node.isEditing ? (
         <RenameInput node={node} />
       ) : (
         <>
-          <span className="tree-node__name">{node.data.name}</span>
-          {isDirty ? <span className="tree-node__dirty" title="有未保存的更改" /> : null}
+          <span className="truncate">{node.data.name}</span>
+          {isDirty ? (
+            <span
+              className="ml-0.5 h-[7px] w-[7px] shrink-0 rounded-full bg-fg opacity-85"
+              title="有未保存的更改"
+            />
+          ) : null}
         </>
       )}
     </div>
@@ -603,10 +611,11 @@ export default function FileTree({
   }
 
   return (
-    <div className="file-tree">
-      <div className="file-tree__search">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1.5">
         <input
           type="text"
+          className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover"
           value={query}
           placeholder="搜索文件"
           spellCheck={false}
@@ -621,7 +630,7 @@ export default function FileTree({
         {query ? (
           <button
             type="button"
-            className="file-tree__search-clear"
+            className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
             aria-label="清空搜索"
             title="清空搜索"
             onClick={() => setQuery('')}
@@ -631,7 +640,7 @@ export default function FileTree({
         ) : null}
         <button
           type="button"
-          className="file-tree__refresh"
+          className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-dim transition-colors enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-default disabled:opacity-50"
           aria-label="刷新文件树"
           title="刷新文件树"
           disabled={refreshing}
@@ -640,13 +649,23 @@ export default function FileTree({
           <RefreshIcon />
         </button>
       </div>
-      {notice ? <p className="file-tree__notice">{notice}</p> : null}
-      {currentSearch?.truncated ? (
-        <p className="file-tree__status">仅显示前 {SEARCH_RESULT_LIMIT} 个匹配，请细化关键词</p>
+      {notice ? (
+        <p className="m-0 shrink-0 border-b border-line bg-[color-mix(in_srgb,var(--error)_12%,transparent)] px-2.5 py-1 break-all text-danger">
+          {notice}
+        </p>
       ) : null}
-      <div ref={listRef} className="file-tree__list" onKeyDown={handleKeyDown}>
+      {currentSearch?.truncated ? (
+        <p className="m-0 shrink-0 border-b border-line px-2.5 py-1 text-dim">
+          仅显示前 {SEARCH_RESULT_LIMIT} 个匹配，请细化关键词
+        </p>
+      ) : null}
+      <div
+        ref={listRef}
+        className="relative min-h-0 flex-1 overflow-hidden py-1.5"
+        onKeyDown={handleKeyDown}
+      >
         {loadError ? (
-          <p className="file-tree__error">无法读取目录：{loadError}</p>
+          <p className="mx-3 my-4 break-all leading-[1.6] text-danger">无法读取目录：{loadError}</p>
         ) : width > 0 && height > 0 ? (
           <DirtyPathsContext.Provider value={dirtyPaths}>
             <OpenContextMenuContext.Provider value={openContextMenu}>
@@ -678,7 +697,9 @@ export default function FileTree({
           </DirtyPathsContext.Provider>
         ) : null}
         {!loadError && searchStateText ? (
-          <p className="file-tree__overlay">{searchStateText}</p>
+          <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--bg)_72%,transparent)] p-4 text-center text-dim">
+            {searchStateText}
+          </p>
         ) : null}
       </div>
       {contextMenu ? (

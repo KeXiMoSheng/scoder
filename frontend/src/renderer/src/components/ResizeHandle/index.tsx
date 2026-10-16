@@ -27,16 +27,19 @@ export default function ResizeHandle({
     [isHorizontal]
   )
 
-  const classNames = ['resize-handle']
-  if (isHorizontal) {
-    classNames.push('resize-handle--horizontal')
-  }
-  if (collapsed) {
-    classNames.push('resize-handle--collapsed')
-  }
-  if (active) {
-    classNames.push('resize-handle--active')
-  }
+  // 分隔条尺寸与光标：横向条调高度（折叠时略高并带顶边），纵向条调宽度
+  const classNames = [
+    'shrink-0 transition-colors',
+    isHorizontal ? 'w-auto cursor-row-resize' : 'w-1 cursor-col-resize',
+    isHorizontal ? (collapsed ? 'h-1.5' : 'h-1') : '',
+    collapsed ? 'border-t border-line' : '',
+    // 激活态用强调色覆盖折叠底色，其余情况透明/elevated + 悬停高亮
+    active
+      ? 'bg-accent-hover'
+      : collapsed
+        ? 'bg-elevated hover:bg-accent-hover'
+        : 'bg-transparent hover:bg-accent-hover'
+  ]
 
   return (
     <div

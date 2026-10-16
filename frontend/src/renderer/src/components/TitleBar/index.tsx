@@ -46,6 +46,13 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
+/** 标题栏窗口控制按钮：关闭键悬停用危险色，其余用普通悬停高亮 */
+function titleBarButton(close: boolean): string {
+  const base =
+    'inline-flex w-11 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-fg transition-colors'
+  return close ? `${base} hover:bg-danger hover:text-accent-fg` : `${base} hover:bg-hover`
+}
+
 /**
  * 无边框窗口（frame: false）的自绘标题栏：
  * 整条栏通过 CSS `-webkit-app-region: drag` 可拖动窗口，右侧按钮设为 no-drag 以保持可点击。
@@ -74,12 +81,14 @@ export default function TitleBar({ title = 'Scoder' }: TitleBarProps): React.JSX
   }, [])
 
   return (
-    <div className="title-bar">
-      <span className="title-bar__brand">{title}</span>
-      <div className="title-bar__controls">
+    <div className="flex h-8 shrink-0 items-stretch border-b border-line bg-elevated [-webkit-app-region:drag] select-none">
+      <span className="flex min-w-0 flex-1 items-center overflow-hidden pl-3 truncate text-[12px] font-semibold text-dim">
+        {title}
+      </span>
+      <div className="flex shrink-0 items-stretch [-webkit-app-region:no-drag]">
         <button
           type="button"
-          className="title-bar__button"
+          className={titleBarButton(false)}
           onClick={() => window.api.windowMinimize()}
           title="最小化"
           aria-label="最小化"
@@ -88,7 +97,7 @@ export default function TitleBar({ title = 'Scoder' }: TitleBarProps): React.JSX
         </button>
         <button
           type="button"
-          className="title-bar__button"
+          className={titleBarButton(false)}
           onClick={() => window.api.windowToggleMaximize()}
           title={maximized ? '向下还原' : '最大化'}
           aria-label={maximized ? '向下还原' : '最大化'}
@@ -97,7 +106,7 @@ export default function TitleBar({ title = 'Scoder' }: TitleBarProps): React.JSX
         </button>
         <button
           type="button"
-          className="title-bar__button title-bar__button--close"
+          className={titleBarButton(true)}
           onClick={() => window.api.windowClose()}
           title="关闭"
           aria-label="关闭"

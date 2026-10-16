@@ -222,11 +222,17 @@ export default function CodeEditor({
   const errorMessage = failure && failure.path === file?.path ? failure.message : null
 
   return (
-    <div className="editor-pane__body">
-      <div ref={containerRef} className="editor-pane__canvas" />
-      {errorMessage ? <p className="editor-pane__notice">{errorMessage}</p> : null}
+    <div className="relative min-h-0 flex-1">
+      <div ref={containerRef} className="absolute inset-0" />
+      {errorMessage ? (
+        <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-dim">
+          {errorMessage}
+        </p>
+      ) : null}
       {!file && !errorMessage ? (
-        <p className="editor-pane__notice">从左侧选择一个文件进行编辑</p>
+        <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-dim">
+          从左侧选择一个文件进行编辑
+        </p>
       ) : null}
     </div>
   )
