@@ -42,6 +42,63 @@ body {
   height: 100%;
 }
 
+/* ===== 无边框窗口自绘标题栏 ===== */
+
+.title-bar {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 32px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  /* 整条栏作为窗口拖拽区：按住可移动窗口（仅 frameless 窗口生效） */
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.title-bar__brand {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding-left: 12px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.title-bar__controls {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  /* 按钮区必须退出拖拽，否则点击事件会被系统当作拖动吞掉 */
+  -webkit-app-region: no-drag;
+}
+
+.title-bar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.title-bar__button:hover {
+  background: var(--bg-hover);
+}
+
+.title-bar__button--close:hover {
+  color: var(--accent-foreground);
+  background: var(--error);
+}
+
 /* ===== 顶部工具栏 ===== */
 
 .toolbar {
@@ -408,6 +465,20 @@ body {
   transition: background-color 0.15s ease;
 }
 
+/* 横向分隔条：调整面板高度（底部命令行面板使用） */
+.resize-handle--horizontal {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* 折叠态拖拽条：面板收起后保留在编辑器区底部的拖出入口 */
+.resize-handle--collapsed {
+  height: 6px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+}
+
 .resize-handle:hover,
 .resize-handle--active {
   background: var(--accent-hover);
@@ -421,6 +492,16 @@ body.is-resizing {
 
 body.is-resizing * {
   cursor: col-resize !important;
+}
+
+/* 上下拖拽（调整高度）时的同款全局光标与禁选 */
+body.is-resizing-row {
+  cursor: row-resize;
+  user-select: none;
+}
+
+body.is-resizing-row * {
+  cursor: row-resize !important;
 }
 
 /* ===== 右侧 AI 工具边栏 ===== */
@@ -458,10 +539,13 @@ body.is-resizing * {
 
 /* ===== 编辑器区域 ===== */
 
+/* 纵向排布：标签栏 + 编辑器在上，命令行面板在最下方 */
 .editor-area {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .editor-pane {
@@ -469,6 +553,7 @@ body.is-resizing * {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 /* 标签栏：打开多个文件时横向排列，超出时横向滚动 */
@@ -581,4 +666,61 @@ body.is-resizing * {
   color: var(--text-dim);
   text-align: center;
   pointer-events: none;
+}
+
+/* ===== 底部命令行面板 ===== */
+
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.terminal-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  height: 28px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-panel__hide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.terminal-panel__hide:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.terminal-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 终端内边距作用在 .xterm 元素上，FitAddon 会把它折减进可用行列计算 */
+.terminal-panel__body .xterm {
+  padding: 4px 8px;
 }

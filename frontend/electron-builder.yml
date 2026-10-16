@@ -11,6 +11,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  # node-pty 需要从 asar 解包：原生模块与 helper 二进制无法在压缩包内直接执行
+  - node_modules/node-pty/**
 win:
   executableName: scoder
 nsis:

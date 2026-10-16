@@ -1,49 +1,68 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { ResizeHandleProps } from './types'
 
 /** 面板之间的拖拽分隔条：按住后用 pointer capture 持续跟踪移动，松开结束 */
 export default function ResizeHandle({
   label,
+  orientation = 'vertical',
+  collapsed = false,
   onResizeStart,
   onResize
 }: ResizeHandleProps): React.JSX.Element {
-  const startXRef = useRef(0)
+  const isHorizontal = orientation === 'horizontal'
+  const [active, setActive] = useState(false)
+  const startPosRef = useRef(0)
   const draggingRef = useRef(false)
 
   /** 结束拖拽：移除激活标记、还原全局拖拽样式并释放指针捕获 */
-  const stopDragging = useCallback((element: HTMLDivElement, pointerId: number): void => {
-    draggingRef.current = false
-    element.classList.remove('resize-handle--active')
-    document.body.classList.remove('is-resizing')
-    if (element.hasPointerCapture(pointerId)) {
-      element.releasePointerCapture(pointerId)
-    }
-  }, [])
+  const stopDragging = useCallback(
+    (element: HTMLDivElement, pointerId: number): void => {
+      draggingRef.current = false
+      setActive(false)
+      document.body.classList.remove(isHorizontal ? 'is-resizing-row' : 'is-resizing')
+      if (element.hasPointerCapture(pointerId)) {
+        element.releasePointerCapture(pointerId)
+      }
+    },
+    [isHorizontal]
+  )
+
+  const classNames = ['resize-handle']
+  if (isHorizontal) {
+    classNames.push('resize-handle--horizontal')
+  }
+  if (collapsed) {
+    classNames.push('resize-handle--collapsed')
+  }
+  if (active) {
+    classNames.push('resize-handle--active')
+  }
 
   return (
     <div
-      className="resize-handle"
+      className={classNames.join(' ')}
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={isHorizontal ? 'horizontal' : 'vertical'}
       aria-label={label}
       onPointerDown={(event) => {
         if (event.button !== 0) {
           return
         }
         event.preventDefault()
-        startXRef.current = event.clientX
+        startPosRef.current = isHorizontal ? event.clientY : event.clientX
         draggingRef.current = true
+        setActive(true)
         event.currentTarget.setPointerCapture(event.pointerId)
-        event.currentTarget.classList.add('resize-handle--active')
-        // 拖拽期间全局保持列宽光标并禁止选中文本（覆盖 Monaco 等内部元素）
-        document.body.classList.add('is-resizing')
+        // 拖拽期间全局保持对应方向光标并禁止选中文本（覆盖 Monaco 等内部元素）
+        document.body.classList.add(isHorizontal ? 'is-resizing-row' : 'is-resizing')
         onResizeStart()
       }}
       onPointerMove={(event) => {
         if (!draggingRef.current) {
           return
         }
-        onResize(event.clientX - startXRef.current)
+        const position = isHorizontal ? event.clientY : event.clientX
+        onResize(position - startPosRef.current)
       }}
       onPointerUp={(event) => {
         if (draggingRef.current) {

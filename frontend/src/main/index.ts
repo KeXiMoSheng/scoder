@@ -4,14 +4,17 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   type MessageBoxOptions,
   type OpenDialogOptions
 } from 'electron'
 import { promises as fs } from 'fs'
+import { homedir } from 'os'
 import { basename, join, sep } from 'path'
+import * as pty from 'node-pty'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import type { FileEntry, SearchResult } from '../shared/types'
+import type { FileEntry, SearchResult, TerminalDataEvent, TerminalExitEvent } from '../shared/types'
 
 // 开发版标识：electron-vite dev 热重载模式，或 dev 通道打包产物（版本号带 -dev.<时间戳>，见 scripts/dist.mjs）
 // 注意：打包后 is.dev 恒为 false，dev 通道必须靠版本号后缀区分，否则调试快捷键会被禁用
@@ -204,6 +207,144 @@ function registerFileSystemHandlers(): void {
   )
 }
 
+/** 终端会话：pty 进程实例及其所属窗口（webContents.id） */
+interface TerminalSession {
+  process: pty.IPty
+  windowId: number
+}
+
+// 活动终端会话表（id 单调递增；窗口销毁或应用退出时回收其全部会话，避免孤儿 shell）
+const terminalSessions = new Map<number, TerminalSession>()
+let nextTerminalId = 1
+
+/** 按平台选择交互式 shell */
+function resolveShell(): { file: string; args: string[] } {
+  if (process.platform === 'win32') {
+    return { file: 'powershell.exe', args: ['-NoLogo'] }
+  }
+  return { file: process.env.SHELL || '/bin/bash', args: [] }
+}
+
+/** 结束某个窗口创建的全部终端会话 */
+function disposeWindowTerminals(windowId: number): void {
+  for (const [id, session] of terminalSessions) {
+    if (session.windowId === windowId) {
+      session.process.kill()
+      terminalSessions.delete(id)
+    }
+  }
+}
+
+/** 向渲染进程提供终端能力：创建/写入/调整/销毁 pty 会话，并转发输出与退出事件 */
+function registerTerminalHandlers(): void {
+  // 每个窗口只注册一次 destroyed 监听（会话表按窗口 id 归属）
+  const watchedWindowIds = new Set<number>()
+
+  ipcMain.handle(
+    'terminal:create',
+    (event, cwd: string | null, cols: number, rows: number): number => {
+      if (
+        (cwd !== null && typeof cwd !== 'string') ||
+        typeof cols !== 'number' ||
+        typeof rows !== 'number'
+      ) {
+        throw new Error('参数无效')
+      }
+      const { file, args } = resolveShell()
+      const id = nextTerminalId
+      nextTerminalId += 1
+      const proc = pty.spawn(file, args, {
+        name: 'xterm-256color',
+        cols: Math.max(1, Math.floor(cols)),
+        rows: Math.max(1, Math.floor(rows)),
+        cwd: cwd ?? homedir(),
+        env: process.env
+      })
+      const sender = event.sender
+      terminalSessions.set(id, { process: proc, windowId: sender.id })
+      if (!watchedWindowIds.has(sender.id)) {
+        watchedWindowIds.add(sender.id)
+        sender.once('destroyed', () => {
+          watchedWindowIds.delete(sender.id)
+          disposeWindowTerminals(sender.id)
+        })
+      }
+      proc.onData((data) => {
+        if (sender.isDestroyed()) {
+          return
+        }
+        const payload: TerminalDataEvent = { id, data }
+        sender.send('terminal:data', payload)
+      })
+      proc.onExit(({ exitCode }) => {
+        terminalSessions.delete(id)
+        if (sender.isDestroyed()) {
+          return
+        }
+        const payload: TerminalExitEvent = { id, exitCode }
+        sender.send('terminal:exit', payload)
+      })
+      return id
+    }
+  )
+
+  // 缺少会话的写入/调整（如销毁竞态）静默忽略，不打断渲染进程
+  ipcMain.on('terminal:write', (_event, id: number, data: string): void => {
+    if (typeof id !== 'number' || typeof data !== 'string') {
+      return
+    }
+    terminalSessions.get(id)?.process.write(data)
+  })
+
+  ipcMain.on('terminal:resize', (_event, id: number, cols: number, rows: number): void => {
+    if (typeof id !== 'number' || typeof cols !== 'number' || typeof rows !== 'number') {
+      return
+    }
+    const session = terminalSessions.get(id)
+    if (!session || cols < 1 || rows < 1) {
+      return
+    }
+    session.process.resize(Math.floor(cols), Math.floor(rows))
+  })
+
+  ipcMain.handle('terminal:dispose', (_event, id: number): void => {
+    const session = terminalSessions.get(id)
+    if (!session) {
+      return
+    }
+    terminalSessions.delete(id)
+    session.process.kill()
+  })
+}
+
+/** 向渲染进程提供无边框窗口的控制能力：最小化、最大化/还原、关闭，并回查最大化状态 */
+function registerWindowHandlers(): void {
+  // 控制类操作无需回执，走单向 send；目标窗口从事件发送者反查，天然隔离多窗口
+  ipcMain.on('window:minimize', (event): void => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+
+  ipcMain.on('window:toggleMaximize', (event): void => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) {
+      return
+    }
+    if (window.isMaximized()) {
+      window.unmaximize()
+    } else {
+      window.maximize()
+    }
+  })
+
+  ipcMain.on('window:close', (event): void => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  ipcMain.handle('window:isMaximized', (event): boolean => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
+}
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -214,6 +355,9 @@ function createWindow(): void {
     minHeight: 400,
     show: false,
     autoHideMenuBar: true,
+    // 去掉原生窗口边框（含顶部标题栏与系统最小化/最大化/关闭按钮）
+    // 注意：frameless 后需在前端自绘标题栏并用 IPC 实现拖动/窗口控制，否则无法移动和关闭窗口
+    frame: false,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -228,6 +372,15 @@ function createWindow(): void {
     mainWindow.maximize()
     mainWindow.show()
   })
+
+  // 无边框窗口的标题栏按钮需要跟随最大化/还原切换图标，状态变化时主动推送给渲染进程
+  const pushMaximizeState = (): void => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximizeChange', mainWindow.isMaximized())
+    }
+  }
+  mainWindow.on('maximize', pushMaximizeState)
+  mainWindow.on('unmaximize', pushMaximizeState)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -250,7 +403,12 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.scoder.app')
 
+  // 禁用原生应用菜单：Alt 不再弹出系统原生菜单栏（配合下方 autoHideMenuBar，彻底隐藏菜单）
+  Menu.setApplicationMenu(null)
+
   registerFileSystemHandlers()
+  registerTerminalHandlers()
+  registerWindowHandlers()
 
   // 快捷键策略（dev 通道自行接管，避免打包后 watchWindowShortcuts 按生产策略屏蔽调试快捷键）：
   // - 开发版：F12 或 Ctrl+Shift+I（macOS 为 Cmd+Alt+I）切换开发者工具
@@ -290,6 +448,14 @@ app.whenReady().then(() => {
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+// 应用退出前结束所有终端会话（pty 子进程不会随主进程自动退出）
+app.on('before-quit', () => {
+  for (const session of terminalSessions.values()) {
+    session.process.kill()
+  }
+  terminalSessions.clear()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
