@@ -1,17 +1,217 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  type MessageBoxOptions,
+  type OpenDialogOptions
+} from 'electron'
+import { promises as fs } from 'fs'
+import { basename, join, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import type { FileEntry, SearchResult } from '../shared/types'
 
 // 开发版标识：electron-vite dev 热重载模式，或 dev 通道打包产物（版本号带 -dev.<时间戳>，见 scripts/dist.mjs）
 // 注意：打包后 is.dev 恒为 false，dev 通道必须靠版本号后缀区分，否则调试快捷键会被禁用
 const isDevChannel = is.dev || app.getVersion().includes('-dev')
+
+// 文件树中隐藏的噪音目录（版本库元数据与依赖缓存）
+const IGNORED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', '__pycache__', '.venv'])
+
+// 文本预览的体积上限，超过则拒绝读取（避免超大文件卡死渲染进程）
+const MAX_PREVIEW_FILE_SIZE = 5 * 1024 * 1024
+
+// 搜索结果的硬上限（渲染进程传入的 limit 会被裁剪到该范围内）
+const MAX_SEARCH_RESULTS = 500
+
+// 搜索遍历的条目数上限：目录树异常庞大时兜底，避免长时间占用主进程
+const MAX_SEARCH_VISITS = 100_000
+
+/** 目录在前、文件在后，同类按名称不区分大小写升序 */
+function compareFileEntries(a: FileEntry, b: FileEntry): number {
+  if (a.isDirectory !== b.isDirectory) {
+    return a.isDirectory ? -1 : 1
+  }
+  return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+}
+
+/** 向渲染进程提供白名单文件系统能力：选择目录、读写文件、重命名/移动/删除条目、递归搜索 */
+function registerFileSystemHandlers(): void {
+  ipcMain.handle('dialog:openProjectDirectory', async (event): Promise<string | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options: OpenDialogOptions = {
+      title: '选择项目目录',
+      properties: ['openDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle('fs:readDirectory', async (_event, dirPath: string): Promise<FileEntry[]> => {
+    if (typeof dirPath !== 'string') {
+      throw new Error('目录路径无效')
+    }
+    const dirents = await fs.readdir(dirPath, { withFileTypes: true })
+    return dirents
+      .filter((dirent) => !(dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)))
+      .map((dirent) => ({
+        name: dirent.name,
+        path: join(dirPath, dirent.name),
+        isDirectory: dirent.isDirectory()
+      }))
+      .sort(compareFileEntries)
+  })
+
+  ipcMain.handle('fs:readFile', async (_event, filePath: string): Promise<string> => {
+    if (typeof filePath !== 'string') {
+      throw new Error('文件路径无效')
+    }
+    const buffer = await fs.readFile(filePath)
+    if (buffer.byteLength > MAX_PREVIEW_FILE_SIZE) {
+      throw new Error('文件超过 5 MB，暂不支持预览')
+    }
+    // 含 NUL 字节的按二进制处理，不做文本预览
+    if (buffer.includes(0)) {
+      throw new Error('二进制文件暂不支持预览')
+    }
+    return buffer.toString('utf-8')
+  })
+
+  ipcMain.handle(
+    'fs:writeFile',
+    async (_event, filePath: string, content: string): Promise<void> => {
+      if (typeof filePath !== 'string' || typeof content !== 'string') {
+        throw new Error('参数无效')
+      }
+      await fs.writeFile(filePath, content, 'utf-8')
+    }
+  )
+
+  // 重命名与拖拽移动共用：把 sourcePath 移动到 targetPath（含改名）
+  ipcMain.handle(
+    'fs:moveEntry',
+    async (_event, sourcePath: string, targetPath: string): Promise<void> => {
+      if (typeof sourcePath !== 'string' || typeof targetPath !== 'string') {
+        throw new Error('路径无效')
+      }
+      if (sourcePath === targetPath) {
+        return
+      }
+      // 禁止把目录移动到自身内部，避免产生意外层级
+      if (targetPath.startsWith(sourcePath + sep)) {
+        throw new Error('不能移动到自身或其子目录内')
+      }
+      // fs.rename 在目标存在时会静默覆盖（POSIX），显式拦截以免误删
+      const targetExists = await fs.access(targetPath).then(
+        () => true,
+        () => false
+      )
+      if (targetExists) {
+        throw new Error('目标位置已存在同名条目')
+      }
+      await fs.rename(sourcePath, targetPath)
+    }
+  )
+
+  // 删除文件或目录（目录递归删除）；先经系统对话框确认，用户取消时返回 false
+  ipcMain.handle('fs:deleteEntry', async (event, targetPath: string): Promise<boolean> => {
+    if (typeof targetPath !== 'string' || !targetPath) {
+      throw new Error('路径无效')
+    }
+    const isDirectory = (await fs.lstat(targetPath)).isDirectory()
+    const options: MessageBoxOptions = {
+      type: 'warning',
+      buttons: ['取消', '删除'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '删除确认',
+      message: `确定要删除${isDirectory ? '目录' : '文件'}「${basename(targetPath)}」吗？`,
+      detail: isDirectory
+        ? '该目录及其全部内容将被永久删除，且无法恢复。'
+        : '该文件将被永久删除，且无法恢复。'
+    }
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const result = window
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options)
+    if (result.response !== 1) {
+      return false
+    }
+    await fs.rm(targetPath, { recursive: true })
+    return true
+  })
+
+  // 按名称子串递归搜索（目录在前、名称升序的广度优先），跳过噪音目录
+  ipcMain.handle(
+    'fs:searchFiles',
+    async (_event, rootPath: string, query: string, limit?: number): Promise<SearchResult> => {
+      if (typeof rootPath !== 'string' || typeof query !== 'string') {
+        throw new Error('参数无效')
+      }
+      const keyword = query.trim().toLowerCase()
+      if (!keyword) {
+        return { entries: [], truncated: false }
+      }
+      const requested =
+        typeof limit === 'number' && limit > 0 ? Math.floor(limit) : MAX_SEARCH_RESULTS
+      const maxResults = Math.min(requested, MAX_SEARCH_RESULTS)
+      const entries: FileEntry[] = []
+      let visited = 0
+      let truncated = false
+      const pendingDirs: string[] = [rootPath]
+      while (pendingDirs.length > 0 && !truncated) {
+        const dirPath = pendingDirs.shift()
+        if (!dirPath) {
+          break
+        }
+        let dirents
+        try {
+          dirents = await fs.readdir(dirPath, { withFileTypes: true })
+        } catch {
+          // 无权限或目录已被删除：跳过该分支
+          continue
+        }
+        dirents.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+        for (const dirent of dirents) {
+          const isDirectory = dirent.isDirectory()
+          if (isDirectory && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
+            continue
+          }
+          visited += 1
+          if (visited > MAX_SEARCH_VISITS) {
+            truncated = true
+            break
+          }
+          const fullPath = join(dirPath, dirent.name)
+          if (dirent.name.toLowerCase().includes(keyword)) {
+            if (entries.length >= maxResults) {
+              truncated = true
+              break
+            }
+            entries.push({ name: dirent.name, path: fullPath, isDirectory })
+          }
+          if (isDirectory) {
+            pendingDirs.push(fullPath)
+          }
+        }
+      }
+      return { entries, truncated }
+    }
+  )
+}
 
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
+    // 最小尺寸：保证文件树、编辑器与右侧 AI 边栏各自的最小宽度之和放得下
+    minWidth: 640,
+    minHeight: 400,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -49,6 +249,8 @@ function createWindow(): void {
 app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.scoder.app')
+
+  registerFileSystemHandlers()
 
   // 快捷键策略（dev 通道自行接管，避免打包后 watchWindowShortcuts 按生产策略屏蔽调试快捷键）：
   // - 开发版：F12 或 Ctrl+Shift+I（macOS 为 Cmd+Alt+I）切换开发者工具
