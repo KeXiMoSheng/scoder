@@ -1,7 +1,4 @@
-interface AiSidebarProps {
-  /** 面板宽度（px），由父级的拖拽分隔条控制 */
-  width: number
-}
+import type { AiSidebarProps } from './types'
 
 /** 右侧边栏：为后续 AI 工具预留的容器，当前展示占位提示 */
 export default function AiSidebar({ width }: AiSidebarProps): React.JSX.Element {

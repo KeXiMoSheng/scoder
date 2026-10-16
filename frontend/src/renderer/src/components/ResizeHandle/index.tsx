@@ -1,13 +1,5 @@
 import { useCallback, useRef } from 'react'
-
-interface ResizeHandleProps {
-  /** 无障碍标签，说明该分隔条调整的对象 */
-  label: string
-  /** 拖拽开始（父级此刻记录面板初始宽度） */
-  onResizeStart: () => void
-  /** 拖拽中回调，offsetX 为相对按下位置的横向偏移（px，向右为正） */
-  onResize: (offsetX: number) => void
-}
+import type { ResizeHandleProps } from './types'
 
 /** 面板之间的拖拽分隔条：按住后用 pointer capture 持续跟踪移动，松开结束 */
 export default function ResizeHandle({
