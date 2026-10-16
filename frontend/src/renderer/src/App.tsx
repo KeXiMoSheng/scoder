@@ -7,6 +7,7 @@ import FileTree from './components/FileTree'
 import type { FileNode } from './components/FileTree/types'
 import ResizeHandle from './components/ResizeHandle'
 import TerminalPanel from './components/TerminalPanel'
+import type { TerminalPanelHandle } from './components/TerminalPanel/types'
 import TitleBar from './components/TitleBar'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
@@ -112,6 +113,8 @@ function App(): React.JSX.Element {
   const editorAreaRef = useRef<HTMLElement | null>(null)
   // 编辑器命令式接口（保存脏缓冲区、丢弃路径变更后的模型缓存）
   const editorRef = useRef<CodeEditorHandle | null>(null)
+  // 命令行面板命令式接口（全局快捷键新建终端会话）
+  const terminalPanelRef = useRef<TerminalPanelHandle | null>(null)
   // 拖拽开始时的面板尺寸（宽度或高度，任一时刻只会有一个分隔条处于拖拽中）
   const dragStartSizeRef = useRef(0)
 
@@ -301,13 +304,25 @@ function App(): React.JSX.Element {
     [getEditorAreaHeight, terminalMaxHeight]
   )
 
-  // Ctrl+`（或 Ctrl+J）切换命令行面板：捕获阶段拦截，避免被 Monaco / xterm 先行消费
+  // Ctrl+`（或 Ctrl+J）切换命令行面板、Ctrl+Shift+` 新建终端：
+  // 捕获阶段拦截（capture），避免被 Monaco / xterm 先行消费
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.repeat) {
         return
       }
       if ((!event.ctrlKey && !event.metaKey) || event.altKey) {
+        return
+      }
+      // Ctrl+Shift+`：确保面板展开，并追加一个新的终端会话
+      if (event.code === 'Backquote' && event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        openTerminal()
+        terminalPanelRef.current?.createSession()
+        return
+      }
+      if (event.shiftKey) {
         return
       }
       if (event.code !== 'Backquote' && event.code !== 'KeyJ') {
@@ -319,7 +334,7 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [toggleTerminal])
+  }, [toggleTerminal, openTerminal])
 
   return (
     <div className="app">
@@ -420,6 +435,7 @@ function App(): React.JSX.Element {
             onResize={handleTerminalResize}
           />
           <TerminalPanel
+            ref={terminalPanelRef}
             visible={terminalVisible}
             height={terminalHeight ?? 0}
             cwd={projectPath}

@@ -683,17 +683,99 @@ body.is-resizing-row * {
 .terminal-panel__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   flex: none;
   height: 28px;
-  padding: 0 6px 0 12px;
+  padding: 0 6px;
   font-size: 12px;
   color: var(--text-dim);
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
 }
 
-.terminal-panel__hide {
+/* 终端标签栏：与会话一一对应，标签溢出时横向滚动（隐藏滚动条） */
+.terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 160px;
+  height: 22px;
+  padding: 0 4px 0 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.terminal-tab:hover {
+  background: var(--bg-hover);
+}
+
+.terminal-tab--active {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.terminal-tab__name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 关闭按钮：非激活标签悬停时才浮现（与 VS Code 标签行为一致） */
+.terminal-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.terminal-tab:hover .terminal-tab__close,
+.terminal-tab--active .terminal-tab__close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.terminal-tab__close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+/* 右侧动作区：新建终端与收起面板 */
+.terminal-panel__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.terminal-panel__action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -709,7 +791,7 @@ body.is-resizing-row * {
   cursor: pointer;
 }
 
-.terminal-panel__hide:hover {
+.terminal-panel__action:hover {
   color: var(--text);
   background: var(--bg-hover);
 }
@@ -720,7 +802,8 @@ body.is-resizing-row * {
   overflow: hidden;
 }
 
-/* 终端内边距作用在 .xterm 元素上，FitAddon 会把它折减进可用行列计算 */
-.terminal-panel__body .xterm {
-  padding: 4px 8px;
+/* 每个会话独立的挂载容器：激活的占满面板，其余 display:none 隐藏但保持存活 */
+.terminal-panel__session {
+  width: 100%;
+  height: 100%;
 }
