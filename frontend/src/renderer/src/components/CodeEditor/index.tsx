@@ -3,6 +3,7 @@ import { monaco } from '../../lib/monaco'
 import { detectLanguage } from '../../lib/language'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { isAtOrUnder } from '../../lib/filePath'
+import { getActiveThemeId } from '../../lib/theme'
 import type { CodeEditorProps, LoadFailure } from './types'
 
 export default function CodeEditor({
@@ -93,7 +94,8 @@ export default function CodeEditor({
       return
     }
     const editor = monaco.editor.create(container, {
-      theme: 'vs-dark',
+      // 编辑器跟随应用级主题（lib/theme.ts 统一注册与切换）
+      theme: getActiveThemeId(),
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 13,

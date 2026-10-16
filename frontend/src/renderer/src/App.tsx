@@ -7,7 +7,9 @@ import FileTree from './components/FileTree'
 import type { FileNode } from './components/FileTree/types'
 import ResizeHandle from './components/ResizeHandle'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
+import { useTheme } from './hooks/useTheme'
 import { isAtOrUnder } from './lib/filePath'
+import { APP_THEMES } from './lib/theme'
 
 // 后端 API 地址，与 backend/.env 的 PORT 保持一致
 const API_BASE = 'http://127.0.0.1:39200'
@@ -66,6 +68,8 @@ function App(): React.JSX.Element {
   const [aiPanelVisible, setAiPanelVisible] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [aiPanelWidth, setAiPanelWidth] = useState(AI_PANEL_DEFAULT_WIDTH)
+  // 应用级主题（UI 配色 + 编辑器主题同步切换）
+  const { themeId, setThemeId } = useTheme()
 
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   // 编辑器命令式接口（保存脏缓冲区、丢弃路径变更后的模型缓存）
@@ -211,6 +215,19 @@ function App(): React.JSX.Element {
           {projectPath ?? '未打开项目'}
         </span>
         <span className="toolbar__status">{status}</span>
+        <select
+          className="toolbar__theme"
+          value={themeId}
+          onChange={(event) => setThemeId(event.target.value)}
+          title="切换主题"
+          aria-label="切换主题"
+        >
+          {APP_THEMES.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           className={

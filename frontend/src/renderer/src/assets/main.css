@@ -1,14 +1,17 @@
+/* 默认跟随「One Dark Pro」；运行时由 lib/theme.ts 按所选主题覆盖同名变量 */
 :root {
   color-scheme: dark;
-  --bg: #1e1e1e;
-  --bg-elevated: #252526;
-  --bg-hover: #2a2d2e;
-  --border: #3c3c3c;
-  --text: #d4d4d4;
-  --text-dim: #9da3ae;
-  --accent: #0e639c;
-  --accent-hover: #1177bb;
-  --selection: #094771;
+  --bg: #282c34;
+  --bg-elevated: #21252b;
+  --bg-hover: #2c313a;
+  --border: #3e4452;
+  --text: #abb2bf;
+  --text-dim: #9da5b4;
+  --accent: #404754;
+  --accent-hover: #4d5565;
+  --accent-foreground: #ffffff;
+  --selection: #2c313a;
+  --error: #e05561;
 }
 
 *,
@@ -55,7 +58,7 @@ body {
   flex: none;
   padding: 4px 14px;
   font-size: 13px;
-  color: #ffffff;
+  color: var(--accent-foreground);
   background: var(--accent);
   border: none;
   border-radius: 3px;
@@ -78,6 +81,24 @@ body {
 .toolbar__status {
   flex: none;
   color: var(--text-dim);
+}
+
+.toolbar__theme {
+  flex: none;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.toolbar__theme:hover,
+.toolbar__theme:focus {
+  border-color: var(--accent-hover);
 }
 
 .toolbar__icon-button {
@@ -219,8 +240,8 @@ body {
   flex: none;
   margin: 0;
   padding: 4px 10px;
-  color: #f48771;
-  background: rgba(244, 135, 113, 0.12);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
   border-bottom: 1px solid var(--border);
   word-break: break-all;
 }
@@ -243,7 +264,7 @@ body {
 
 .file-tree__error {
   margin: 16px 12px;
-  color: #f48771;
+  color: var(--error);
   line-height: 1.6;
   word-break: break-all;
 }
@@ -258,7 +279,7 @@ body {
   padding: 16px;
   color: var(--text-dim);
   text-align: center;
-  background: rgba(30, 30, 30, 0.72);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
   pointer-events: none;
 }
 
@@ -527,7 +548,7 @@ body.is-resizing * {
 }
 
 .editor-tab__close:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
 }
 
 .editor-tab:hover .editor-tab__close {
