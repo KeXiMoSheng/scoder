@@ -1,4 +1,19 @@
 import { useEffect, useState } from 'react'
+import { Terminal } from 'lucide-react'
+import { basename } from '../../lib/filePath'
+import { APP_THEMES } from '../../lib/theme'
+import { cn } from '../../lib/utils'
+import { Button } from '../ui/button'
+import {
+  Menubar,
+  MenubarContent,
+  MenubarItem,
+  MenubarMenu,
+  MenubarRadioGroup,
+  MenubarRadioItem,
+  MenubarSeparator,
+  MenubarTrigger
+} from '../ui/menubar'
 import type { TitleBarProps } from './types'
 
 /** 最小化图标：底部一条横线 */
@@ -46,19 +61,48 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
-/** 标题栏窗口控制按钮：关闭键悬停用危险色，其余用普通悬停高亮 */
-function titleBarButton(close: boolean): string {
-  const base =
-    'inline-flex w-11 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-fg transition-colors'
-  return close ? `${base} hover:bg-danger hover:text-accent-fg` : `${base} hover:bg-hover`
+/** AI 侧边栏切换图标：外框 + 右侧分栏，展开时右侧区域着色加深 */
+function SidebarRightIcon({ active }: { active: boolean }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" />
+      <rect
+        x="10.5"
+        y="2.5"
+        width="4"
+        height="11"
+        fill="currentColor"
+        opacity={active ? 0.45 : 0.12}
+      />
+      <line x1="10.5" y1="2.5" x2="10.5" y2="13.5" stroke="currentColor" />
+    </svg>
+  )
 }
 
+/** 窗口控制按钮：占满标题栏高度，关闭键悬停用危险色 */
+const WINDOW_BUTTON_CLASS = 'h-8 w-11 rounded-none text-fg [&_svg]:size-3'
+/** 顶部菜单触发器：与标题栏同高，悬停/展开时用选中底色 */
+const MENU_TRIGGER_CLASS =
+  'h-full rounded-none px-2.5 text-[12px] font-normal text-fg hover:bg-selection'
+/** 下拉菜单项：紧凑行高，与 IDE 菜单密度一致 */
+const MENU_ITEM_CLASS = 'px-2.5 py-1 text-[12px]'
+
 /**
- * 无边框窗口（frame: false）的自绘标题栏：
- * 整条栏通过 CSS `-webkit-app-region: drag` 可拖动窗口，右侧按钮设为 no-drag 以保持可点击。
- * 最大化/还原图标跟随主进程推送的窗口状态切换。
+ * 无边框窗口（frame: false）的自绘标题栏，同时充当应用菜单栏：
+ * 左侧为「文件 / 主题」菜单，中间展示当前工作区名称，右侧为面板开关与窗口控制。
+ * 整条栏通过 CSS `-webkit-app-region: drag` 可拖动窗口，交互元素设为 no-drag 以保持可点击。
  */
-export default function TitleBar({ title = 'Scoder' }: TitleBarProps): React.JSX.Element {
+export default function TitleBar({
+  projectPath,
+  themeId,
+  terminalVisible,
+  aiPanelVisible,
+  onOpenFolder,
+  onCloseFolder,
+  onThemeChange,
+  onNewTerminal,
+  onToggleAiPanel
+}: TitleBarProps): React.JSX.Element {
   const [maximized, setMaximized] = useState(false)
 
   useEffect(() => {
@@ -80,39 +124,112 @@ export default function TitleBar({ title = 'Scoder' }: TitleBarProps): React.JSX
     }
   }, [])
 
+  /** 右侧面板开关的选中态样式：展开时用选中底色，收起时弱化 */
+  const toggleButtonClass = (active: boolean): string =>
+    cn('h-7 w-7 rounded-sm', active ? 'bg-selection text-fg' : 'text-dim')
+
   return (
     <div className="flex h-8 shrink-0 items-stretch border-b border-line bg-elevated [-webkit-app-region:drag] select-none">
-      <span className="flex min-w-0 flex-1 items-center overflow-hidden pl-3 truncate text-[12px] font-semibold text-dim">
-        {title}
-      </span>
-      <div className="flex shrink-0 items-stretch [-webkit-app-region:no-drag]">
-        <button
+      <Menubar className="h-full items-stretch gap-0 rounded-none border-0 bg-transparent p-0 shadow-none [-webkit-app-region:no-drag]">
+        <MenubarMenu>
+          <MenubarTrigger className={MENU_TRIGGER_CLASS}>文件</MenubarTrigger>
+          <MenubarContent sideOffset={2} alignOffset={0} className="min-w-[168px]">
+            <MenubarItem className={MENU_ITEM_CLASS} onSelect={onOpenFolder}>
+              打开文件夹…
+            </MenubarItem>
+            <MenubarSeparator />
+            <MenubarItem
+              className={MENU_ITEM_CLASS}
+              disabled={!projectPath}
+              onSelect={onCloseFolder}
+            >
+              关闭文件夹
+            </MenubarItem>
+          </MenubarContent>
+        </MenubarMenu>
+        <MenubarMenu>
+          <MenubarTrigger className={MENU_TRIGGER_CLASS}>主题</MenubarTrigger>
+          <MenubarContent sideOffset={2} alignOffset={0} className="min-w-[180px]">
+            <MenubarRadioGroup value={themeId} onValueChange={onThemeChange}>
+              {APP_THEMES.map((theme) => (
+                <MenubarRadioItem
+                  key={theme.id}
+                  value={theme.id}
+                  className={cn(MENU_ITEM_CLASS, 'pl-8')}
+                >
+                  {theme.label}
+                </MenubarRadioItem>
+              ))}
+            </MenubarRadioGroup>
+          </MenubarContent>
+        </MenubarMenu>
+      </Menubar>
+      <div className="flex min-w-0 flex-1 items-center justify-center px-3">
+        {projectPath ? (
+          <span className="pointer-events-none truncate text-[12px] text-dim" title={projectPath}>
+            {basename(projectPath) || projectPath}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 px-1 [-webkit-app-region:no-drag]">
+        <Button
           type="button"
-          className={titleBarButton(false)}
+          variant="ghost"
+          size="icon-xs"
+          className={toggleButtonClass(terminalVisible)}
+          onClick={onNewTerminal}
+          title="新建终端（Ctrl+Shift+`，切换面板：Ctrl+` / Ctrl+J）"
+          aria-label="新建终端"
+        >
+          <Terminal className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={toggleButtonClass(aiPanelVisible)}
+          onClick={onToggleAiPanel}
+          title="切换 AI 侧边栏（Ctrl+Alt+B）"
+          aria-label="切换 AI 侧边栏"
+          aria-pressed={aiPanelVisible}
+        >
+          <SidebarRightIcon active={aiPanelVisible} />
+        </Button>
+      </div>
+      <div className="ml-1 flex shrink-0 items-stretch [-webkit-app-region:no-drag]">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={WINDOW_BUTTON_CLASS}
           onClick={() => window.api.windowMinimize()}
           title="最小化"
           aria-label="最小化"
         >
           <MinimizeIcon />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={titleBarButton(false)}
+          variant="ghost"
+          size="icon"
+          className={WINDOW_BUTTON_CLASS}
           onClick={() => window.api.windowToggleMaximize()}
           title={maximized ? '向下还原' : '最大化'}
           aria-label={maximized ? '向下还原' : '最大化'}
         >
           {maximized ? <RestoreIcon /> : <MaximizeIcon />}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={titleBarButton(true)}
+          variant="ghost"
+          size="icon"
+          className={cn(WINDOW_BUTTON_CLASS, 'hover:bg-danger hover:text-accent-fg')}
           onClick={() => window.api.windowClose()}
           title="关闭"
           aria-label="关闭"
         >
           <CloseIcon />
-        </button>
+        </Button>
       </div>
     </div>
   )

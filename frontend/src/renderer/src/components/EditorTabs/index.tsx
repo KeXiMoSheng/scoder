@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
+import FileRow from '../FileRow'
 import type { EditorTabsProps, TabMenuState } from './types'
 
 /** 标签关闭按钮图标（悬停时替代脏标记显示） */
@@ -83,28 +84,32 @@ export default function EditorTabs({
               setMenu({ x: event.clientX, y: event.clientY, path: file.path })
             }}
           >
-            <span className="truncate">{file.name}</span>
-            <span className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center">
-              {dirtyPaths.has(file.path) ? (
-                <span
-                  className="absolute h-[7px] w-[7px] rounded-full bg-fg opacity-85 transition-opacity group-hover:opacity-0"
-                  title="有未保存的更改"
-                />
-              ) : null}
-              <button
-                type="button"
-                className="absolute inset-0 inline-flex cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)]"
-                aria-label={`关闭 ${file.name}`}
-                title="关闭"
-                onClick={(event) => {
-                  // 阻止冒泡，避免同时触发标签激活
-                  event.stopPropagation()
-                  onClose(file.path)
-                }}
-              >
-                <CloseIcon />
-              </button>
-            </span>
+            <FileRow
+              name={file.name}
+              trailing={
+                <span className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+                  {dirtyPaths.has(file.path) ? (
+                    <span
+                      className="absolute h-[7px] w-[7px] rounded-full bg-fg opacity-85 transition-opacity group-hover:opacity-0"
+                      title="有未保存的更改"
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    className="absolute inset-0 inline-flex cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)]"
+                    aria-label={`关闭 ${file.name}`}
+                    title="关闭"
+                    onClick={(event) => {
+                      // 阻止冒泡，避免同时触发标签激活
+                      event.stopPropagation()
+                      onClose(file.path)
+                    }}
+                  >
+                    <CloseIcon />
+                  </button>
+                </span>
+              }
+            />
           </div>
         )
       })}

@@ -100,6 +100,13 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
 
   /** 按容器当前尺寸适配指定会话，尺寸有变化时同步其 pty 的列数/行数 */
   const fitSession = useCallback((session: TerminalSessionView): void => {
+    // 容器未布局（面板收起为 display:none 时尺寸为 0）时跳过：
+    // 此时 FitAddon 会因内部 Math.max(2/1, …) 提出 2×1 的极小尺寸，
+    // 触发 pty 收缩 → bash 重绘提示符，反复收起/展开会累积多余提示行。
+    // 保持 pty 上一次的真实尺寸，展开时由 ResizeObserver 再重新适配
+    if (session.container.clientWidth === 0 || session.container.clientHeight === 0) {
+      return
+    }
     const previousCols = session.term.cols
     const previousRows = session.term.rows
     session.fitAddon.fit()

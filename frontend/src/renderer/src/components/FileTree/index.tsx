@@ -6,6 +6,7 @@ import { extractErrorMessage } from '../../lib/errorMessage'
 import { basename, dirname, isAtOrUnder, joinPath, pathSeparator } from '../../lib/filePath'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
+import FileRow from '../FileRow'
 import type {
   ContextMenuState,
   FileNode,
@@ -146,24 +147,11 @@ function ChevronIcon({ open }: { open: boolean }): React.JSX.Element {
 
 function FolderIcon(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="text-dim" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" className="text-[#dcb67a]" aria-hidden="true">
       <path
         d="M1.8 3.6c0-.6.5-1 1-1h3.1l1.3 1.4h6c.6 0 1 .4 1 1v7.4c0 .6-.4 1-1 1H2.8c-.5 0-1-.4-1-1V3.6z"
         fill="currentColor"
         opacity="0.85"
-      />
-    </svg>
-  )
-}
-
-function FileIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="text-dim" aria-hidden="true">
-      <path
-        d="M4 1.8h5l3.2 3.2v9.2c0 .4-.3.8-.8.8H4.6c-.5 0-.8-.4-.8-.8V2.6c0-.4.3-.8.7-.8z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
       />
     </svg>
   )
@@ -262,22 +250,21 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       <span className="inline-flex w-4 shrink-0 items-center justify-center text-dim">
         {node.isInternal ? <ChevronIcon open={node.isOpen} /> : null}
       </span>
-      <span className="inline-flex shrink-0 items-center text-[#dcb67a]">
-        {node.data.isDirectory ? <FolderIcon /> : <FileIcon />}
-      </span>
-      {node.isEditing ? (
-        <RenameInput node={node} />
-      ) : (
-        <>
-          <span className="truncate">{node.data.name}</span>
-          {isDirty ? (
+      <FileRow
+        name={node.data.name}
+        icon={node.data.isDirectory ? <FolderIcon /> : undefined}
+        trailing={
+          isDirty ? (
             <span
               className="ml-0.5 h-[7px] w-[7px] shrink-0 rounded-full bg-fg opacity-85"
               title="有未保存的更改"
             />
-          ) : null}
-        </>
-      )}
+          ) : null
+        }
+        className="flex-1 gap-1"
+      >
+        {node.isEditing ? <RenameInput node={node} /> : undefined}
+      </FileRow>
     </div>
   )
 }

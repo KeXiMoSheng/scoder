@@ -1,4 +1,9 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* shadcn/ui 组件的 dark: 变体跟随应用主题的明暗类型（data-theme-kind），
+   而不是操作系统的 prefers-color-scheme，避免浅色主题下出现深色控件 */
+@custom-variant dark (&:where([data-theme-kind='dark'], [data-theme-kind='dark'] *));
 
 /* 默认跟随「One Dark Pro」；运行时由 lib/theme.ts 按所选主题覆盖同名变量。
    这些 CSS 变量是主题切换的唯一数据源，@theme 中的 Tailwind 颜色令牌引用它们，
@@ -27,11 +32,31 @@
   --color-line: var(--border);
   --color-fg: var(--text);
   --color-dim: var(--text-dim);
-  --color-accent: var(--accent);
+  --color-accent: var(--selection);
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-foreground);
   --color-selection: var(--selection);
   --color-danger: var(--error);
+
+  /* shadcn/ui 设计令牌：全部指向应用主题变量，组件随主题切换自动换色。
+     注意 shadcn 语义中的 accent 是菜单/列表悬停底色，对应项目的 selection */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--bg-elevated);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--bg-elevated);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-foreground);
+  --color-secondary: var(--bg-hover);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--bg-hover);
+  --color-muted-foreground: var(--text-dim);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--error);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
 }
 
 @layer base {
@@ -39,6 +64,11 @@
   body,
   #root {
     height: 100%;
+  }
+
+  /* 与 shadcn 默认样式一致：未显式指定颜色的边框使用主题边框色 */
+  * {
+    border-color: var(--border);
   }
 
   body {

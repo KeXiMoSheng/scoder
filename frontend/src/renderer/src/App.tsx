@@ -12,7 +12,6 @@ import TitleBar from './components/TitleBar'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
 import { isAtOrUnder } from './lib/filePath'
-import { APP_THEMES } from './lib/theme'
 
 /** 左侧文件树面板宽度（px） */
 const SIDEBAR_DEFAULT_WIDTH = 280
@@ -33,58 +32,6 @@ const EDITOR_MIN_HEIGHT = 120
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-/** 工具栏图标：外框 + 右侧分栏，突出显示时右侧区域着色加深 */
-function SidebarRightIcon({ active }: { active: boolean }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" />
-      <rect
-        x="10.5"
-        y="2.5"
-        width="4"
-        height="11"
-        fill="currentColor"
-        opacity={active ? 0.45 : 0.12}
-      />
-      <line x1="10.5" y1="2.5" x2="10.5" y2="13.5" stroke="currentColor" />
-    </svg>
-  )
-}
-
-/** 工具栏图标：终端提示符「>_」 */
-function TerminalIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-      <path
-        d="M2.5 4 6 7.5 2.5 11"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <line
-        x1="7.5"
-        y1="11"
-        x2="13.5"
-        y2="11"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-/** 工具栏图标按钮样式：激活态用选中底色，非激活态透明背景 + 悬停高亮 */
-function toolbarIconButton(active: boolean): string {
-  const base =
-    'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-none p-0 transition-colors'
-  return active
-    ? `${base} bg-selection text-fg`
-    : `${base} bg-transparent text-dim hover:bg-hover hover:text-fg`
 }
 
 function App(): React.JSX.Element {
@@ -176,6 +123,14 @@ function App(): React.JSX.Element {
     }
     setProjectPath(dirPath)
     closeAll()
+    setDirtyPaths(new Set())
+  }, [closeAll])
+
+  /** 关闭当前文件夹：清空项目路径、标签页与脏标记，回到未打开状态 */
+  const handleCloseProject = useCallback((): void => {
+    setProjectPath(null)
+    closeAll()
+    setDirtyPaths(new Set())
   }, [closeAll])
 
   const handleSelectFile = useCallback(
@@ -273,6 +228,11 @@ function App(): React.JSX.Element {
     setTerminalVisible(false)
   }, [])
 
+  /** 切换 AI 侧边栏显隐（标题栏按钮与全局快捷键共用） */
+  const toggleAiPanel = useCallback((): void => {
+    setAiPanelVisible((prev) => !prev)
+  }, [])
+
   const toggleTerminal = useCallback((): void => {
     if (terminalVisible) {
       closeTerminal()
@@ -280,6 +240,12 @@ function App(): React.JSX.Element {
       openTerminal()
     }
   }, [terminalVisible, closeTerminal, openTerminal])
+
+  /** 标题栏终端按钮：确保命令行面板展开，并新建一个终端会话 */
+  const handleNewTerminal = useCallback((): void => {
+    openTerminal()
+    terminalPanelRef.current?.createSession()
+  }, [openTerminal])
 
   const handleTerminalResizeStart = useCallback((): void => {
     // 收起状态下从底部拖出时，以 0 为起点向上生长
@@ -302,22 +268,31 @@ function App(): React.JSX.Element {
     [getEditorAreaHeight, terminalMaxHeight]
   )
 
-  // Ctrl+`（或 Ctrl+J）切换命令行面板、Ctrl+Shift+` 新建终端：
+  // Ctrl+`（或 Ctrl+J）切换命令行面板、Ctrl+Shift+` 新建终端、Ctrl+Alt+B 切换 AI 侧边栏：
   // 捕获阶段拦截（capture），避免被 Monaco / xterm 先行消费
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.repeat) {
         return
       }
-      if ((!event.ctrlKey && !event.metaKey) || event.altKey) {
+      if (!event.ctrlKey && !event.metaKey) {
+        return
+      }
+      // Ctrl+Alt+B：切换 AI 侧边栏
+      if (event.altKey && !event.shiftKey && event.code === 'KeyB') {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleAiPanel()
+        return
+      }
+      if (event.altKey) {
         return
       }
       // Ctrl+Shift+`：确保面板展开，并追加一个新的终端会话
       if (event.code === 'Backquote' && event.shiftKey) {
         event.preventDefault()
         event.stopPropagation()
-        openTerminal()
-        terminalPanelRef.current?.createSession()
+        handleNewTerminal()
         return
       }
       if (event.shiftKey) {
@@ -332,56 +307,21 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [toggleTerminal, openTerminal])
+  }, [toggleTerminal, handleNewTerminal, toggleAiPanel])
 
   return (
     <div className="flex h-full flex-col">
-      <TitleBar />
-      <header className="flex shrink-0 items-center gap-3 border-b border-line bg-elevated px-3 py-2">
-        <button
-          type="button"
-          className="shrink-0 cursor-pointer rounded-[3px] border-none bg-accent px-[14px] py-1 text-[13px] text-accent-fg transition-colors hover:bg-accent-hover"
-          onClick={handleOpenProject}
-        >
-          打开项目
-        </button>
-        <span className="min-w-0 flex-1 truncate text-dim" title={projectPath ?? undefined}>
-          {projectPath ?? '未打开项目'}
-        </span>
-        <select
-          className="shrink-0 cursor-pointer rounded-[3px] border border-line bg-base px-1.5 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors hover:border-accent-hover focus:border-accent-hover"
-          value={themeId}
-          onChange={(event) => setThemeId(event.target.value)}
-          title="切换主题"
-          aria-label="切换主题"
-        >
-          {APP_THEMES.map((theme) => (
-            <option key={theme.id} value={theme.id}>
-              {theme.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className={toolbarIconButton(aiPanelVisible)}
-          onClick={() => setAiPanelVisible((prev) => !prev)}
-          title={aiPanelVisible ? '收起 AI 助手' : '展开 AI 助手'}
-          aria-label="切换 AI 助手侧边栏"
-          aria-pressed={aiPanelVisible}
-        >
-          <SidebarRightIcon active={aiPanelVisible} />
-        </button>
-        <button
-          type="button"
-          className={toolbarIconButton(terminalVisible)}
-          onClick={toggleTerminal}
-          title={terminalVisible ? '收起命令行面板（Ctrl+`）' : '展开命令行面板（Ctrl+`）'}
-          aria-label="切换命令行面板"
-          aria-pressed={terminalVisible}
-        >
-          <TerminalIcon />
-        </button>
-      </header>
+      <TitleBar
+        projectPath={projectPath}
+        themeId={themeId}
+        terminalVisible={terminalVisible}
+        aiPanelVisible={aiPanelVisible}
+        onOpenFolder={handleOpenProject}
+        onCloseFolder={handleCloseProject}
+        onThemeChange={setThemeId}
+        onNewTerminal={handleNewTerminal}
+        onToggleAiPanel={toggleAiPanel}
+      />
       <div ref={workspaceRef} className="flex min-h-0 flex-1">
         <aside
           className="flex shrink-0 flex-col border-r border-line bg-elevated"
@@ -399,7 +339,9 @@ function App(): React.JSX.Element {
               onEntryDeleted={handleEntryDeleted}
             />
           ) : (
-            <p className="mx-3 my-4 leading-[1.6] text-dim">点击左上角「打开项目」选择代码目录</p>
+            <p className="mx-3 my-4 leading-[1.6] text-dim">
+              通过菜单栏「文件 → 打开文件夹」选择代码目录
+            </p>
           )}
         </aside>
         <ResizeHandle

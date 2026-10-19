@@ -1,10 +1,10 @@
 import { monaco } from './monaco'
 
-// 自动发现 theme/ 目录下的 *-monaco.json（转换工具生成的 Monaco 版数据，由 Vite 在构建/开发时展开为静态导入）：
+// 自动发现 public/theme/ 目录下的 *-monaco.json（转换工具生成的 Monaco 版数据，由 Vite 在构建/开发时展开为静态导入）：
 // 主题 id = 文件名剥离 -monaco 后缀；其 colors 段与原版主题一致，同时作为应用 UI 的取色来源
-// 新增主题只需把「主题名-monaco.json」放进 theme/ 目录，无需改动本文件
+// 新增主题只需把「主题名-monaco.json」放进 public/theme/ 目录，无需改动本文件
 // 注意：原版 .json 为 JSONC（带注释），不参与构建，仅作为资料保留
-const themeModules = import.meta.glob('../../../../theme/*-monaco.json', { eager: true }) as Record<
+const themeModules = import.meta.glob('@theme/*-monaco.json', { eager: true }) as Record<
   string,
   { default: ThemeFileData }
 >
@@ -144,7 +144,7 @@ function discoverThemes(): AppTheme[] {
   return themes
 }
 
-/** theme/ 目录中发现的全套主题（按文件名排序；新增文件后无需改动代码） */
+/** public/theme/ 目录中发现的全套主题（按文件名排序；新增文件后无需改动代码） */
 export const APP_THEMES: readonly AppTheme[] = discoverThemes()
 
 const DEFAULT_THEME_ID = 'one-dark-pro'
@@ -199,6 +199,8 @@ export function applyTheme(id: ThemeId): void {
   }
   root.style.colorScheme = theme.kind
   root.dataset.theme = theme.id
+  // 供 Tailwind 的 dark: 变体判断当前主题明暗（见 assets/main.css）
+  root.dataset.themeKind = theme.kind
   monaco.editor.setTheme(theme.id)
   activeThemeId = theme.id
   try {
