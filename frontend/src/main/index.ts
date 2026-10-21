@@ -205,6 +205,39 @@ function registerFileSystemHandlers(): void {
       return { entries, truncated }
     }
   )
+
+  // 在 dirPath 下创建空文件或空目录；名称非法或同名条目已存在时报错，返回新建条目供文件树定位
+  ipcMain.handle(
+    'fs:createEntry',
+    async (_event, dirPath: string, name: string, isDirectory: boolean): Promise<FileEntry> => {
+      if (
+        typeof dirPath !== 'string' ||
+        typeof name !== 'string' ||
+        typeof isDirectory !== 'boolean'
+      ) {
+        throw new Error('参数无效')
+      }
+      const entryName = name.trim()
+      if (!entryName || entryName === '.' || entryName === '..' || /[\\/]/.test(entryName)) {
+        throw new Error('名称无效')
+      }
+      const fullPath = join(dirPath, entryName)
+      // 已存在同名条目时不覆盖，交由用户改名
+      const exists = await fs.access(fullPath).then(
+        () => true,
+        () => false
+      )
+      if (exists) {
+        throw new Error('同目录下已存在同名条目')
+      }
+      if (isDirectory) {
+        await fs.mkdir(fullPath)
+      } else {
+        await fs.writeFile(fullPath, '', 'utf-8')
+      }
+      return { name: entryName, path: fullPath, isDirectory }
+    }
+  )
 }
 
 /** 终端会话：pty 进程实例及其所属窗口（webContents.id） */

@@ -44,6 +44,8 @@ export interface ScoderAPI {
   readFile: (filePath: string) => Promise<string>
   /** 将文本写入文件（utf-8 覆盖写入），供编辑器保存 */
   writeFile: (filePath: string, content: string) => Promise<void>
+  /** 在 dirPath 下创建空文件（isDirectory 为 false）或空目录，返回新建条目；名称非法或已存在时报错 */
+  createEntry: (dirPath: string, name: string, isDirectory: boolean) => Promise<FileEntry>
   /** 重命名/拖拽移动文件或目录到目标绝对路径；目标已存在时报错 */
   moveEntry: (sourcePath: string, targetPath: string) => Promise<void>
   /** 删除文件或目录（目录递归删除）；弹出确认框，用户取消时返回 false */

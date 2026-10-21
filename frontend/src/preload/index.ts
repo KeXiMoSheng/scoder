@@ -10,6 +10,8 @@ const api: ScoderAPI = {
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
+  createEntry: (dirPath: string, name: string, isDirectory: boolean) =>
+    ipcRenderer.invoke('fs:createEntry', dirPath, name, isDirectory),
   moveEntry: (sourcePath: string, targetPath: string) =>
     ipcRenderer.invoke('fs:moveEntry', sourcePath, targetPath),
   deleteEntry: (targetPath: string) => ipcRenderer.invoke('fs:deleteEntry', targetPath),

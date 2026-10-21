@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import type { FileEntry } from '@shared/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
@@ -7,6 +7,7 @@ import { basename, dirname, isAtOrUnder, joinPath, pathSeparator } from '../../l
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
+import PromptDialog from '../PromptDialog'
 import type {
   ContextMenuState,
   FileNode,
@@ -180,6 +181,108 @@ function RefreshIcon(): React.JSX.Element {
   )
 }
 
+function NewFileIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M8.8 1.9H4.2c-.5 0-.9.4-.9.9v10.4c0 .5.4.9.9.9h7.6c.5 0 .9-.4.9-.9V5.2L8.8 1.9z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.6 2v3.2h3.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 8.2v3.1M6.45 9.75h3.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function NewFolderIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M1.9 4.1c0-.5.4-.9.9-.9h2.7l1.2 1.3h5.5c.5 0 .9.4.9.9v6.5c0 .5-.4.9-.9.9H2.8c-.5 0-.9-.4-.9-.9V4.1z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 6.7v3.3M6.35 8.35h3.3"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function CollapseAllIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M3.2 6.2 8 3l4.8 3.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3.2 9.8 8 13l4.8-3.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+interface ToolbarButtonProps {
+  /** 无障碍标签与悬停提示文案 */
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  /** 禁用时在 title 中给出的原因（缺省用 label） */
+  disabledReason?: string
+  children: React.ReactNode
+}
+
+/** 工具栏图标按钮：统一尺寸与禁用态样式 */
+function ToolbarButton({
+  label,
+  onClick,
+  disabled,
+  disabledReason,
+  children
+}: ToolbarButtonProps): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-dim transition-colors enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-default disabled:opacity-50"
+      aria-label={label}
+      title={disabled && disabledReason ? disabledReason : label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
 /** 重命名输入框：回车或失焦提交，Esc 取消；聚焦时选中主文件名（不含扩展名） */
 function RenameInput({ node }: { node: NodeApi<FileNode> }): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -290,6 +393,11 @@ export default function FileTree({
   // 已发起过加载的目录集合（失败时移除，允许重试）
   const loadedDirsRef = useRef<Set<string>>(new Set())
 
+  // 新建弹窗目标：null 不显示，'file'/'folder' 分别对应新建文件与新建文件夹
+  const [pendingCreate, setPendingCreate] = useState<null | 'file' | 'folder'>(null)
+  // 树首次挂载时仅展开根目录（当前目录本身），子目录仍保持折叠按需懒加载
+  const [initialOpenState] = useState<Record<string, boolean>>(() => ({ [rootPath]: true }))
+
   // 右键菜单：坐标 + 目标节点路径
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
@@ -337,31 +445,39 @@ export default function FileTree({
     }
   }, [rootPath])
 
-  const loadChildren = useCallback(async (dirPath: string): Promise<void> => {
-    const loaded = loadedDirsRef.current
-    if (loaded.has(dirPath)) {
-      return
-    }
-    loaded.add(dirPath)
-    try {
-      const entries = await window.api.readDirectory(dirPath)
-      setTreeData((prev) => injectChildren(prev, dirPath, entries))
-    } catch (reason) {
-      loaded.delete(dirPath)
-      setNotice(`读取目录失败：${extractErrorMessage(reason)}`)
-    }
-  }, [])
+  const loadChildren = useCallback(
+    async (dirPath: string): Promise<void> => {
+      // 防御内部根哨兵等非本项目路径的 id，避免误当目录去 scandir
+      if (!isAtOrUnder(dirPath, rootPath)) {
+        return
+      }
+      const loaded = loadedDirsRef.current
+      if (loaded.has(dirPath)) {
+        return
+      }
+      loaded.add(dirPath)
+      try {
+        const entries = await window.api.readDirectory(dirPath)
+        setTreeData((prev) => injectChildren(prev, dirPath, entries))
+      } catch (reason) {
+        loaded.delete(dirPath)
+        setNotice(`读取目录失败：${extractErrorMessage(reason)}`)
+      }
+    },
+    [rootPath]
+  )
 
   // react-arborist 的 onToggle 在节点开合时都会触发，仅在首次展开时请求子项；
   // 搜索模式下子树已完整，无需懒加载
   const handleToggle = useCallback(
     (id: string): void => {
-      if (searchActive) {
+      // 折叠全部会对内部根哨兵（非真实路径）也触发 onToggle，需忽略：只加载 rootPath 及其子树下的目录
+      if (searchActive || !isAtOrUnder(id, rootPath)) {
         return
       }
       void loadChildren(id)
     },
-    [loadChildren, searchActive]
+    [loadChildren, searchActive, rootPath]
   )
 
   /** 重新读取已加载目录的最新内容（重命名/移动/删除后刷新树；未加载目录在展开时会自然读到最新内容） */
@@ -420,11 +536,64 @@ export default function FileTree({
     }
   }, [refreshing, rootPath])
 
+  /** 新建目标目录：当前编辑器打开文件所在的同级目录；未打开文件时回退到根目录 */
+  const getCreateTargetDir = useCallback((): string => {
+    return selectedPath ? dirname(selectedPath) : rootPath
+  }, [selectedPath, rootPath])
+
+  const handleNewFile = useCallback((): void => {
+    if (!searchActive) {
+      setPendingCreate('file')
+    }
+  }, [searchActive])
+
+  const handleNewFolder = useCallback((): void => {
+    if (!searchActive) {
+      setPendingCreate('folder')
+    }
+  }, [searchActive])
+
+  /** 折叠所有：收起全部子目录，仅保留根目录（当前目录）展开 */
+  const handleCollapseAll = useCallback((): void => {
+    const tree = treeRef.current
+    if (!tree) {
+      return
+    }
+    tree.closeAll()
+    tree.open(rootPath)
+  }, [rootPath])
+
+  /** 弹窗确认：在目标目录创建空文件/空目录，刷新并尽量展开定位；文件则直接在编辑器打开 */
+  const submitCreate = useCallback(
+    async (name: string): Promise<void> => {
+      const isDirectory = pendingCreate === 'folder'
+      const targetDir = getCreateTargetDir()
+      try {
+        const entry = await window.api.createEntry(targetDir, name, isDirectory)
+        await refreshDirectory(targetDir)
+        // 目标目录已加载时其节点存在于树中，展开并揭示新建条目；深层未加载则留待用户展开时读到
+        treeRef.current?.open(targetDir)
+        treeRef.current?.openParents(entry.path)
+        if (!isDirectory) {
+          onSelectFile(entry)
+        }
+      } catch (reason) {
+        setNotice(`创建失败：${extractErrorMessage(reason)}`)
+      } finally {
+        setPendingCreate(null)
+      }
+    },
+    [pendingCreate, getCreateTargetDir, refreshDirectory, onSelectFile]
+  )
+
   /** 拖拽移动：react-arborist 已拦截拖入自身子树的情况，过滤模式（搜索）下拖拽被禁用 */
   const handleMove = useCallback(
     async ({ dragIds, parentId }: MoveArgs<FileNode>): Promise<void> => {
       const targetDir = parentId ?? rootPath
       for (const dragId of dragIds) {
+        if (dragId === rootPath) {
+          continue // 根目录（当前目录）不可移动
+        }
         const targetPath = joinPath(targetDir, basename(dragId))
         if (targetPath === dragId) {
           continue // 位置未变（如同层排序：本实现按名称排序，不支持手动排序）
@@ -447,6 +616,9 @@ export default function FileTree({
   /** 重命名：失败信息就地提示，本处理器不抛错（tree.submit 会等待其完成并退出编辑态） */
   const handleRename = useCallback(
     async ({ id, name }: RenameArgs<FileNode>): Promise<void> => {
+      if (id === rootPath) {
+        return // 根目录（当前目录）不允许重命名
+      }
       const newName = name.trim()
       if (!newName || newName === basename(id)) {
         return
@@ -466,7 +638,7 @@ export default function FileTree({
         setNotice(`重命名失败：${extractErrorMessage(reason)}`)
       }
     },
-    [onBeforeEntryMove, onEntryMoved, refreshDirectory]
+    [rootPath, onBeforeEntryMove, onEntryMoved, refreshDirectory]
   )
 
   const handleSelect = useCallback(
@@ -579,62 +751,100 @@ export default function FileTree({
   let contextMenuEntries: ContextMenuEntry[] = []
   if (contextMenu) {
     const targetPath = contextMenu.path
+    const isRootTarget = targetPath === rootPath
+    const opDisabled = searchActive || isRootTarget
+    const opDisabledReason = searchActive
+      ? '搜索模式下不可用'
+      : isRootTarget
+        ? '当前目录不支持该操作'
+        : undefined
     contextMenuEntries = [
       {
         id: 'rename',
         label: '重命名',
-        disabled: searchActive,
-        disabledReason: '搜索模式下不可用',
+        disabled: opDisabled,
+        disabledReason: opDisabledReason,
         onSelect: () => handleMenuRename(targetPath)
       },
       {
         id: 'delete',
         label: '删除',
-        disabled: searchActive,
-        disabledReason: '搜索模式下不可用',
+        disabled: opDisabled,
+        disabledReason: opDisabledReason,
         onSelect: () => void handleMenuDelete(targetPath)
       }
     ]
   }
 
+  // 非搜索模式：把「当前目录」本身作为树的根节点，其内容挂在下面（根节点 id 即 rootPath）
+  const rootTreeData = useMemo<FileNode[]>(
+    () => [{ name: basename(rootPath), path: rootPath, isDirectory: true, children: treeData }],
+    [rootPath, treeData]
+  )
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1.5">
-        <input
-          type="text"
-          className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover"
-          value={query}
-          placeholder="搜索文件"
-          spellCheck={false}
-          aria-label="搜索文件"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setQuery('')
-            }
-          }}
-        />
-        {query ? (
-          <button
-            type="button"
-            className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
-            aria-label="清空搜索"
-            title="清空搜索"
-            onClick={() => setQuery('')}
+      <div className="flex shrink-0 flex-col border-b border-line">
+        <div className="flex items-center gap-1 px-2 py-1.5">
+          <input
+            type="text"
+            className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover"
+            value={query}
+            placeholder="搜索文件"
+            spellCheck={false}
+            aria-label="搜索文件"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setQuery('')
+              }
+            }}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
+              aria-label="清空搜索"
+              title="清空搜索"
+              onClick={() => setQuery('')}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-0.5 px-2 pb-1.5">
+          <ToolbarButton
+            label="新建文件"
+            disabled={searchActive}
+            disabledReason="搜索模式下不可用"
+            onClick={handleNewFile}
           >
-            ×
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-dim transition-colors enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-default disabled:opacity-50"
-          aria-label="刷新文件树"
-          title="刷新文件树"
-          disabled={refreshing}
-          onClick={() => void handleRefresh()}
-        >
-          <RefreshIcon />
-        </button>
+            <NewFileIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            label="新建文件夹"
+            disabled={searchActive}
+            disabledReason="搜索模式下不可用"
+            onClick={handleNewFolder}
+          >
+            <NewFolderIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            label="刷新文件树"
+            disabled={refreshing}
+            onClick={() => void handleRefresh()}
+          >
+            <RefreshIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            label="折叠所有"
+            disabled={searchActive}
+            disabledReason="搜索模式下不可用"
+            onClick={handleCollapseAll}
+          >
+            <CollapseAllIcon />
+          </ToolbarButton>
+        </div>
       </div>
       {notice ? (
         <p className="m-0 shrink-0 border-b border-line bg-[color-mix(in_srgb,var(--error)_12%,transparent)] px-2.5 py-1 break-all text-danger">
@@ -658,7 +868,7 @@ export default function FileTree({
             <OpenContextMenuContext.Provider value={openContextMenu}>
               <Tree<FileNode>
                 ref={treeRef}
-                data={searchActive ? (currentSearch?.entries ?? []) : treeData}
+                data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
                 idAccessor="path"
                 childrenAccessor="children"
                 width={width}
@@ -667,9 +877,10 @@ export default function FileTree({
                 indent={INDENT}
                 // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
                 openByDefault={false}
+                initialOpenState={initialOpenState}
                 searchTerm={searchActive ? trimmedQuery : undefined}
-                disableDrag={searchActive}
-                disableEdit={searchActive}
+                disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
+                disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
                 disableMultiSelection
                 selection={selectedPath ?? undefined}
                 onMove={handleMove}
@@ -695,6 +906,15 @@ export default function FileTree({
           y={contextMenu.y}
           entries={contextMenuEntries}
           onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      {pendingCreate ? (
+        <PromptDialog
+          title={pendingCreate === 'folder' ? '新建文件夹' : '新建文件'}
+          placeholder={pendingCreate === 'folder' ? '文件夹名称' : '文件名称（含扩展名）'}
+          confirmLabel="创建"
+          onConfirm={(name) => void submitCreate(name)}
+          onCancel={() => setPendingCreate(null)}
         />
       ) : null}
     </div>
