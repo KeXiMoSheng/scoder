@@ -13,6 +13,8 @@ asarUnpack:
   - resources/**
   # node-pty 需要从 asar 解包：原生模块与 helper 二进制无法在压缩包内直接执行
   - node_modules/node-pty/**
+  # better-sqlite3 的 .node 二进制同样需要解包后由主进程加载
+  - node_modules/better-sqlite3/**
 win:
   executableName: scoder
 nsis:

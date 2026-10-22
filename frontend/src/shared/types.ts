@@ -34,6 +34,36 @@ export interface TerminalExitEvent {
   exitCode: number
 }
 
+/** 已保存的模型配置（对应数据库 model_configs 表） */
+export interface ModelConfig {
+  /** 自增主键 */
+  id: number
+  /** 模型供应商名，如 OpenAI */
+  providerName: string
+  /** 模型服务地址（OpenAI 兼容的 base URL） */
+  baseUrl: string
+  /** 模型显示名称（界面上展示的名字） */
+  displayName: string
+  /** 模型名称（调用接口时使用的 model 参数） */
+  modelName: string
+  /** API Key（本地明文存储，仅在渲染进程用于后续请求） */
+  apiKey: string
+  /** 创建时间（UTC，ISO 字符串） */
+  createdAt: string
+  /** 最后更新时间（UTC，ISO 字符串） */
+  updatedAt: string
+}
+
+/** 新建/更新模型配置时提交的字段 */
+export interface ModelConfigInput {
+  providerName: string
+  baseUrl: string
+  displayName: string
+  modelName: string
+  /** API Key；本地模型等场景允许为空字符串 */
+  apiKey: string
+}
+
 /** 经 preload contextBridge 暴露给渲染进程的文件系统能力（白名单方法） */
 export interface ScoderAPI {
   /** 弹出系统目录选择框；用户取消时返回 null */
@@ -74,4 +104,12 @@ export interface ScoderAPI {
   isWindowMaximized: () => Promise<boolean>
   /** 订阅窗口最大化状态变化（最大化/还原时由主进程推送）；返回取消订阅函数 */
   onWindowMaximizeChange: (callback: (maximized: boolean) => void) => () => void
+  /** 读取全部模型配置（按创建时间倒序） */
+  listModelConfigs: () => Promise<ModelConfig[]>
+  /** 新建模型配置，返回落库后的完整记录 */
+  createModelConfig: (input: ModelConfigInput) => Promise<ModelConfig>
+  /** 更新指定模型配置，返回更新后的完整记录 */
+  updateModelConfig: (id: number, input: ModelConfigInput) => Promise<ModelConfig>
+  /** 删除模型配置（主进程弹出确认框）；用户取消时返回 false */
+  deleteModelConfig: (id: number) => Promise<boolean>
 }

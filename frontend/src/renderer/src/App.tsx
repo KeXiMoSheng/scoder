@@ -6,12 +6,14 @@ import EditorTabs from './components/EditorTabs'
 import FileTree from './components/FileTree'
 import type { FileNode } from './components/FileTree/types'
 import ResizeHandle from './components/ResizeHandle'
+import SettingsPage from './components/SettingsPage'
 import TerminalPanel from './components/TerminalPanel'
 import type { TerminalPanelHandle } from './components/TerminalPanel/types'
 import TitleBar from './components/TitleBar'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
 import { isAtOrUnder } from './lib/filePath'
+import { cn } from './lib/utils'
 
 /** 左侧文件树面板宽度（px） */
 const SIDEBAR_DEFAULT_WIDTH = 280
@@ -57,6 +59,8 @@ function App(): React.JSX.Element {
   // 命令行面板：可见时的高度（px）；null 表示尚未展开过，首次展开按 1/4 初始化
   const [terminalVisible, setTerminalVisible] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState<number | null>(null)
+  // 系统配置页：以覆盖层形式显示在工作区之上，工作区保持挂载（编辑/终端状态不丢失）
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
   const { themeId, setThemeId } = useTheme()
 
@@ -241,6 +245,15 @@ function App(): React.JSX.Element {
     }
   }, [terminalVisible, closeTerminal, openTerminal])
 
+  /** 切换系统配置页（标题栏设置按钮与设置页返回按钮共用） */
+  const toggleSettings = useCallback((): void => {
+    setSettingsOpen((prev) => !prev)
+  }, [])
+
+  const closeSettings = useCallback((): void => {
+    setSettingsOpen(false)
+  }, [])
+
   /** 标题栏终端按钮：确保命令行面板展开，并新建一个终端会话 */
   const handleNewTerminal = useCallback((): void => {
     openTerminal()
@@ -269,9 +282,13 @@ function App(): React.JSX.Element {
   )
 
   // Ctrl+`（或 Ctrl+J）切换命令行面板、Ctrl+Shift+` 新建终端、Ctrl+Alt+B 切换 AI 侧边栏：
-  // 捕获阶段拦截（capture），避免被 Monaco / xterm 先行消费
+  // 捕获阶段拦截（capture），避免被 Monaco / xterm 先行消费；
+  // 系统配置页打开时让出键盘，避免误触工作区面板
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (settingsOpen) {
+        return
+      }
       if (event.repeat) {
         return
       }
@@ -307,7 +324,7 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [toggleTerminal, handleNewTerminal, toggleAiPanel])
+  }, [toggleTerminal, handleNewTerminal, toggleAiPanel, settingsOpen])
 
   return (
     <div className="flex h-full flex-col">
@@ -316,80 +333,93 @@ function App(): React.JSX.Element {
         themeId={themeId}
         terminalVisible={terminalVisible}
         aiPanelVisible={aiPanelVisible}
+        settingsOpen={settingsOpen}
         onOpenFolder={handleOpenProject}
         onCloseFolder={handleCloseProject}
         onThemeChange={setThemeId}
         onNewTerminal={handleNewTerminal}
         onToggleAiPanel={toggleAiPanel}
+        onToggleSettings={toggleSettings}
       />
-      <div ref={workspaceRef} className="flex min-h-0 flex-1">
-        <aside
-          className="flex shrink-0 flex-col border-r border-line bg-elevated"
-          style={{ width: sidebarWidth }}
+      <div className="relative flex min-h-0 flex-1">
+        <div
+          ref={workspaceRef}
+          className={cn('flex min-h-0 flex-1', settingsOpen && 'invisible')}
+          aria-hidden={settingsOpen}
         >
-          {projectPath ? (
-            <FileTree
-              key={projectPath}
-              rootPath={projectPath}
-              selectedPath={activePath}
-              dirtyPaths={dirtyPaths}
-              onSelectFile={handleSelectFile}
-              onBeforeEntryMove={handleBeforeEntryMove}
-              onEntryMoved={handleEntryMoved}
-              onEntryDeleted={handleEntryDeleted}
-            />
-          ) : (
-            <p className="mx-3 my-4 leading-[1.6] text-dim">
-              通过菜单栏「文件 → 打开文件夹」选择代码目录
-            </p>
-          )}
-        </aside>
-        <ResizeHandle
-          label="调整文件树宽度"
-          onResizeStart={handleSidebarResizeStart}
-          onResize={handleSidebarResize}
-        />
-        <main ref={editorAreaRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {files.length > 0 ? (
-              <EditorTabs
-                files={files}
-                activePath={activePath}
+          <aside
+            className="flex shrink-0 flex-col border-r border-line bg-elevated"
+            style={{ width: sidebarWidth }}
+          >
+            {projectPath ? (
+              <FileTree
+                key={projectPath}
+                rootPath={projectPath}
+                selectedPath={activePath}
                 dirtyPaths={dirtyPaths}
-                onActivate={activate}
-                onClose={close}
-                onCloseOthers={closeOthers}
-                onCloseToRight={closeToRight}
-                onCloseAll={closeAll}
+                onSelectFile={handleSelectFile}
+                onBeforeEntryMove={handleBeforeEntryMove}
+                onEntryMoved={handleEntryMoved}
+                onEntryDeleted={handleEntryDeleted}
               />
-            ) : null}
-            <CodeEditor ref={editorRef} file={activeFile} onDirtyChange={handleDirtyChange} />
-          </div>
+            ) : (
+              <p className="mx-3 my-4 leading-[1.6] text-dim">
+                通过菜单栏「文件 → 打开文件夹」选择代码目录
+              </p>
+            )}
+          </aside>
           <ResizeHandle
-            label={terminalVisible ? '调整命令行面板高度' : '向上拖拽展开命令行面板'}
-            orientation="horizontal"
-            collapsed={!terminalVisible}
-            onResizeStart={handleTerminalResizeStart}
-            onResize={handleTerminalResize}
+            label="调整文件树宽度"
+            onResizeStart={handleSidebarResizeStart}
+            onResize={handleSidebarResize}
           />
-          <TerminalPanel
-            ref={terminalPanelRef}
-            visible={terminalVisible}
-            height={terminalHeight ?? 0}
-            cwd={projectPath}
-            themeId={themeId}
-            onRequestHide={closeTerminal}
-          />
-        </main>
-        {aiPanelVisible ? (
-          <>
+          <main ref={editorAreaRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {files.length > 0 ? (
+                <EditorTabs
+                  files={files}
+                  activePath={activePath}
+                  dirtyPaths={dirtyPaths}
+                  onActivate={activate}
+                  onClose={close}
+                  onCloseOthers={closeOthers}
+                  onCloseToRight={closeToRight}
+                  onCloseAll={closeAll}
+                />
+              ) : null}
+              <CodeEditor ref={editorRef} file={activeFile} onDirtyChange={handleDirtyChange} />
+            </div>
             <ResizeHandle
-              label="调整 AI 助手宽度"
-              onResizeStart={handleAiPanelResizeStart}
-              onResize={handleAiPanelResize}
+              label={terminalVisible ? '调整命令行面板高度' : '向上拖拽展开命令行面板'}
+              orientation="horizontal"
+              collapsed={!terminalVisible}
+              onResizeStart={handleTerminalResizeStart}
+              onResize={handleTerminalResize}
             />
-            <AiSidebar width={aiPanelWidth} />
-          </>
+            <TerminalPanel
+              ref={terminalPanelRef}
+              visible={terminalVisible}
+              height={terminalHeight ?? 0}
+              cwd={projectPath}
+              themeId={themeId}
+              onRequestHide={closeTerminal}
+            />
+          </main>
+          {aiPanelVisible ? (
+            <>
+              <ResizeHandle
+                label="调整 AI 助手宽度"
+                onResizeStart={handleAiPanelResizeStart}
+                onResize={handleAiPanelResize}
+              />
+              <AiSidebar width={aiPanelWidth} />
+            </>
+          ) : null}
+        </div>
+        {settingsOpen ? (
+          <div className="absolute inset-0 z-20 flex bg-base">
+            <SettingsPage onClose={closeSettings} />
+          </div>
         ) : null}
       </div>
     </div>

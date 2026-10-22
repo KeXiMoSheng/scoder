@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Terminal } from 'lucide-react'
+import { Settings, Terminal } from 'lucide-react'
 import { basename } from '../../lib/filePath'
 import { APP_THEMES } from '../../lib/theme'
 import { cn } from '../../lib/utils'
@@ -97,11 +97,13 @@ export default function TitleBar({
   themeId,
   terminalVisible,
   aiPanelVisible,
+  settingsOpen,
   onOpenFolder,
   onCloseFolder,
   onThemeChange,
   onNewTerminal,
-  onToggleAiPanel
+  onToggleAiPanel,
+  onToggleSettings
 }: TitleBarProps): React.JSX.Element {
   const [maximized, setMaximized] = useState(false)
 
@@ -194,6 +196,18 @@ export default function TitleBar({
           aria-pressed={aiPanelVisible}
         >
           <SidebarRightIcon active={aiPanelVisible} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={toggleButtonClass(settingsOpen)}
+          onClick={onToggleSettings}
+          title="系统配置"
+          aria-label="系统配置"
+          aria-pressed={settingsOpen}
+        >
+          <Settings className="size-4" />
         </Button>
       </div>
       <div className="ml-1 flex shrink-0 items-stretch [-webkit-app-region:no-drag]">

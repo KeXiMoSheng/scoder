@@ -10,6 +10,8 @@ export interface TitleBarProps {
   terminalVisible: boolean
   /** AI 助手侧边栏是否展开 */
   aiPanelVisible: boolean
+  /** 系统配置页是否打开（设置按钮高亮） */
+  settingsOpen: boolean
   /** 打开文件夹（弹出目录选择框） */
   onOpenFolder: () => void
   /** 关闭当前文件夹 */
@@ -20,4 +22,6 @@ export interface TitleBarProps {
   onNewTerminal: () => void
   /** 展开/收起 AI 助手 */
   onToggleAiPanel: () => void
+  /** 打开/关闭系统配置页 */
+  onToggleSettings: () => void
 }

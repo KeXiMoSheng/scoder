@@ -21,6 +21,15 @@
   --accent-foreground: #ffffff;
   --selection: #2c313a;
   --error: #e05561;
+  /* shadcn sidebar 令牌直接指向应用主题变量，随主题切换联动 */
+  --sidebar: var(--bg-elevated);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-foreground);
+  --sidebar-accent: var(--selection);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
 }
 
 /* 把主题 CSS 变量映射为 Tailwind 颜色令牌：
@@ -57,6 +66,14 @@
   --color-border: var(--border);
   --color-input: var(--border);
   --color-ring: var(--accent);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
 }
 
 @layer base {

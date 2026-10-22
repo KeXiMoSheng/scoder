@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ScoderAPI, TerminalDataEvent, TerminalExitEvent } from '../shared/types'
+import type {
+  ModelConfigInput,
+  ScoderAPI,
+  TerminalDataEvent,
+  TerminalExitEvent
+} from '../shared/types'
 
 // Custom APIs for renderer
 // 仅暴露白名单方法：渲染进程通过 invoke 调用主进程注册的 IPC handler
@@ -45,7 +50,13 @@ const api: ScoderAPI = {
     const listener = (_event: IpcRendererEvent, maximized: boolean): void => callback(maximized)
     ipcRenderer.on('window:maximizeChange', listener)
     return () => ipcRenderer.removeListener('window:maximizeChange', listener)
-  }
+  },
+  // 模型配置：持久化在本地 SQLite（设置页与后续 AI 请求共用）
+  listModelConfigs: () => ipcRenderer.invoke('modelConfig:list'),
+  createModelConfig: (input: ModelConfigInput) => ipcRenderer.invoke('modelConfig:create', input),
+  updateModelConfig: (id: number, input: ModelConfigInput) =>
+    ipcRenderer.invoke('modelConfig:update', id, input),
+  deleteModelConfig: (id: number) => ipcRenderer.invoke('modelConfig:delete', id)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

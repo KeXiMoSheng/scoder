@@ -14,6 +14,7 @@ import { basename, join, sep } from 'path'
 import * as pty from 'node-pty'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { closeDatabase, initDatabase, registerDatabaseHandlers } from './database'
 import type { FileEntry, SearchResult, TerminalDataEvent, TerminalExitEvent } from '../shared/types'
 
 // 开发版标识：electron-vite dev 热重载模式，或 dev 通道打包产物（版本号带 -dev.<时间戳>，见 scripts/dist.mjs）
@@ -442,6 +443,9 @@ app.whenReady().then(() => {
   registerFileSystemHandlers()
   registerTerminalHandlers()
   registerWindowHandlers()
+  // 本地库在窗口创建前初始化：设置页首帧即可读取已保存的模型配置
+  initDatabase()
+  registerDatabaseHandlers()
 
   // 快捷键策略（dev 通道自行接管，避免打包后 watchWindowShortcuts 按生产策略屏蔽调试快捷键）：
   // - 开发版：F12 或 Ctrl+Shift+I（macOS 为 Cmd+Alt+I）切换开发者工具
@@ -489,6 +493,7 @@ app.on('before-quit', () => {
     session.process.kill()
   }
   terminalSessions.clear()
+  closeDatabase()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
