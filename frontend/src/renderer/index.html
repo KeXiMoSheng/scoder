@@ -5,9 +5,10 @@
     <title>scoder</title>
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
     <!-- worker-src blob: 供 Monaco 的内联 worker 启动（打包后为 file:// 协议） -->
+    <!-- img-src file: 供 Markdown 预览加载文档引用到项目内的本地图片 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'"
     />
   </head>
 

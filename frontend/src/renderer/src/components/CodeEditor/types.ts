@@ -24,3 +24,6 @@ export interface LoadFailure {
   path: string
   message: string
 }
+
+/** Markdown 文件的三档视图：仅编辑 / 编辑与预览分栏 / 仅预览 */
+export type MarkdownViewMode = 'edit' | 'split' | 'preview'

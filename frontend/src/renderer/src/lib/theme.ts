@@ -28,6 +28,7 @@ export type CssVarName =
   | '--border'
   | '--text'
   | '--text-dim'
+  | '--link'
   | '--accent'
   | '--accent-hover'
   | '--accent-foreground'
@@ -53,6 +54,8 @@ const VAR_COLOR_KEYS: Record<CssVarName, readonly string[]> = {
   '--border': ['sideBar.border', 'panel.border', 'editorGroupHeader.tabsBorder'],
   '--text': ['editor.foreground', 'foreground'],
   '--text-dim': ['tab.inactiveForeground', 'statusBar.foreground', 'tab.activeForeground'],
+  // Markdown 预览等处的链接色：优先取主题的链接色，缺失时回退正文色
+  '--link': ['textLink.foreground', 'editorLink.activeForeground'],
   '--accent': ['button.background'],
   '--accent-hover': ['button.hoverBackground'],
   '--accent-foreground': ['button.foreground'],
@@ -113,6 +116,7 @@ function extractVars(
     '--border': pick('--border') ?? bg,
     '--text': text,
     '--text-dim': pick('--text-dim') ?? text,
+    '--link': pick('--link') ?? text,
     '--accent': accent,
     // 主题未提供 hover 色时，向白（深色主题）/ 黑（浅色主题）混合少量派生
     '--accent-hover':
