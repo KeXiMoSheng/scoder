@@ -29,16 +29,43 @@ function resolveImageSrc(src: string | null, basePath?: string): string | null {
 // 禁用后所有 HTML 按文本转义，避免脚本注入渲染进程
 const md = new MarkdownIt({ html: false, linkify: true })
 
+// 工具条图标：HTML 由字符串拼装，拿不到 React 图标组件，只能内联 SVG（stroke 继承文字色）
+function svgIcon(className: string, body: string): string {
+  const classAttr = className ? ` class="${className}"` : ''
+  return (
+    `<svg${classAttr} viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+    `aria-hidden="true">${body}</svg>`
+  )
+}
+
+const CHEVRON_ICON = svgIcon('md-code-chevron', '<path d="m6 9 6 6 6-6"/>')
+const COPY_ICON = svgIcon(
+  '',
+  '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>' +
+    '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2v2"/>'
+)
+const CHECK_ICON = svgIcon('', '<path d="M20 6 9 17l-5-5"/>')
+
 // 代码块：语言标识转成 Monaco 语言 id，正文直接作为 pre 的文本节点。
 // 预览侧用 monaco.editor.colorizeElement 着色，而该 API 只读取元素的第一个文本子节点，
-// 因此不能再套一层 <code>；复制按钮只能放在 pre 的外层容器里，否则会被着色结果覆写
+// 因此不能再套一层 <code>；工具条（语言名 + 复制）必须放在 pre 之外，否则会被着色结果覆写
 md.renderer.rules.fence = (tokens, idx) => {
   const token = tokens[idx]
   const language = resolveMarkdownLanguage(token.info)
   const languageAttr = language ? ` data-lang="${md.utils.escapeHtml(language)}"` : ''
+  const label = language && language !== 'plaintext' ? language : 'text'
   return (
     '<div class="md-code-block">' +
-    '<button type="button" class="md-code-copy" data-md-code-copy>复制</button>' +
+    '<div class="md-code-bar">' +
+    '<button type="button" class="md-code-lang" data-md-code-toggle aria-expanded="true" ' +
+    `title="收起代码块"><span>${md.utils.escapeHtml(label)}</span>${CHEVRON_ICON}</button>` +
+    '<button type="button" class="md-code-copy" data-md-code-copy ' +
+    'title="复制代码" aria-label="复制代码">' +
+    `<span class="md-code-icon" data-md-icon="copy">${COPY_ICON}</span>` +
+    `<span class="md-code-icon" data-md-icon="check">${CHECK_ICON}</span>` +
+    '</button>' +
+    '</div>' +
     `<pre class="md-code"${languageAttr}>${md.utils.escapeHtml(token.content)}</pre>` +
     '</div>\n'
   )

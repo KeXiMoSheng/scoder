@@ -8,33 +8,37 @@ import type { MarkdownPreviewProps } from './types'
 /** 已注册的语言 id：未注册的代码块保持纯文本，避免着色器产出空内容 */
 const REGISTERED_LANGUAGE_IDS = new Set(monaco.languages.getLanguages().map((item) => item.id))
 
-const COPY_IDLE_TEXT = '复制'
-/** 复制结果只在按钮上停留一小段时间，避免遮挡代码正文 */
+const COPY_IDLE_LABEL = '复制代码'
+/** 复制结果反馈（图标）只停留一小段时间，之后恢复成复制图标 */
 const COPY_FEEDBACK_DELAY = 1600
 
-/** 按钮由 markdown-it 生成的 HTML 创建、不在 React 树内，只能命令式更新文案 */
+/** 按钮由 markdown-it 生成的 HTML 创建、不在 React 树内，只能命令式更新反馈状态 */
 const copyTimers = new WeakMap<HTMLElement, number>()
 
+/** 复制反馈不用文案避免干扰阅读：按钮切换成对勾图标，结果只写在 title / aria-label 上 */
 function showCopyFeedback(button: HTMLElement, failed: boolean): void {
   const timer = copyTimers.get(button)
   if (timer !== undefined) {
     window.clearTimeout(timer)
   }
-  button.textContent = failed ? '复制失败' : '已复制'
+  const label = failed ? '复制失败' : '已复制'
   button.dataset.copied = failed ? 'error' : 'true'
+  button.title = label
+  button.setAttribute('aria-label', label)
   copyTimers.set(
     button,
     window.setTimeout(() => {
       copyTimers.delete(button)
-      button.textContent = COPY_IDLE_TEXT
       delete button.dataset.copied
+      button.title = COPY_IDLE_LABEL
+      button.setAttribute('aria-label', COPY_IDLE_LABEL)
     }, COPY_FEEDBACK_DELAY)
   )
 }
 
 /** 取代码块原文：着色后 pre 的 textContent 被逐行 <br/> 打断，优先读着色前缓存的 source */
-function readCodeBlockSource(button: HTMLElement): string {
-  const pre = button.parentElement?.querySelector('pre.md-code')
+function readCodeBlockSource(block: HTMLElement): string {
+  const pre = block.querySelector('pre.md-code')
   if (!(pre instanceof HTMLElement)) {
     return ''
   }
@@ -42,7 +46,11 @@ function readCodeBlockSource(button: HTMLElement): string {
 }
 
 function copyCodeBlock(button: HTMLElement): void {
-  const source = readCodeBlockSource(button)
+  const block = button.closest('.md-code-block')
+  if (!(block instanceof HTMLElement)) {
+    return
+  }
+  const source = readCodeBlockSource(block)
   if (source === '') {
     return
   }
@@ -50,6 +58,22 @@ function copyCodeBlock(button: HTMLElement): void {
     () => showCopyFeedback(button, false),
     () => showCopyFeedback(button, true)
   )
+}
+
+/** 收起/展开代码块：状态记在容器 dataset 上，显隐与箭头方向交给 CSS */
+function toggleCodeBlock(button: HTMLElement): void {
+  const block = button.closest('.md-code-block')
+  if (!(block instanceof HTMLElement)) {
+    return
+  }
+  const collapsed = block.dataset.collapsed === 'true'
+  if (collapsed) {
+    delete block.dataset.collapsed
+  } else {
+    block.dataset.collapsed = 'true'
+  }
+  button.setAttribute('aria-expanded', collapsed ? 'true' : 'false')
+  button.title = collapsed ? '收起代码块' : '展开代码块'
 }
 
 /** 订阅应用主题 id：主题切换后需要重建预览 DOM 并按新主题重新着色 */
@@ -105,9 +129,15 @@ export default function MarkdownPreview({
     }
   }, [html, themeId])
 
-  /** 点击：复制按钮优先；锚点阻止渲染进程内跳转，外部链接交给系统浏览器 */
+  /** 点击：代码块工具条优先（展开/收起、复制）；锚点阻止渲染进程内跳转，外部链接交给系统浏览器 */
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const target = event.target as HTMLElement
+    const toggleButton = target.closest('[data-md-code-toggle]')
+    if (toggleButton instanceof HTMLElement) {
+      event.preventDefault()
+      toggleCodeBlock(toggleButton)
+      return
+    }
     const copyButton = target.closest('[data-md-code-copy]')
     if (copyButton instanceof HTMLElement) {
       event.preventDefault()
