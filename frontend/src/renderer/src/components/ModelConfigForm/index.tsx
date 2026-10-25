@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
@@ -24,6 +24,8 @@ export default function ModelConfigForm({
   }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // API Key 默认掩码显示，点小眼睛临时切换为明文
+  const [apiKeyVisible, setApiKeyVisible] = useState(false)
 
   const updateField = useCallback(
     (field: keyof ModelConfigInput) =>
@@ -120,14 +122,29 @@ export default function ModelConfigForm({
               </Field>
               <Field>
                 <FieldLabel htmlFor="model-api-key">API Key</FieldLabel>
-                <Input
-                  id="model-api-key"
-                  type="password"
-                  value={form.apiKey}
-                  onChange={updateField('apiKey')}
-                  placeholder="sk-…"
-                  autoComplete="off"
-                />
+                <div className="relative">
+                  <Input
+                    id="model-api-key"
+                    type={apiKeyVisible ? 'text' : 'password'}
+                    value={form.apiKey}
+                    onChange={updateField('apiKey')}
+                    placeholder="sk-…"
+                    autoComplete="off"
+                    className="pr-9"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="absolute top-1/2 right-1 -translate-y-1/2 text-dim hover:text-fg"
+                    title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                    aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                    aria-pressed={apiKeyVisible}
+                    onClick={() => setApiKeyVisible((prev) => !prev)}
+                  >
+                    {apiKeyVisible ? <EyeOff /> : <Eye />}
+                  </Button>
+                </div>
                 <FieldDescription>
                   仅保存在本机数据库中；本地模型不需要鉴权时可留空。
                 </FieldDescription>

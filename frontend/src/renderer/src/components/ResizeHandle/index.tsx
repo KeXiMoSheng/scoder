@@ -32,7 +32,8 @@ export default function ResizeHandle({
     'shrink-0 transition-colors',
     isHorizontal ? 'w-auto cursor-row-resize' : 'w-1 cursor-col-resize',
     isHorizontal ? (collapsed ? 'h-1.5' : 'h-1') : '',
-    collapsed ? 'border-t border-line' : '',
+    // 折叠态加边线提示可拖出：横向条在上方、纵向条在两侧（左右面板收起均适用）
+    collapsed ? (isHorizontal ? 'border-t border-line' : 'border-x border-line') : '',
     // 激活态用强调色覆盖折叠底色，其余情况透明/elevated + 悬停高亮
     active
       ? 'bg-accent-hover'

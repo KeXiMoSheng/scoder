@@ -10,6 +10,7 @@ import SettingsPage from './components/SettingsPage'
 import TerminalPanel from './components/TerminalPanel'
 import type { TerminalPanelHandle } from './components/TerminalPanel/types'
 import TitleBar from './components/TitleBar'
+import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
 import { isAtOrUnder } from './lib/filePath'
@@ -18,9 +19,13 @@ import { cn } from './lib/utils'
 /** 左侧文件树面板宽度（px） */
 const SIDEBAR_DEFAULT_WIDTH = 280
 const SIDEBAR_MIN_WIDTH = 160
+/** 文件树收起阈值：拖到最小宽度的一半以下时自动隐藏（与命令行面板收起策略一致） */
+const SIDEBAR_HIDE_WIDTH = SIDEBAR_MIN_WIDTH / 2
 /** 右侧 AI 边栏宽度（px） */
 const AI_PANEL_DEFAULT_WIDTH = 320
 const AI_PANEL_MIN_WIDTH = 200
+/** AI 边栏收起阈值：拖到最小宽度的一半以下时自动隐藏 */
+const AI_PANEL_HIDE_WIDTH = AI_PANEL_MIN_WIDTH / 2
 /** 编辑器最小保留宽度：拖拽任一侧面板都不会把编辑器挤到更窄 */
 const EDITOR_MIN_WIDTH = 240
 /** 拖拽分隔条宽度（px），与 .resize-handle 的 CSS 宽度保持一致 */
@@ -52,7 +57,12 @@ function App(): React.JSX.Element {
     remap,
     closeUnder
   } = useOpenedFiles()
+  // AI 会话状态（新建/切换/重命名/关闭）：放在 App 里，侧边栏隐藏再打开时不丢会话
+  const aiSessions = useAiSessions()
+  // 单独取出稳定回调：避免快捷键监听依赖整个会话对象而反复重建
+  const ensureAiSession = aiSessions.ensureSession
   const [dirtyPaths, setDirtyPaths] = useState<ReadonlySet<string>>(new Set())
+  const [sidebarVisible, setSidebarVisible] = useState(true)
   const [aiPanelVisible, setAiPanelVisible] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [aiPanelWidth, setAiPanelWidth] = useState(AI_PANEL_DEFAULT_WIDTH)
@@ -79,17 +89,17 @@ function App(): React.JSX.Element {
     return workspaceRef.current?.clientWidth ?? window.innerWidth
   }, [])
 
-  /** 左侧面板允许的最大宽度：为右侧边栏与编辑器保留最小空间 */
+  /** 左侧面板允许的最大宽度：为右侧边栏与编辑器保留最小空间（两条分隔条始终占位） */
   const sidebarMaxWidth = useCallback((): number => {
-    const reserved = RESIZE_HANDLE_WIDTH + (aiPanelVisible ? aiPanelWidth + RESIZE_HANDLE_WIDTH : 0)
+    const reserved = (aiPanelVisible ? aiPanelWidth : 0) + 2 * RESIZE_HANDLE_WIDTH
     return Math.max(SIDEBAR_MIN_WIDTH, getWorkspaceWidth() - reserved - EDITOR_MIN_WIDTH)
   }, [aiPanelVisible, aiPanelWidth, getWorkspaceWidth])
 
-  /** 右侧面板允许的最大宽度：为左侧面板与编辑器保留最小空间 */
+  /** 右侧面板允许的最大宽度：为左侧面板与编辑器保留最小空间（收起的面板不占宽度） */
   const aiPanelMaxWidth = useCallback((): number => {
-    const reserved = sidebarWidth + 2 * RESIZE_HANDLE_WIDTH
+    const reserved = (sidebarVisible ? sidebarWidth : 0) + 2 * RESIZE_HANDLE_WIDTH
     return Math.max(AI_PANEL_MIN_WIDTH, getWorkspaceWidth() - reserved - EDITOR_MIN_WIDTH)
-  }, [sidebarWidth, getWorkspaceWidth])
+  }, [sidebarVisible, sidebarWidth, getWorkspaceWidth])
 
   /** 编辑器区实时高度（命令行面板占比与上下限都以它为基准） */
   const getEditorAreaHeight = useCallback((): number => {
@@ -128,6 +138,8 @@ function App(): React.JSX.Element {
     setProjectPath(dirPath)
     closeAll()
     setDirtyPaths(new Set())
+    // 打开新目录时确保文件树可见（之前可能被拖拽收起）
+    setSidebarVisible(true)
   }, [closeAll])
 
   /** 关闭当前文件夹：清空项目路径、标签页与脏标记，回到未打开状态 */
@@ -196,30 +208,46 @@ function App(): React.JSX.Element {
   )
 
   const handleSidebarResizeStart = useCallback((): void => {
-    dragStartSizeRef.current = sidebarWidth
-  }, [sidebarWidth])
+    // 收起状态下从 0 开始计算，向右拖拽即重新展开
+    dragStartSizeRef.current = sidebarVisible ? sidebarWidth : 0
+  }, [sidebarVisible, sidebarWidth])
 
   const handleSidebarResize = useCallback(
     (offsetX: number): void => {
-      setSidebarWidth(
-        clamp(dragStartSizeRef.current + offsetX, SIDEBAR_MIN_WIDTH, sidebarMaxWidth())
-      )
+      const target = dragStartSizeRef.current + offsetX
+      if (target < SIDEBAR_HIDE_WIDTH) {
+        // 拖到最小宽度的一半以下：立即收起（继续右拖可再拽出来）
+        setSidebarVisible(false)
+        return
+      }
+      setSidebarVisible(true)
+      setSidebarWidth(clamp(target, SIDEBAR_MIN_WIDTH, sidebarMaxWidth()))
     },
     [sidebarMaxWidth]
   )
 
   const handleAiPanelResizeStart = useCallback((): void => {
-    dragStartSizeRef.current = aiPanelWidth
-  }, [aiPanelWidth])
+    // 收起状态下从 0 开始计算，向左拖拽即重新展开
+    dragStartSizeRef.current = aiPanelVisible ? aiPanelWidth : 0
+  }, [aiPanelVisible, aiPanelWidth])
 
   const handleAiPanelResize = useCallback(
     (offsetX: number): void => {
       // 分隔条向右拖动（offsetX > 0）时右侧边栏变窄
-      setAiPanelWidth(
-        clamp(dragStartSizeRef.current - offsetX, AI_PANEL_MIN_WIDTH, aiPanelMaxWidth())
-      )
+      const target = dragStartSizeRef.current - offsetX
+      if (target < AI_PANEL_HIDE_WIDTH) {
+        // 拖到最小宽度的一半以下：立即收起（继续左拖可再拽出来）
+        setAiPanelVisible(false)
+        return
+      }
+      if (!aiPanelVisible) {
+        // 从收起状态拖出面板与标题栏打开等价：没有会话时自动建一个
+        ensureAiSession()
+      }
+      setAiPanelVisible(true)
+      setAiPanelWidth(clamp(target, AI_PANEL_MIN_WIDTH, aiPanelMaxWidth()))
     },
-    [aiPanelMaxWidth]
+    [aiPanelVisible, aiPanelMaxWidth, ensureAiSession]
   )
 
   /** 展开命令行面板：首次展开按编辑器区 1/4 初始化高度，之后沿用上次的高度 */
@@ -232,10 +260,14 @@ function App(): React.JSX.Element {
     setTerminalVisible(false)
   }, [])
 
-  /** 切换 AI 侧边栏显隐（标题栏按钮与全局快捷键共用） */
+  /** 切换 AI 侧边栏显隐（标题栏按钮与全局快捷键共用）；打开时若无会话则自动新建一个 */
   const toggleAiPanel = useCallback((): void => {
-    setAiPanelVisible((prev) => !prev)
-  }, [])
+    const nextVisible = !aiPanelVisible
+    setAiPanelVisible(nextVisible)
+    if (nextVisible) {
+      ensureAiSession()
+    }
+  }, [aiPanelVisible, ensureAiSession])
 
   const toggleTerminal = useCallback((): void => {
     if (terminalVisible) {
@@ -347,8 +379,12 @@ function App(): React.JSX.Element {
           className={cn('flex min-h-0 flex-1', settingsOpen && 'invisible')}
           aria-hidden={settingsOpen}
         >
+          {/* 文件树保持挂载：拖拽收起后其展开状态与已加载节点不丢 */}
           <aside
-            className="flex shrink-0 flex-col border-r border-line bg-elevated"
+            className={cn(
+              'shrink-0 flex-col border-r border-line bg-elevated',
+              sidebarVisible ? 'flex' : 'hidden'
+            )}
             style={{ width: sidebarWidth }}
           >
             {projectPath ? (
@@ -368,8 +404,10 @@ function App(): React.JSX.Element {
               </p>
             )}
           </aside>
+          {/* 分隔条常驻：文件树收起后仍可向右拖出 */}
           <ResizeHandle
-            label="调整文件树宽度"
+            label={sidebarVisible ? '调整文件树宽度' : '向右拖拽展开文件树'}
+            collapsed={!sidebarVisible}
             onResizeStart={handleSidebarResizeStart}
             onResize={handleSidebarResize}
           />
@@ -405,16 +443,14 @@ function App(): React.JSX.Element {
               onRequestHide={closeTerminal}
             />
           </main>
-          {aiPanelVisible ? (
-            <>
-              <ResizeHandle
-                label="调整 AI 助手宽度"
-                onResizeStart={handleAiPanelResizeStart}
-                onResize={handleAiPanelResize}
-              />
-              <AiSidebar width={aiPanelWidth} />
-            </>
-          ) : null}
+          {/* 分隔条常驻：AI 边栏收起后仍可向左拖出 */}
+          <ResizeHandle
+            label={aiPanelVisible ? '调整 AI 助手宽度' : '向左拖拽展开 AI 助手'}
+            collapsed={!aiPanelVisible}
+            onResizeStart={handleAiPanelResizeStart}
+            onResize={handleAiPanelResize}
+          />
+          {aiPanelVisible ? <AiSidebar width={aiPanelWidth} sessions={aiSessions} /> : null}
         </div>
         {settingsOpen ? (
           <div className="absolute inset-0 z-20 flex bg-base">
