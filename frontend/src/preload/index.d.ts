@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ScoderAPI } from '../shared/types'
+import type { ScoderAPI } from '../shared/api'
 
 declare global {
   interface Window {

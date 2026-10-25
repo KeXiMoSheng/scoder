@@ -1,70 +1,14 @@
-/** 主进程与渲染进程共享的类型定义 */
+/**
+ * preload 暴露给渲染进程的 API 契约（window.api）。
+ * 这里只声明“渲染进程能调用什么”，形状必须与 preload/index.ts 里的实现对象一致；
+ * 各域的数据结构放在同级目录的 xxx/types.ts，通道名放在各自的 events.ts。
+ */
+import type { AiAPI } from './ai/types'
+import type { FileEntry, SearchResult } from './files/types'
+import type { ModelConfig, ModelConfigInput } from './model-config/types'
+import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
 
-/** 目录单层条目（文件树懒加载的数据源） */
-export interface FileEntry {
-  /** 条目名称（不含路径） */
-  name: string
-  /** 绝对路径（同时作为文件树节点唯一标识） */
-  path: string
-  /** 是否为目录 */
-  isDirectory: boolean
-}
-
-/** 文件搜索（按名称子串匹配）的结果 */
-export interface SearchResult {
-  /** 命中的条目（目录与文件） */
-  entries: FileEntry[]
-  /** 结果是否因达到上限被截断 */
-  truncated: boolean
-}
-
-/** 终端会话输出事件：pty 产生增量文本时由主进程推送给渲染进程 */
-export interface TerminalDataEvent {
-  /** 会话 id（createTerminal 的返回值） */
-  id: number
-  /** 增量输出（可能包含 ANSI 转义序列） */
-  data: string
-}
-
-/** 终端会话退出事件：shell 进程结束时推送 */
-export interface TerminalExitEvent {
-  /** 会话 id */
-  id: number
-  /** 进程退出码 */
-  exitCode: number
-}
-
-/** 已保存的模型配置（对应数据库 model_configs 表） */
-export interface ModelConfig {
-  /** 自增主键 */
-  id: number
-  /** 模型供应商名，如 OpenAI */
-  providerName: string
-  /** 模型服务地址（OpenAI 兼容的 base URL） */
-  baseUrl: string
-  /** 模型显示名称（界面上展示的名字） */
-  displayName: string
-  /** 模型名称（调用接口时使用的 model 参数） */
-  modelName: string
-  /** API Key（本地明文存储，仅在渲染进程用于后续请求） */
-  apiKey: string
-  /** 创建时间（UTC，ISO 字符串） */
-  createdAt: string
-  /** 最后更新时间（UTC，ISO 字符串） */
-  updatedAt: string
-}
-
-/** 新建/更新模型配置时提交的字段 */
-export interface ModelConfigInput {
-  providerName: string
-  baseUrl: string
-  displayName: string
-  modelName: string
-  /** API Key；本地模型等场景允许为空字符串 */
-  apiKey: string
-}
-
-/** 经 preload contextBridge 暴露给渲染进程的文件系统能力（白名单方法） */
+/** 经 preload contextBridge 暴露给渲染进程的能力（白名单方法） */
 export interface ScoderAPI {
   /** 弹出系统目录选择框；用户取消时返回 null */
   openProjectDirectory: () => Promise<string | null>
@@ -112,4 +56,6 @@ export interface ScoderAPI {
   updateModelConfig: (id: number, input: ModelConfigInput) => Promise<ModelConfig>
   /** 删除模型配置（主进程弹出确认框）；用户取消时返回 false */
   deleteModelConfig: (id: number) => Promise<boolean>
+  /** AI 助手通道：会话、流式事件与中止 */
+  ai: AiAPI
 }

@@ -5,7 +5,7 @@ import ModelConfigCard from '../ModelConfigCard'
 import ModelConfigForm from '../ModelConfigForm'
 import { Button } from '../ui/button'
 import { Skeleton } from '../ui/skeleton'
-import type { ModelConfig, ModelConfigInput } from '@shared/types'
+import type { ModelConfig, ModelConfigInput } from '@shared/model-config/types'
 import type { ModelEditorState } from './types'
 
 /** 列表加载骨架数量：与默认窗口下可见的卡片列数一致 */

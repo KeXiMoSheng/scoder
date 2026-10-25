@@ -14,8 +14,13 @@ import { basename, join, sep } from 'path'
 import * as pty from 'node-pty'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { closeDatabase, initDatabase, registerDatabaseHandlers } from './database'
-import type { FileEntry, SearchResult, TerminalDataEvent, TerminalExitEvent } from '../shared/types'
+import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
+import { abortAllAiRuns, registerAiHandlers } from './ai'
+import { FILES_CHANNELS } from '../shared/files/events'
+import type { FileEntry, SearchResult } from '../shared/files/types'
+import { TERMINAL_CHANNELS } from '../shared/terminal/events'
+import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
+import { WINDOW_CHANNELS } from '../shared/window/events'
 
 // 开发版标识：electron-vite dev 热重载模式，或 dev 通道打包产物（版本号带 -dev.<时间戳>，见 scripts/dist.mjs）
 // 注意：打包后 is.dev 恒为 false，dev 通道必须靠版本号后缀区分，否则调试快捷键会被禁用
@@ -43,7 +48,7 @@ function compareFileEntries(a: FileEntry, b: FileEntry): number {
 
 /** 向渲染进程提供白名单文件系统能力：选择目录、读写文件、重命名/移动/删除条目、递归搜索 */
 function registerFileSystemHandlers(): void {
-  ipcMain.handle('dialog:openProjectDirectory', async (event): Promise<string | null> => {
+  ipcMain.handle(FILES_CHANNELS.openProjectDirectory, async (event): Promise<string | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)
     const options: OpenDialogOptions = {
       title: '选择项目目录',
@@ -55,22 +60,25 @@ function registerFileSystemHandlers(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  ipcMain.handle('fs:readDirectory', async (_event, dirPath: string): Promise<FileEntry[]> => {
-    if (typeof dirPath !== 'string') {
-      throw new Error('目录路径无效')
+  ipcMain.handle(
+    FILES_CHANNELS.readDirectory,
+    async (_event, dirPath: string): Promise<FileEntry[]> => {
+      if (typeof dirPath !== 'string') {
+        throw new Error('目录路径无效')
+      }
+      const dirents = await fs.readdir(dirPath, { withFileTypes: true })
+      return dirents
+        .filter((dirent) => !(dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)))
+        .map((dirent) => ({
+          name: dirent.name,
+          path: join(dirPath, dirent.name),
+          isDirectory: dirent.isDirectory()
+        }))
+        .sort(compareFileEntries)
     }
-    const dirents = await fs.readdir(dirPath, { withFileTypes: true })
-    return dirents
-      .filter((dirent) => !(dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)))
-      .map((dirent) => ({
-        name: dirent.name,
-        path: join(dirPath, dirent.name),
-        isDirectory: dirent.isDirectory()
-      }))
-      .sort(compareFileEntries)
-  })
+  )
 
-  ipcMain.handle('fs:readFile', async (_event, filePath: string): Promise<string> => {
+  ipcMain.handle(FILES_CHANNELS.readFile, async (_event, filePath: string): Promise<string> => {
     if (typeof filePath !== 'string') {
       throw new Error('文件路径无效')
     }
@@ -86,7 +94,7 @@ function registerFileSystemHandlers(): void {
   })
 
   ipcMain.handle(
-    'fs:writeFile',
+    FILES_CHANNELS.writeFile,
     async (_event, filePath: string, content: string): Promise<void> => {
       if (typeof filePath !== 'string' || typeof content !== 'string') {
         throw new Error('参数无效')
@@ -97,7 +105,7 @@ function registerFileSystemHandlers(): void {
 
   // 重命名与拖拽移动共用：把 sourcePath 移动到 targetPath（含改名）
   ipcMain.handle(
-    'fs:moveEntry',
+    FILES_CHANNELS.moveEntry,
     async (_event, sourcePath: string, targetPath: string): Promise<void> => {
       if (typeof sourcePath !== 'string' || typeof targetPath !== 'string') {
         throw new Error('路径无效')
@@ -122,36 +130,39 @@ function registerFileSystemHandlers(): void {
   )
 
   // 删除文件或目录（目录递归删除）；先经系统对话框确认，用户取消时返回 false
-  ipcMain.handle('fs:deleteEntry', async (event, targetPath: string): Promise<boolean> => {
-    if (typeof targetPath !== 'string' || !targetPath) {
-      throw new Error('路径无效')
+  ipcMain.handle(
+    FILES_CHANNELS.deleteEntry,
+    async (event, targetPath: string): Promise<boolean> => {
+      if (typeof targetPath !== 'string' || !targetPath) {
+        throw new Error('路径无效')
+      }
+      const isDirectory = (await fs.lstat(targetPath)).isDirectory()
+      const options: MessageBoxOptions = {
+        type: 'warning',
+        buttons: ['取消', '删除'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '删除确认',
+        message: `确定要删除${isDirectory ? '目录' : '文件'}「${basename(targetPath)}」吗？`,
+        detail: isDirectory
+          ? '该目录及其全部内容将被永久删除，且无法恢复。'
+          : '该文件将被永久删除，且无法恢复。'
+      }
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const result = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options)
+      if (result.response !== 1) {
+        return false
+      }
+      await fs.rm(targetPath, { recursive: true })
+      return true
     }
-    const isDirectory = (await fs.lstat(targetPath)).isDirectory()
-    const options: MessageBoxOptions = {
-      type: 'warning',
-      buttons: ['取消', '删除'],
-      defaultId: 0,
-      cancelId: 0,
-      title: '删除确认',
-      message: `确定要删除${isDirectory ? '目录' : '文件'}「${basename(targetPath)}」吗？`,
-      detail: isDirectory
-        ? '该目录及其全部内容将被永久删除，且无法恢复。'
-        : '该文件将被永久删除，且无法恢复。'
-    }
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const result = window
-      ? await dialog.showMessageBox(window, options)
-      : await dialog.showMessageBox(options)
-    if (result.response !== 1) {
-      return false
-    }
-    await fs.rm(targetPath, { recursive: true })
-    return true
-  })
+  )
 
   // 按名称子串递归搜索（目录在前、名称升序的广度优先），跳过噪音目录
   ipcMain.handle(
-    'fs:searchFiles',
+    FILES_CHANNELS.searchFiles,
     async (_event, rootPath: string, query: string, limit?: number): Promise<SearchResult> => {
       if (typeof rootPath !== 'string' || typeof query !== 'string') {
         throw new Error('参数无效')
@@ -209,7 +220,7 @@ function registerFileSystemHandlers(): void {
 
   // 在 dirPath 下创建空文件或空目录；名称非法或同名条目已存在时报错，返回新建条目供文件树定位
   ipcMain.handle(
-    'fs:createEntry',
+    FILES_CHANNELS.createEntry,
     async (_event, dirPath: string, name: string, isDirectory: boolean): Promise<FileEntry> => {
       if (
         typeof dirPath !== 'string' ||
@@ -275,7 +286,7 @@ function registerTerminalHandlers(): void {
   const watchedWindowIds = new Set<number>()
 
   ipcMain.handle(
-    'terminal:create',
+    TERMINAL_CHANNELS.create,
     (event, cwd: string | null, cols: number, rows: number): number => {
       if (
         (cwd !== null && typeof cwd !== 'string') ||
@@ -308,7 +319,7 @@ function registerTerminalHandlers(): void {
           return
         }
         const payload: TerminalDataEvent = { id, data }
-        sender.send('terminal:data', payload)
+        sender.send(TERMINAL_CHANNELS.data, payload)
       })
       proc.onExit(({ exitCode }) => {
         terminalSessions.delete(id)
@@ -316,21 +327,21 @@ function registerTerminalHandlers(): void {
           return
         }
         const payload: TerminalExitEvent = { id, exitCode }
-        sender.send('terminal:exit', payload)
+        sender.send(TERMINAL_CHANNELS.exit, payload)
       })
       return id
     }
   )
 
   // 缺少会话的写入/调整（如销毁竞态）静默忽略，不打断渲染进程
-  ipcMain.on('terminal:write', (_event, id: number, data: string): void => {
+  ipcMain.on(TERMINAL_CHANNELS.write, (_event, id: number, data: string): void => {
     if (typeof id !== 'number' || typeof data !== 'string') {
       return
     }
     terminalSessions.get(id)?.process.write(data)
   })
 
-  ipcMain.on('terminal:resize', (_event, id: number, cols: number, rows: number): void => {
+  ipcMain.on(TERMINAL_CHANNELS.resize, (_event, id: number, cols: number, rows: number): void => {
     if (typeof id !== 'number' || typeof cols !== 'number' || typeof rows !== 'number') {
       return
     }
@@ -341,7 +352,7 @@ function registerTerminalHandlers(): void {
     session.process.resize(Math.floor(cols), Math.floor(rows))
   })
 
-  ipcMain.handle('terminal:dispose', (_event, id: number): void => {
+  ipcMain.handle(TERMINAL_CHANNELS.dispose, (_event, id: number): void => {
     const session = terminalSessions.get(id)
     if (!session) {
       return
@@ -354,11 +365,11 @@ function registerTerminalHandlers(): void {
 /** 向渲染进程提供无边框窗口的控制能力：最小化、最大化/还原、关闭，并回查最大化状态 */
 function registerWindowHandlers(): void {
   // 控制类操作无需回执，走单向 send；目标窗口从事件发送者反查，天然隔离多窗口
-  ipcMain.on('window:minimize', (event): void => {
+  ipcMain.on(WINDOW_CHANNELS.minimize, (event): void => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
   })
 
-  ipcMain.on('window:toggleMaximize', (event): void => {
+  ipcMain.on(WINDOW_CHANNELS.toggleMaximize, (event): void => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) {
       return
@@ -370,11 +381,11 @@ function registerWindowHandlers(): void {
     }
   })
 
-  ipcMain.on('window:close', (event): void => {
+  ipcMain.on(WINDOW_CHANNELS.close, (event): void => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
 
-  ipcMain.handle('window:isMaximized', (event): boolean => {
+  ipcMain.handle(WINDOW_CHANNELS.isMaximized, (event): boolean => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
   })
 }
@@ -410,7 +421,7 @@ function createWindow(): void {
   // 无边框窗口的标题栏按钮需要跟随最大化/还原切换图标，状态变化时主动推送给渲染进程
   const pushMaximizeState = (): void => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window:maximizeChange', mainWindow.isMaximized())
+      mainWindow.webContents.send(WINDOW_CHANNELS.maximizeChange, mainWindow.isMaximized())
     }
   }
   mainWindow.on('maximize', pushMaximizeState)
@@ -444,8 +455,17 @@ app.whenReady().then(() => {
   registerTerminalHandlers()
   registerWindowHandlers()
   // 本地库在窗口创建前初始化：设置页首帧即可读取已保存的模型配置
-  initDatabase()
+  // 打开/迁移失败时给出可见错误并退出：继续运行只会让设置页与 AI 都报“尚未就绪”
+  try {
+    initDatabase()
+  } catch (error) {
+    dialog.showErrorBox('数据库初始化失败', error instanceof Error ? error.message : String(error))
+    app.quit()
+    return
+  }
   registerDatabaseHandlers()
+  // AI 通道依赖数据库（按 id 读模型配置），必须在 initDatabase 之后注册
+  registerAiHandlers()
 
   // 快捷键策略（dev 通道自行接管，避免打包后 watchWindowShortcuts 按生产策略屏蔽调试快捷键）：
   // - 开发版：F12 或 Ctrl+Shift+I（macOS 为 Cmd+Alt+I）切换开发者工具
@@ -489,6 +509,7 @@ app.whenReady().then(() => {
 
 // 应用退出前结束所有终端会话（pty 子进程不会随主进程自动退出）
 app.on('before-quit', () => {
+  abortAllAiRuns()
   for (const session of terminalSessions.values()) {
     session.process.kill()
   }

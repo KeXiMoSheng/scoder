@@ -1,6 +1,6 @@
 /** ModelConfigForm 组件的对外类型定义 */
 
-import type { ModelConfig, ModelConfigInput } from '@shared/types'
+import type { ModelConfig, ModelConfigInput } from '@shared/model-config/types'
 
 export interface ModelConfigFormProps {
   /** 编辑时传入原记录；null 表示新建 */

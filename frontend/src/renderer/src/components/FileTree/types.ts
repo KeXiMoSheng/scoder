@@ -1,7 +1,7 @@
 /** FileTree 组件的对外类型定义 */
 
 import type { MoveHandler, RenameHandler } from 'react-arborist'
-import type { FileEntry } from '@shared/types'
+import type { FileEntry } from '@shared/files/types'
 
 /** 文件树节点：以绝对路径为唯一标识；目录的 children 初始为空数组表示尚未加载 */
 export interface FileNode extends FileEntry {

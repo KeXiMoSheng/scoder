@@ -1,6 +1,6 @@
 /** ModelConfigCard 组件的对外类型定义 */
 
-import type { ModelConfig } from '@shared/types'
+import type { ModelConfig } from '@shared/model-config/types'
 
 export interface ModelConfigCardProps {
   /** 卡片展示的模型配置 */

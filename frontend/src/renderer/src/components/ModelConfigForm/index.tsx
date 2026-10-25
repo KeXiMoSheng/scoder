@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../ui/field'
 import { Input } from '../ui/input'
 import type { ChangeEvent, FormEvent } from 'react'
-import type { ModelConfigInput } from '@shared/types'
+import type { ModelConfigInput } from '@shared/model-config/types'
 import type { ModelConfigFormProps } from './types'
 
 /** 新建/编辑模型的表单：字段与主进程 model_configs 表一一对应 */

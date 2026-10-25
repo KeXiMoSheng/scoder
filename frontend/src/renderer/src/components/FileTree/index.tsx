@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
-import type { FileEntry } from '@shared/types'
+import type { FileEntry } from '@shared/files/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { basename, dirname, isAtOrUnder, joinPath, pathSeparator } from '../../lib/filePath'
