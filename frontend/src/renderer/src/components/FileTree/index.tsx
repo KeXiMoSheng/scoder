@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
+import { ChevronRight, ChevronsDownUp, FilePlus, Folder, FolderPlus, RotateCw } from 'lucide-react'
 import type { FileEntry } from '@shared/files/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
 import { extractErrorMessage } from '../../lib/errorMessage'
@@ -125,132 +126,6 @@ function buildSearchTree(rootPath: string, entries: FileEntry[]): FileNode[] {
   return rootChildren
 }
 
-function ChevronIcon({ open }: { open: boolean }): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="12"
-      height="12"
-      className={open ? 'text-dim transition-transform duration-100 rotate-90' : 'text-dim'}
-      aria-hidden="true"
-    >
-      <path
-        d="M6 4l4 4-4 4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function FolderIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="text-[#dcb67a]" aria-hidden="true">
-      <path
-        d="M1.8 3.6c0-.6.5-1 1-1h3.1l1.3 1.4h6c.6 0 1 .4 1 1v7.4c0 .6-.4 1-1 1H2.8c-.5 0-1-.4-1-1V3.6z"
-        fill="currentColor"
-        opacity="0.85"
-      />
-    </svg>
-  )
-}
-
-function RefreshIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M14 8a6 6 0 1 1-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M14 2v3.33h-3.33"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function NewFileIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M8.8 1.9H4.2c-.5 0-.9.4-.9.9v10.4c0 .5.4.9.9.9h7.6c.5 0 .9-.4.9-.9V5.2L8.8 1.9z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8.6 2v3.2h3.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8 8.2v3.1M6.45 9.75h3.1"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function NewFolderIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M1.9 4.1c0-.5.4-.9.9-.9h2.7l1.2 1.3h5.5c.5 0 .9.4.9.9v6.5c0 .5-.4.9-.9.9H2.8c-.5 0-.9-.4-.9-.9V4.1z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8 6.7v3.3M6.35 8.35h3.3"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function CollapseAllIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M3.2 6.2 8 3l4.8 3.2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M3.2 9.8 8 13l4.8-3.2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 interface ToolbarButtonProps {
   /** 无障碍标签与悬停提示文案 */
   label: string
@@ -351,11 +226,21 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       }}
     >
       <span className="inline-flex w-4 shrink-0 items-center justify-center text-dim">
-        {node.isInternal ? <ChevronIcon open={node.isOpen} /> : null}
+        {node.isInternal ? (
+          <ChevronRight
+            className={
+              node.isOpen ? 'size-3 rotate-90 transition-transform duration-100' : 'size-3'
+            }
+          />
+        ) : null}
       </span>
       <FileRow
         name={node.data.name}
-        icon={node.data.isDirectory ? <FolderIcon /> : undefined}
+        icon={
+          node.data.isDirectory ? (
+            <Folder className="size-3.5 fill-current text-[#dcb67a]" />
+          ) : undefined
+        }
         trailing={
           isDirty ? (
             <span
@@ -819,7 +704,7 @@ export default function FileTree({
             disabledReason="搜索模式下不可用"
             onClick={handleNewFile}
           >
-            <NewFileIcon />
+            <FilePlus className="size-3.5" />
           </ToolbarButton>
           <ToolbarButton
             label="新建文件夹"
@@ -827,14 +712,14 @@ export default function FileTree({
             disabledReason="搜索模式下不可用"
             onClick={handleNewFolder}
           >
-            <NewFolderIcon />
+            <FolderPlus className="size-3.5" />
           </ToolbarButton>
           <ToolbarButton
             label="刷新文件树"
             disabled={refreshing}
             onClick={() => void handleRefresh()}
           >
-            <RefreshIcon />
+            <RotateCw className="size-3.5" />
           </ToolbarButton>
           <ToolbarButton
             label="折叠所有"
@@ -842,7 +727,7 @@ export default function FileTree({
             disabledReason="搜索模式下不可用"
             onClick={handleCollapseAll}
           >
-            <CollapseAllIcon />
+            <ChevronsDownUp className="size-3.5" />
           </ToolbarButton>
         </div>
       </div>

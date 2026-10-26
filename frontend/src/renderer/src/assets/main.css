@@ -333,11 +333,17 @@ body.is-resizing-row * {
   color: var(--text);
 }
 
+/* 图标：lucide 静态 SVG，描边跟随文字色，尺寸由各位置规则覆盖 */
+.markdown-content .md-icon {
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 .markdown-content .md-code-icon {
   display: inline-flex;
 }
 
-.markdown-content .md-code-icon > svg {
+.markdown-content .md-code-icon > .md-icon {
   width: 13px;
   height: 13px;
 }

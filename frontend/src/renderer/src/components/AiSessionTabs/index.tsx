@@ -1,22 +1,8 @@
 import { useState } from 'react'
+import { X } from 'lucide-react'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import type { AiSessionTabsProps, SessionTabMenuState } from './types'
-
-/** 标签关闭按钮图标（与编辑器标签一致的小叉） */
-function CloseIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
-      <path
-        d="M4 4l8 8M12 4l-8 8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
 
 /**
  * AI 会话标签栏：与编辑器标签栏同款视觉。
@@ -88,7 +74,7 @@ export default function AiSessionTabs({
                   onClose(session.id)
                 }}
               >
-                <CloseIcon />
+                <X className="size-2.5" />
               </button>
             </span>
           </div>

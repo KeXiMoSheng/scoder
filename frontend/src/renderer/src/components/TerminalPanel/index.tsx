@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { X } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import type { TerminalPanelHandle, TerminalPanelProps } from './types'
@@ -15,21 +16,6 @@ function buildTerminalTheme(): ITheme {
     cursor: cssVar('--text'),
     selectionBackground: cssVar('--selection')
   }
-}
-
-/** 标签关闭按钮图标（与编辑器标签一致的小叉） */
-function CloseIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
-      <path
-        d="M4 4l8 8M12 4l-8 8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
 }
 
 /** 按运行平台返回终端标签名：Windows 用 powershell，其余（Linux/macOS）用 bash */
@@ -414,7 +400,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
                     closeSession(tab.uid)
                   }}
                 >
-                  <CloseIcon />
+                  <X className="size-2.5" />
                 </button>
               </div>
             )

@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Settings, Terminal } from 'lucide-react'
+import {
+  Copy as RestoreWindow,
+  Minus,
+  PanelRight,
+  Settings,
+  Square,
+  Terminal,
+  X
+} from 'lucide-react'
 import { basename } from '../../lib/filePath'
 import { APP_THEMES } from '../../lib/theme'
 import { cn } from '../../lib/utils'
@@ -16,71 +24,8 @@ import {
 } from '../ui/menubar'
 import type { TitleBarProps } from './types'
 
-/** 最小化图标：底部一条横线 */
-function MinimizeIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-      <line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
-
-/** 最大化图标：单个方框 */
-function MaximizeIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-      <rect
-        x="2.5"
-        y="2.5"
-        width="7"
-        height="7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1"
-      />
-    </svg>
-  )
-}
-
-/** 还原图标：两个叠放的方框，表示当前处于最大化状态 */
-function RestoreIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-      <rect x="2" y="4" width="6" height="6" fill="none" stroke="currentColor" strokeWidth="1" />
-      <path d="M4 4 V2 H10 V8 H8" fill="none" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
-
-/** 关闭图标：叉 */
-function CloseIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-      <path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-/** AI 侧边栏切换图标：外框 + 右侧分栏，展开时右侧区域着色加深 */
-function SidebarRightIcon({ active }: { active: boolean }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" className="size-4" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" />
-      <rect
-        x="10.5"
-        y="2.5"
-        width="4"
-        height="11"
-        fill="currentColor"
-        opacity={active ? 0.45 : 0.12}
-      />
-      <line x1="10.5" y1="2.5" x2="10.5" y2="13.5" stroke="currentColor" />
-    </svg>
-  )
-}
-
 /** 窗口控制按钮：占满标题栏高度，关闭键悬停用危险色 */
-const WINDOW_BUTTON_CLASS = 'h-8 w-11 rounded-none text-fg [&_svg]:size-3'
+const WINDOW_BUTTON_CLASS = 'h-8 w-11 rounded-none text-fg'
 /** 顶部菜单触发器：与标题栏同高，悬停/展开时用选中底色 */
 const MENU_TRIGGER_CLASS =
   'h-full rounded-none px-2.5 text-[12px] font-normal text-fg hover:bg-selection'
@@ -195,7 +140,7 @@ export default function TitleBar({
           aria-label="切换 AI 侧边栏"
           aria-pressed={aiPanelVisible}
         >
-          <SidebarRightIcon active={aiPanelVisible} />
+          <PanelRight className="size-4" />
         </Button>
         <Button
           type="button"
@@ -220,7 +165,7 @@ export default function TitleBar({
           title="最小化"
           aria-label="最小化"
         >
-          <MinimizeIcon />
+          <Minus className="size-3" />
         </Button>
         <Button
           type="button"
@@ -231,7 +176,8 @@ export default function TitleBar({
           title={maximized ? '向下还原' : '最大化'}
           aria-label={maximized ? '向下还原' : '最大化'}
         >
-          {maximized ? <RestoreIcon /> : <MaximizeIcon />}
+          {/* 还原按钮复用 lucide 的两个错位方框（Copy），与系统窗口控件形状一致 */}
+          {maximized ? <RestoreWindow className="size-3" /> : <Square className="size-3" />}
         </Button>
         <Button
           type="button"
@@ -242,7 +188,7 @@ export default function TitleBar({
           title="关闭"
           aria-label="关闭"
         >
-          <CloseIcon />
+          <X className="size-3" />
         </Button>
       </div>
     </div>

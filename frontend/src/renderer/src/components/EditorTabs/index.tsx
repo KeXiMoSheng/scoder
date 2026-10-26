@@ -1,23 +1,9 @@
 import { useState } from 'react'
+import { X } from 'lucide-react'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
 import type { EditorTabsProps, TabMenuState } from './types'
-
-/** 标签关闭按钮图标（悬停时替代脏标记显示） */
-function CloseIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
-      <path
-        d="M4 4l8 8M12 4l-8 8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
 
 /** 编辑器标签栏：切换/关闭打开的文件，右键标签弹出操作菜单 */
 export default function EditorTabs({
@@ -105,7 +91,7 @@ export default function EditorTabs({
                       onClose(file.path)
                     }}
                   >
-                    <CloseIcon />
+                    <X className="size-2.5" />
                   </button>
                 </span>
               }

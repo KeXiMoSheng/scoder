@@ -1,4 +1,7 @@
 /** Markdown 渲染层：markdown-it 实例与预览用到的自定义渲染规则 */
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { Check, ChevronDown, Files, type LucideIcon } from 'lucide-react'
 import MarkdownIt from 'markdown-it'
 import { resolveMarkdownLanguage } from './language'
 
@@ -29,23 +32,23 @@ function resolveImageSrc(src: string | null, basePath?: string): string | null {
 // 禁用后所有 HTML 按文本转义，避免脚本注入渲染进程
 const md = new MarkdownIt({ html: false, linkify: true })
 
-// 工具条图标：HTML 由字符串拼装，拿不到 React 图标组件，只能内联 SVG（stroke 继承文字色）
-function svgIcon(className: string, body: string): string {
-  const classAttr = className ? ` class="${className}"` : ''
-  return (
-    `<svg${classAttr} viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
-    `aria-hidden="true">${body}</svg>`
+/**
+ * 工具条图标：Markdown 渲染结果是 HTML 字符串，无法直接挂载 React 组件，
+ * 因此在模块初始化时把 lucide 图标渲染成静态 SVG 字符串嵌入；
+ * 颜色由 stroke="currentColor" 继承按钮文字色，尺寸由 main.css 的 .md-icon 规则控制。
+ */
+function iconMarkup(Icon: LucideIcon, className: string): string {
+  return renderToStaticMarkup(
+    createElement(Icon, {
+      className: className ? `md-icon ${className}` : 'md-icon',
+      'aria-hidden': true
+    })
   )
 }
 
-const CHEVRON_ICON = svgIcon('md-code-chevron', '<path d="m6 9 6 6 6-6"/>')
-const COPY_ICON = svgIcon(
-  '',
-  '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>' +
-    '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2v2"/>'
-)
-const CHECK_ICON = svgIcon('', '<path d="M20 6 9 17l-5-5"/>')
+const CHEVRON_ICON = iconMarkup(ChevronDown, 'md-code-chevron')
+const COPY_ICON = iconMarkup(Files, '')
+const CHECK_ICON = iconMarkup(Check, '')
 
 // 代码块：语言标识转成 Monaco 语言 id，正文直接作为 pre 的文本节点。
 // 预览侧用 monaco.editor.colorizeElement 着色，而该 API 只读取元素的第一个文本子节点，
