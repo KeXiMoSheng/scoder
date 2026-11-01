@@ -4,7 +4,8 @@
  * 只做“文件里有什么、怎么安全写进去”，不关心对话语义；
  * 事件的含义与重放都在 store.ts。
  */
-import { appendFile, mkdir, readFile, truncate, writeFile } from 'fs/promises'
+import { appendFile, mkdir, readFile, readdir, truncate, writeFile } from 'fs/promises'
+import { createHash } from 'crypto'
 import { dirname, join } from 'path'
 import { SessionLogError } from './errors'
 import {
@@ -24,6 +25,9 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 /** 会话日志目录名，位于 Electron userData 之下 */
 export const SESSIONS_DIR_NAME = 'sessions'
 
+/** 可读目录名的最大长度：留出前缀与后缀，避开 Windows 路径长度限制 */
+const PROJECT_KEY_MAX = 120
+
 /**
  * 校验会话 id 可直接作为文件名。
  * @param id 待校验的会话 id
@@ -39,14 +43,87 @@ export function assertSessionId(id: string): void {
 }
 
 /**
+ * 把一个项目路径转成可读的目录名。
+ * 分隔符与盘符压成 `-`，其余不安全字符用 `~XXXX` 转义；
+ * 过长时截断并追加短哈希，避免两个深层路径落到同一目录（参考 deepseek-harness 的 projectKey）。
+ * @param cwd 项目根目录绝对路径
+ * @returns 形如 `--home-me-project--` 的单段目录名
+ */
+export function projectKey(cwd: string): string {
+  if (cwd.length === 0) {
+    throw new SessionLogError('项目路径不能为空', 'SESSION_ID_INVALID')
+  }
+  let readable = ''
+  let separatorRun = false
+  for (let index = 0; index < cwd.length; index += 1) {
+    const code = cwd.charCodeAt(index)
+    const char = cwd[index]
+    if (char === '/' || char === '\\' || char === ':') {
+      if (!separatorRun) {
+        readable += '-'
+      }
+      separatorRun = true
+    } else if (char !== '~' && /^[A-Za-z0-9._-]$/.test(char)) {
+      readable += char
+      separatorRun = false
+    } else {
+      readable += `~${code.toString(16).toUpperCase().padStart(4, '0')}`
+      separatorRun = false
+    }
+  }
+  const slug = readable.replace(/^-+/, '') || 'root'
+  if (slug.length <= PROJECT_KEY_MAX) {
+    return `--${slug}--`
+  }
+  const digest = createHash('sha256').update(cwd).digest('hex').slice(0, 8)
+  return `--${slug.slice(0, PROJECT_KEY_MAX)}-${digest}--`
+}
+
+/**
+ * 计算某个项目的会话目录。
+ * 会话按项目隔离：关闭项目后再次打开，只能看到这个项目自己的会话。
+ * @param root 会话根目录（userData/sessions）
+ * @param cwd 项目根目录绝对路径
+ */
+export function projectDir(root: string, cwd: string): string {
+  return join(root, projectKey(cwd))
+}
+
+/**
  * 推导一个会话的日志文件路径。
- * @param root 会话目录（userData/sessions）
+ * @param root 会话根目录
+ * @param cwd 会话所属项目根目录
  * @param id 会话 id
  * @returns 该会话的 .jsonl 绝对路径
  */
-export function sessionLogPath(root: string, id: string): string {
+export function sessionLogPath(root: string, cwd: string, id: string): string {
   assertSessionId(id)
-  return join(root, `${id}.jsonl`)
+  return join(projectDir(root, cwd), `${id}.jsonl`)
+}
+
+/**
+ * 列出一个项目下的全部会话日志。
+ * @param root 会话根目录
+ * @param cwd 项目根目录
+ * @returns 日志文件名与绝对路径；项目目录不存在时返回空数组
+ */
+export async function listProjectLogs(
+  root: string,
+  cwd: string
+): Promise<{ name: string; path: string }[]> {
+  const dir = projectDir(root, cwd)
+  let entries: string[]
+  try {
+    entries = await readdir(dir)
+  } catch (error) {
+    if (isMissingFile(error)) {
+      return []
+    }
+    throw error
+  }
+  return entries
+    .filter((entry) => entry.endsWith('.jsonl'))
+    .map((entry) => ({ name: entry, path: join(dir, entry) }))
 }
 
 /**

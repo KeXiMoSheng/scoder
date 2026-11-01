@@ -1,7 +1,12 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
-import type { AiAPI, AiEvent, AiSendRequest, AiSessionCreateInput } from '../shared/ai/types'
+import type {
+  AiAPI,
+  AiEventEnvelope,
+  AiSendRequest,
+  AiSessionCreateInput
+} from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
@@ -16,17 +21,19 @@ const ai: AiAPI = {
   abort: (sessionId: string) => ipcRenderer.send(AI_CHANNELS.abort, sessionId),
   respondApproval: (requestId: string, approved: boolean) =>
     ipcRenderer.send(AI_CHANNELS.approval, requestId, approved),
-  onEvent: (listener: (event: AiEvent) => void) => {
-    const handler = (_event: IpcRendererEvent, payload: AiEvent): void => listener(payload)
+  onEvent: (listener: (payload: AiEventEnvelope) => void) => {
+    const handler = (_event: IpcRendererEvent, payload: AiEventEnvelope): void => listener(payload)
     ipcRenderer.on(AI_CHANNELS.event, handler)
     return () => ipcRenderer.removeListener(AI_CHANNELS.event, handler)
   },
   // 会话元数据：文件在主进程的 userData/sessions 下，渲染进程只拿摘要与写标题
-  listSessions: () => ipcRenderer.invoke(AI_CHANNELS.listSessions),
+  listSessions: (cwd: string) => ipcRenderer.invoke(AI_CHANNELS.listSessions, cwd),
+  loadMessages: (cwd: string, sessionId: string) =>
+    ipcRenderer.invoke(AI_CHANNELS.loadMessages, cwd, sessionId),
   createSession: (input: AiSessionCreateInput) =>
     ipcRenderer.invoke(AI_CHANNELS.createSession, input),
-  updateSessionTitle: (id: string, title: string, autoTitle: boolean) =>
-    ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, id, title, autoTitle)
+  updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) =>
+    ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, cwd, id, title, autoTitle)
 }
 
 // Custom APIs for renderer

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from './registry'
-import { optionalString } from './registry'
+import { optionalString, sectionText } from './registry'
 
 /** 单次列举返回的条目上限 */
 const MAX_ENTRIES = 500
@@ -49,6 +49,16 @@ export function createListTool(): ToolDefinition {
     presentCall(args) {
       const path = optionalString(args, 'path') ?? '.'
       return { kind: 'generic', title: `列出 ${path}`, path }
+    },
+    presentResult(args, outcome) {
+      const path = optionalString(args, 'path') ?? '.'
+      return {
+        kind: 'generic',
+        title: `列出 ${path}`,
+        path,
+        // 只展示条目行，`<path>`/`<entries>` 包裹是给模型看的
+        body: sectionText(outcome.text, 'entries')
+      }
     }
   }
 }

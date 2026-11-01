@@ -76,6 +76,19 @@ export function errorMessage(error: unknown): string {
 }
 
 /**
+ * 取工具输出里某个 XML 标签的内容，用作卡片正文。
+ * 模型需要 `<path>` / `<entries>` 这类包裹来定位结果，卡片只需要主体内容，
+ * 所以展开时去掉标签，避免噪声。
+ * @param text 工具输出的完整文本
+ * @param tag 标签名（内部常量，不来自用户输入）
+ * @returns 标签内容；找不到时返回原文
+ */
+export function sectionText(text: string, tag: string): string {
+  const matched = new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?</${tag}>`).exec(text)
+  return matched ? matched[1] : text
+}
+
+/**
  * 工具注册表：名称 → 定义。
  * 与 deepseek-harness 的 ctx.tools 同构，但 P0 不引入依赖注入与事件总线，
  * 策略钩子（先读后改、沙箱、审批）在 execute 内以普通函数插入。
@@ -127,13 +140,35 @@ export class ToolRegistry {
     // P1：在此插入 pre-execute 策略（先读后改、工作区包含、危险路径、审批）
     try {
       const outcome = await tool.execute(args, ctx)
-      const card = tool.presentResult?.(args, outcome)
+      // presentResult 缺失时用挂起卡片 + 结果文本兜底，保证每个工具都能展开看输出
+      const card = tool.presentResult?.(args, outcome) ?? resultFallback(tool, args, outcome)
       return { ok: true, text: outcome.text, ...(card ? { card } : {}) }
     } catch (error) {
       // 用户中止不是工具失败：向上传播，让循环以 aborted 收尾
       if (ctx.signal.aborted) throw error
       return { ok: false, text: `工具执行失败：${errorMessage(error)}` }
     }
+  }
+}
+
+/**
+ * 结果卡片的兜底：工具没有定义 presentResult 时，
+ * 用挂起卡片的标题加结果文本拼一个可展开的通用卡片。
+ */
+function resultFallback(
+  tool: ToolDefinition,
+  args: Record<string, unknown>,
+  outcome: ToolOutcome
+): ToolCardView | undefined {
+  const callCard = tool.presentCall?.(args)
+  if (outcome.text.length === 0) {
+    return callCard
+  }
+  return {
+    kind: callCard?.kind ?? 'generic',
+    title: callCard?.title ?? tool.name,
+    body: outcome.text,
+    ...(callCard?.path ? { path: callCard.path } : {})
   }
 }
 

@@ -2,6 +2,7 @@
  * 会话仓库：把一条条事件追加到 JSONL 日志，再从日志重放出对话历史。
  *
  * 设计要点（与 deepseek-harness 一致的部分）：
+ * - 会话按项目隔离：userData/sessions/--<项目路径>--/<会话id>.jsonl；
  * - 日志是唯一真相，发给模型的 ChatMessage 是派生结果，换 provider 不用改存储；
  * - 只追加不覆盖，工具执行到一半崩溃也不会丢掉已经发生的内容；
  * - seq 由仓库分配并严格连续，读取时校验。
@@ -9,13 +10,12 @@
  * 与 harness 刻意不同的部分：没有格式代际迁移、没有跨进程写锁、
  * 没有流式 chunk 时间线——本项目单进程、单写者，这些留到需要时再加。
  */
-import { readdir } from 'fs/promises'
-import { join } from 'path'
 import type { AiSessionSummary } from '../../../shared/ai/types'
 import type { ChatMessage, ChatToolCall } from '../llm/openai'
 import {
   appendSessionLog,
   createSessionLog,
+  listProjectLogs,
   readSessionLog,
   sessionLogPath,
   truncateTornTail
@@ -27,6 +27,7 @@ import {
   type SessionEventInput,
   type SessionLogContent
 } from './types'
+import { textOf } from './view'
 
 /** 新建会话的默认标题（渲染进程会再用首条消息覆盖） */
 export const DEFAULT_TITLE = '新会话'
@@ -46,15 +47,18 @@ export interface SessionState {
  * JSONL 会话仓库。
  * 所有写操作按会话串行（见 enqueue），保证同一文件里的行不会交错；
  * 读操作直接读盘，因此另一个进程追加的内容也能被看到。
+ *
+ * 每个方法都要求显式传入 cwd：会话属于具体项目，
+ * 关闭项目后列表里就查不到它的会话，重新打开同一项目才会再次出现。
  */
 export class SessionStore {
-  /** 会话 id → 写入链；前一个任务失败也继续执行后一个 */
+  /** 会话键（cwd + id）→ 写入链；前一个任务失败也继续执行后一个 */
   private readonly chains = new Map<string, Promise<unknown>>()
-  /** 会话 id → 写路径需要的轻量状态 */
+  /** 会话键 → 写路径需要的轻量状态 */
   private readonly states = new Map<string, SessionState>()
 
   /**
-   * @param resolveRoot 会话目录解析器；延迟到首次使用才求值，
+   * @param resolveRoot 会话根目录解析器；延迟到首次使用才求值，
    *   避免模块加载期就依赖 Electron 的 app 是否可用
    */
   constructor(private readonly resolveRoot: () => string) {}
@@ -62,22 +66,29 @@ export class SessionStore {
   /**
    * 确保会话日志存在并返回其状态。
    * 文件不存在时新建并写入会话头与初始标题；已存在时按磁盘内容恢复状态。
+   * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param title 新建时使用的初始标题
    * @param autoTitle 初始标题是否仍为自动生成的摘要
    */
-  async ensure(id: string, title: string = DEFAULT_TITLE, autoTitle = true): Promise<SessionState> {
-    const cached = this.states.get(id)
+  async ensure(
+    cwd: string,
+    id: string,
+    title: string = DEFAULT_TITLE,
+    autoTitle = true
+  ): Promise<SessionState> {
+    const key = refKey(cwd, id)
+    const cached = this.states.get(key)
     if (cached) {
       return cached
     }
-    return this.enqueue(id, async () => {
+    return this.enqueue(key, async () => {
       // 队列内再查一次：并发 ensure 只有第一个真正读盘
-      const raced = this.states.get(id)
+      const raced = this.states.get(key)
       if (raced) {
         return raced
       }
-      const path = sessionLogPath(this.resolveRoot(), id)
+      const path = sessionLogPath(this.resolveRoot(), cwd, id)
       const existing = await readSessionLog(path)
       if (existing) {
         // 上次崩溃留下的半行必须先截掉，否则下一次追写会把它夹成“中间行损坏”
@@ -85,7 +96,7 @@ export class SessionStore {
           await truncateTornTail(path)
         }
         const state = toState(existing, title, autoTitle)
-        this.states.set(id, state)
+        this.states.set(key, state)
         return state
       }
       const createdAt = Date.now()
@@ -103,7 +114,7 @@ export class SessionStore {
         title,
         autoTitle
       }
-      this.states.set(id, state)
+      this.states.set(key, state)
       return state
     })
   }
@@ -111,22 +122,24 @@ export class SessionStore {
   /**
    * 追加一批事件（seq 与时间戳由仓库分配）。
    * 调用方按对话顺序传入，整批一次落盘。
+   * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param inputs 待写入的事件
    */
-  async record(id: string, inputs: readonly SessionEventInput[]): Promise<void> {
+  async record(cwd: string, id: string, inputs: readonly SessionEventInput[]): Promise<void> {
     if (inputs.length === 0) {
       return
     }
-    await this.ensure(id)
-    await this.enqueue(id, async () => {
-      const state = this.states.get(id)
+    await this.ensure(cwd, id)
+    const key = refKey(cwd, id)
+    await this.enqueue(key, async () => {
+      const state = this.states.get(key)
       if (!state) {
         throw new Error(`会话 ${id} 尚未初始化`)
       }
       const now = Date.now()
       const events = inputs.map((input, offset) => toEvent(input, state.lastSeq + offset + 1, now))
-      await appendSessionLog(sessionLogPath(this.resolveRoot(), id), events)
+      await appendSessionLog(sessionLogPath(this.resolveRoot(), cwd, id), events)
       state.lastSeq = events[events.length - 1].seq
       for (const event of events) {
         if (event.type === 'turn/start') {
@@ -139,41 +152,39 @@ export class SessionStore {
   /**
    * 重放会话历史，得到可直接发给模型的 ChatMessage 数组。
    * 不含系统提示：它每轮由 buildSystemPrompt 现算，避免改了提示词却读回旧文案。
+   * @param cwd 会话所属项目根目录
    * @param id 会话 id
    */
-  async history(id: string): Promise<ChatMessage[]> {
-    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), id))
+  async history(cwd: string, id: string): Promise<ChatMessage[]> {
+    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
     return content ? replay(content.events) : []
   }
 
   /**
-   * 列出全部会话摘要（按最后活动时间倒序）。
-   * 逐个文件读取：会话数量是几十级，目录扫描的整体耗时远小于一次模型调用。
-   * 损坏的单个文件跳过而不是让整个列表失败。
-   * @returns 会话摘要列表
+   * 读取会话的全部事件（展示层整理用）。
+   * 文件不存在时返回空数组，供“新建后尚未落盘”的会话直接展示空列表。
+   * @param cwd 会话所属项目根目录
+   * @param id 会话 id
    */
-  async list(): Promise<AiSessionSummary[]> {
-    const root = this.resolveRoot()
-    let entries: string[]
-    try {
-      entries = await readdir(root)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return []
-      }
-      throw error
-    }
+  async events(cwd: string, id: string): Promise<SessionEvent[]> {
+    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
+    return content ? content.events : []
+  }
 
+  /**
+   * 列出某个项目下的会话摘要（按最后活动时间倒序）。
+   * 目录不存在（该项目还没有会话）时返回空数组；
+   * 损坏的单个文件跳过而不是让整个列表失败。
+   * @param cwd 项目根目录
+   */
+  async list(cwd: string): Promise<AiSessionSummary[]> {
+    const logs = await listProjectLogs(this.resolveRoot(), cwd)
     const summaries: AiSessionSummary[] = []
-    for (const entry of entries) {
-      if (!entry.endsWith('.jsonl')) {
-        continue
+    for (const log of logs) {
+      const content = await this.readQuietly(log.path)
+      if (content) {
+        summaries.push(toSummary(content))
       }
-      const content = await this.readQuietly(join(root, entry))
-      if (!content) {
-        continue
-      }
-      summaries.push(toSummary(content))
     }
     return summaries.sort((left, right) => right.updatedAt - left.updatedAt)
   }
@@ -181,12 +192,13 @@ export class SessionStore {
   /**
    * 在驱动新一轮之前闭合上次遗留的未结束轮次。
    * 进程被强杀时最后一条 turn/end 没有写进去，补一条 interrupted 让日志自洽。
+   * @param cwd 会话所属项目根目录
    * @param id 会话 id
    */
-  async settle(id: string): Promise<void> {
+  async settle(cwd: string, id: string): Promise<void> {
     // 先 ensure：它会在首次加载时截掉崩溃留下的半行，后续追加才不会夹在中间
-    await this.ensure(id)
-    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), id))
+    await this.ensure(cwd, id)
+    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
     if (!content) {
       return
     }
@@ -194,19 +206,20 @@ export class SessionStore {
     if (open === null) {
       return
     }
-    await this.record(id, [{ type: 'turn/end', data: { turn: open, reason: 'interrupted' } }])
+    await this.record(cwd, id, [{ type: 'turn/end', data: { turn: open, reason: 'interrupted' } }])
   }
 
   /**
    * 更新会话标题（追加一条 session/title 事件，而不是改写文件开头）。
+   * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param title 新标题
    * @param autoTitle 是否仍为自动生成的摘要标题
    */
-  async updateTitle(id: string, title: string, autoTitle: boolean): Promise<void> {
-    await this.ensure(id, title, autoTitle)
-    await this.record(id, [{ type: 'session/title', data: { title, auto: autoTitle } }])
-    const state = this.states.get(id)
+  async updateTitle(cwd: string, id: string, title: string, autoTitle: boolean): Promise<void> {
+    await this.ensure(cwd, id, title, autoTitle)
+    await this.record(cwd, id, [{ type: 'session/title', data: { title, auto: autoTitle } }])
+    const state = this.states.get(refKey(cwd, id))
     if (state) {
       state.title = title
       state.autoTitle = autoTitle
@@ -224,12 +237,12 @@ export class SessionStore {
   }
 
   /** 把任务排到该会话写入链的末尾，等待前一个任务结束（无论成败） */
-  private enqueue<T>(id: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.chains.get(id) ?? Promise.resolve()
+  private enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.chains.get(key) ?? Promise.resolve()
     const next = previous.then(task, task)
     // 链上只保留“是否已完成”，避免把业务异常传播给下一个任务
     this.chains.set(
-      id,
+      key,
       next.then(
         () => undefined,
         () => undefined
@@ -237,6 +250,11 @@ export class SessionStore {
     )
     return next
   }
+}
+
+/** 同一 id 在不同项目下是两个会话，缓存与写入链都要按 (cwd, id) 区分 */
+function refKey(cwd: string, id: string): string {
+  return `${cwd}\u0000${id}`
 }
 
 /** 由磁盘内容恢复写路径状态 */
@@ -335,14 +353,6 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
     }
   }
   return messages
-}
-
-/** 拼接内容块里的全部文本 */
-function textOf(blocks: readonly SessionBlock[]): string {
-  return blocks
-    .filter((block): block is Extract<SessionBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
 }
 
 /** 取出内容块里的工具调用，展开成 OpenAI 的 tool_calls 形状 */

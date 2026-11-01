@@ -65,6 +65,46 @@ export type AiEvent =
 export type AiTurnEndReason = Extract<AiEvent, { type: 'turn-end' }>['reason']
 
 /**
+ * 主进程推送的单条事件：带会话 id。
+ * 同一进程可能同时跑多个会话，渲染进程据此只更新当前打开的那个。
+ */
+export interface AiEventEnvelope {
+  sessionId: string
+  event: AiEvent
+}
+
+/**
+ * 会话中的一条展示条目：由磁盘事件整理而来，渲染进程直接可用。
+ * 助手文本与工具卡片是分开的条目，按发生顺序排列：
+ * 流式追加时只需在尾部新建或更新最后一个，不必回改前面的结构。
+ */
+export type AiMessageView =
+  | { kind: 'user'; id: string; time: number; text: string }
+  | { kind: 'assistant'; id: string; time: number; text: string }
+  | {
+      kind: 'tool'
+      id: string
+      time: number
+      callId: string
+      name: string
+      /** 模型给出的原始参数 JSON 字符串 */
+      arguments: string
+      status: 'pending' | 'done'
+      /** 执行是否成功（status 为 done 时才有意义） */
+      ok?: boolean
+      /** 工具结果文本（展示用，可能较长） */
+      resultText?: string
+      /** 卡片展示意图：主进程按工具定义推导并随日志保存，历史与实时一致 */
+      card?: ToolCardView
+    }
+
+/** 打开会话时载入的内容：磁盘历史 + 该会话是否正在执行 */
+export interface AiLoadedSession {
+  messages: AiMessageView[]
+  running: boolean
+}
+
+/**
  * 会话摘要：主进程扫描会话目录后汇总，供渲染进程恢复标签栏与历史列表。
  * 与磁盘日志的对应关系：title 取最后一条 session/title 事件，
  * updatedAt 取最后一条事件的时间。
@@ -80,8 +120,10 @@ export interface AiSessionSummary {
   updatedAt: number
 }
 
-/** 新建会话的输入：id 由渲染进程生成，主进程只负责落盘 */
+/** 新建会话的输入：id 由渲染进程生成，主进程负责落到该项目目录下 */
 export interface AiSessionCreateInput {
+  /** 会话所属项目根目录（绝对路径）：会话按项目隔离存储 */
+  cwd: string
   id: string
   title: string
   autoTitle: boolean
@@ -95,12 +137,14 @@ export interface AiAPI {
   abort: (sessionId: string) => void
   /** 回应一次审批请求（P1 的写操作会用到） */
   respondApproval: (requestId: string, approved: boolean) => void
-  /** 订阅主进程事件；返回取消订阅函数 */
-  onEvent: (listener: (event: AiEvent) => void) => () => void
-  /** 列出磁盘上的全部会话（按最后活动时间倒序） */
-  listSessions: () => Promise<AiSessionSummary[]>
+  /** 订阅主进程事件；返回取消订阅函数。回调带会话 id，供多会话并发时过滤 */
+  onEvent: (listener: (payload: AiEventEnvelope) => void) => () => void
+  /** 读取一个会话的历史消息（从 jsonl 日志重放）与执行状态 */
+  loadMessages: (cwd: string, sessionId: string) => Promise<AiLoadedSession>
+  /** 列出某个项目下的全部会话（按最后活动时间倒序） */
+  listSessions: (cwd: string) => Promise<AiSessionSummary[]>
   /** 新建会话日志文件（幂等：同 id 重复调用不会清空已有内容） */
   createSession: (input: AiSessionCreateInput) => Promise<void>
   /** 保存会话标题；autoTitle 为 true 表示仍是首条消息的摘要 */
-  updateSessionTitle: (id: string, title: string, autoTitle: boolean) => Promise<void>
+  updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) => Promise<void>
 }

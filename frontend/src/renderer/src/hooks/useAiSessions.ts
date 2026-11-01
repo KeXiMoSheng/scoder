@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AiSessionSummary } from '../../../shared/ai/types'
 
 /** 默认会话标题 */
@@ -9,30 +9,35 @@ const TITLE_MAX_LENGTH = 20
 /** 一个 AI 会话：与主进程返回的摘要同构，标题与时间用于标签栏和历史列表 */
 export type AiSession = AiSessionSummary
 
-/** 会话状态：标签顺序 + 当前激活项 */
+/** 会话状态：所属项目 + 标签顺序 + 当前激活项 */
 interface AiSessionsState {
+  /** 该状态属于哪个项目：与当前 projectPath 不一致时视为“尚未加载” */
+  projectPath: string | null
   sessions: AiSession[]
   activeId: string | null
 }
 
+/** 没有项目或正在切换项目时的空状态（复用同一对象，避免无谓重渲染） */
+const EMPTY_STATE: AiSessionsState = { projectPath: null, sessions: [], activeId: null }
+
 export interface AiSessionsApi {
-  /** 全部会话（按创建顺序，即标签栏顺序） */
+  /** 当前项目的全部会话（按创建顺序，即标签栏顺序） */
   sessions: AiSession[]
   /** 当前激活会话 id；无会话时为 null */
   activeId: string | null
   /** 当前激活的会话；无会话时为 null */
   activeSession: AiSession | null
-  /** 新建会话并激活（追加到标签栏末尾） */
+  /** 新建会话并激活（追加到标签栏末尾）；未打开项目时忽略 */
   create: () => void
-  /** 没有会话时新建一个并激活；已有会话则保持原状（打开 AI 面板时调用） */
+  /** 没有会话时新建一个并激活；已有会话则激活第一个（打开 AI 面板时调用） */
   ensureSession: () => void
   /** 激活指定会话（仅当其存在） */
   activate: (id: string) => void
   /** 重命名会话（空白名称忽略） */
   rename: (id: string, title: string) => void
-  /** 关闭单个会话 */
+  /** 关闭单个会话标签（不删除磁盘日志） */
   close: (id: string) => void
-  /** 关闭除指定会话外的全部会话 */
+  /** 关闭除指定会话外的全部标签（不删除磁盘日志） */
   closeOthers: (id: string) => void
   /** 发送一条消息后更新活动时间；自动标题的会话用首条消息替换标题 */
   touch: (id: string, prompt: string) => void
@@ -118,127 +123,173 @@ function removeMatching(
       }
     }
   }
-  return { sessions, activeId }
+  return { projectPath: state.projectPath, sessions, activeId }
 }
 
 /**
  * AI 会话状态管理（新建/激活/重命名/关闭/活动时间）。
- * 会话正文由主进程按 jsonl 追加落盘，这里只维护标签栏需要的元数据；
- * 启动时从主进程恢复，所以关掉应用再打开仍能看到历史会话。
+ *
+ * 会话与项目绑定：只加载 projectPath 对应目录下的会话，
+ * 关闭项目（projectPath 变为 null）后列表立即清空，
+ * 重新打开同一项目时再从磁盘恢复。
+ * @param projectPath 当前打开的项目根目录；null 表示没有打开项目
  */
-export function useAiSessions(): AiSessionsApi {
-  const [state, setState] = useState<AiSessionsState>({ sessions: [], activeId: null })
-  // 与 state 同步的镜像：新建/重命名要先拿到当前列表，再决定写什么
-  const stateRef = useRef(state)
-  useEffect(() => {
-    stateRef.current = state
-  }, [state])
+export function useAiSessions(projectPath: string | null): AiSessionsApi {
+  const [state, setState] = useState<AiSessionsState>({
+    projectPath,
+    sessions: [],
+    activeId: null
+  })
 
-  // 启动时恢复磁盘上的会话；恢复失败只影响历史列表，不影响新建
+  // 项目切换后旧列表立即失效：磁盘结果到达前不展示上一个项目的会话
+  const current = state.projectPath === projectPath ? state : EMPTY_STATE
+
+  // 载入当前项目的会话列表
   useEffect(() => {
+    if (projectPath === null) {
+      return
+    }
     let cancelled = false
     void window.api.ai
-      .listSessions()
+      .listSessions(projectPath)
       .then((sessions) => {
         if (cancelled) {
           return
         }
-        // 恢复是异步的：期间用户已经新建过会话时以内存状态为准
-        setState((prev) => (prev.sessions.length > 0 ? prev : { sessions, activeId: null }))
+        setState({ projectPath, sessions, activeId: null })
       })
       .catch((error: unknown) => console.warn('读取会话列表失败', error))
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [projectPath])
 
   const create = useCallback((): void => {
-    const session = buildSession(stateRef.current.sessions)
-    setState({ sessions: [...stateRef.current.sessions, session], activeId: session.id })
+    if (projectPath === null) {
+      return
+    }
+    const session = buildSession(current.sessions)
+    setState({ projectPath, sessions: [...current.sessions, session], activeId: session.id })
     // 落盘失败只影响“重启后是否还在”，不应打断当前编辑
     void window.api.ai
-      .createSession({ id: session.id, title: session.title, autoTitle: session.autoTitle })
+      .createSession({
+        cwd: projectPath,
+        id: session.id,
+        title: session.title,
+        autoTitle: session.autoTitle
+      })
       .catch((error: unknown) => console.warn('新建会话文件失败', error))
-  }, [])
+  }, [current.sessions, projectPath])
 
   const ensureSession = useCallback((): void => {
-    const current = stateRef.current
+    if (projectPath === null) {
+      return
+    }
     if (current.sessions.length === 0) {
       create()
       return
     }
     // 恢复出来的会话没有激活项：打开面板时补上，避免界面停在“无会话”状态
     if (current.activeId === null) {
-      setState({ sessions: current.sessions, activeId: current.sessions[0].id })
+      setState({ projectPath, sessions: current.sessions, activeId: current.sessions[0].id })
     }
-  }, [create])
+  }, [create, current.activeId, current.sessions, projectPath])
 
-  const activate = useCallback((id: string): void => {
-    setState((prev) => {
-      if (prev.activeId === id || !prev.sessions.some((session) => session.id === id)) {
-        return prev
+  const activate = useCallback(
+    (id: string): void => {
+      setState((previous) => {
+        if (
+          previous.projectPath !== projectPath ||
+          previous.activeId === id ||
+          !previous.sessions.some((session) => session.id === id)
+        ) {
+          return previous
+        }
+        return { ...previous, activeId: id }
+      })
+    },
+    [projectPath]
+  )
+
+  const rename = useCallback(
+    (id: string, title: string): void => {
+      const trimmed = title.trim()
+      const target = current.sessions.find((session) => session.id === id)
+      // 空白名称与无变化的名称都不落盘
+      if (!trimmed || !target || target.title === trimmed || projectPath === null) {
+        return
       }
-      return { sessions: prev.sessions, activeId: id }
-    })
-  }, [])
-
-  const rename = useCallback((id: string, title: string): void => {
-    const trimmed = title.trim()
-    const target = stateRef.current.sessions.find((session) => session.id === id)
-    // 空白名称与无变化的名称都不落盘
-    if (!trimmed || !target || target.title === trimmed) {
-      return
-    }
-    setState({
-      sessions: stateRef.current.sessions.map((session) =>
-        session.id === id ? { ...session, title: trimmed, autoTitle: false } : session
-      ),
-      activeId: stateRef.current.activeId
-    })
-    void window.api.ai
-      .updateSessionTitle(id, trimmed, false)
-      .catch((error: unknown) => console.warn('保存会话标题失败', error))
-  }, [])
-
-  const close = useCallback((id: string): void => {
-    setState((prev) => removeMatching(prev, (session) => session.id === id))
-  }, [])
-
-  const closeOthers = useCallback((id: string): void => {
-    setState((prev) => {
-      const target = prev.sessions.find((session) => session.id === id)
-      if (!target || prev.sessions.length === 1) {
-        return prev
-      }
-      return { sessions: [target], activeId: id }
-    })
-  }, [])
-
-  const touch = useCallback((id: string, prompt: string): void => {
-    const now = Date.now()
-    const target = stateRef.current.sessions.find((session) => session.id === id)
-    if (!target) {
-      return
-    }
-    const title = target.autoTitle ? summarizePrompt(prompt) : target.title
-    setState({
-      sessions: stateRef.current.sessions.map((session) =>
-        session.id === id ? { ...session, title, autoTitle: false, updatedAt: now } : session
-      ),
-      activeId: stateRef.current.activeId
-    })
-    // 标题真的变了才追写一条事件，避免每次发送都往日志里塞重复标题
-    if (title !== target.title) {
+      setState({
+        projectPath,
+        sessions: current.sessions.map((session) =>
+          session.id === id ? { ...session, title: trimmed, autoTitle: false } : session
+        ),
+        activeId: current.activeId
+      })
       void window.api.ai
-        .updateSessionTitle(id, title, false)
+        .updateSessionTitle(projectPath, id, trimmed, false)
         .catch((error: unknown) => console.warn('保存会话标题失败', error))
-    }
-  }, [])
+    },
+    [current.activeId, current.sessions, projectPath]
+  )
+
+  const close = useCallback(
+    (id: string): void => {
+      setState((previous) => {
+        if (previous.projectPath !== projectPath) {
+          return previous
+        }
+        return removeMatching(previous, (session) => session.id === id)
+      })
+    },
+    [projectPath]
+  )
+
+  const closeOthers = useCallback(
+    (id: string): void => {
+      setState((previous) => {
+        if (previous.projectPath !== projectPath) {
+          return previous
+        }
+        const target = previous.sessions.find((session) => session.id === id)
+        if (!target || previous.sessions.length === 1) {
+          return previous
+        }
+        return { ...previous, sessions: [target], activeId: id }
+      })
+    },
+    [projectPath]
+  )
+
+  const touch = useCallback(
+    (id: string, prompt: string): void => {
+      const now = Date.now()
+      const target = current.sessions.find((session) => session.id === id)
+      if (!target || projectPath === null) {
+        return
+      }
+      const title = target.autoTitle ? summarizePrompt(prompt) : target.title
+      setState({
+        projectPath,
+        sessions: current.sessions.map((session) =>
+          session.id === id ? { ...session, title, autoTitle: false, updatedAt: now } : session
+        ),
+        activeId: current.activeId
+      })
+      // 标题真的变了才追写一条事件，避免每次发送都往日志里塞重复标题
+      if (title !== target.title) {
+        void window.api.ai
+          .updateSessionTitle(projectPath, id, title, false)
+          .catch((error: unknown) => console.warn('保存会话标题失败', error))
+      }
+    },
+    [current.activeId, current.sessions, projectPath]
+  )
 
   return {
-    sessions: state.sessions,
-    activeId: state.activeId,
-    activeSession: state.sessions.find((session) => session.id === state.activeId) ?? null,
+    sessions: current.sessions,
+    activeId: current.activeId,
+    activeSession: current.sessions.find((session) => session.id === current.activeId) ?? null,
     create,
     ensureSession,
     activate,

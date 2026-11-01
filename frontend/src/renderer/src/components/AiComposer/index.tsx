@@ -18,6 +18,7 @@ const SEND_BUTTON_CLASS =
  */
 export default function AiComposer({
   disabled = false,
+  running = false,
   onSend
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
@@ -46,22 +47,29 @@ export default function AiComposer({
       ? modelId
       : (models[0]?.id ?? null)
 
-  const canSend = value.trim().length > 0 && !disabled
+  // 没有可用模型时也无法发送：主进程按 modelConfigId 读密钥
+  const canSend = value.trim().length > 0 && !disabled && !running && selectedModelId !== null
 
   const submit = useCallback((): void => {
     const text = value.trim()
-    if (!text || disabled) {
+    if (!text || disabled || running || selectedModelId === null) {
       return
     }
-    onSend(text)
+    onSend(text, selectedModelId)
     setValue('')
-  }, [disabled, onSend, value])
+  }, [disabled, onSend, running, selectedModelId, value])
 
   return (
     <div className="shrink-0 border-t border-line p-2">
       <Textarea
         className="max-h-40 min-h-[64px] resize-none bg-base text-[13px] focus-visible:border-accent-hover"
-        placeholder={disabled ? '先新建一个会话' : '输入消息，Enter 发送，Shift+Enter 换行'}
+        placeholder={
+          disabled
+            ? '先新建一个会话'
+            : running
+              ? '正在生成，可先输入下一条…'
+              : '输入消息，Enter 发送，Shift+Enter 换行'
+        }
         value={value}
         disabled={disabled}
         onChange={(event) => setValue(event.target.value)}

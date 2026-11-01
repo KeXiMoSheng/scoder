@@ -22,8 +22,8 @@ const SIDEBAR_MIN_WIDTH = 160
 /** 文件树收起阈值：拖到最小宽度的一半以下时自动隐藏（与命令行面板收起策略一致） */
 const SIDEBAR_HIDE_WIDTH = SIDEBAR_MIN_WIDTH / 2
 /** 右侧 AI 边栏宽度（px） */
-const AI_PANEL_DEFAULT_WIDTH = 320
-const AI_PANEL_MIN_WIDTH = 200
+const AI_PANEL_DEFAULT_WIDTH = 500
+const AI_PANEL_MIN_WIDTH = 300
 /** AI 边栏收起阈值：拖到最小宽度的一半以下时自动隐藏 */
 const AI_PANEL_HIDE_WIDTH = AI_PANEL_MIN_WIDTH / 2
 /** 编辑器最小保留宽度：拖拽任一侧面板都不会把编辑器挤到更窄 */
@@ -58,7 +58,7 @@ function App(): React.JSX.Element {
     closeUnder
   } = useOpenedFiles()
   // AI 会话状态（新建/切换/重命名/关闭）：放在 App 里，侧边栏隐藏再打开时不丢会话
-  const aiSessions = useAiSessions()
+  const aiSessions = useAiSessions(projectPath)
   // 单独取出稳定回调：避免快捷键监听依赖整个会话对象而反复重建
   const ensureAiSession = aiSessions.ensureSession
   const [dirtyPaths, setDirtyPaths] = useState<ReadonlySet<string>>(new Set())
@@ -450,7 +450,9 @@ function App(): React.JSX.Element {
             onResizeStart={handleAiPanelResizeStart}
             onResize={handleAiPanelResize}
           />
-          {aiPanelVisible ? <AiSidebar width={aiPanelWidth} sessions={aiSessions} /> : null}
+          {aiPanelVisible ? (
+            <AiSidebar width={aiPanelWidth} sessions={aiSessions} cwd={projectPath} />
+          ) : null}
         </div>
         {settingsOpen ? (
           <div className="absolute inset-0 z-20 flex bg-base">

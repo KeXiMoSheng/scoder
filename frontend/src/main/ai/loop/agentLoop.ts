@@ -38,8 +38,8 @@ export interface RunTurnOptions {
 export async function runTurn(options: RunTurnOptions): Promise<void> {
   const { request, model, fs, registry, sessions, emit, signal } = options
   // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
-  const state = await sessions.ensure(request.sessionId)
-  await sessions.settle(request.sessionId)
+  const state = await sessions.ensure(request.cwd, request.sessionId)
+  await sessions.settle(request.cwd, request.sessionId)
 
   const turn = state.turnCount + 1
   const messages = await initialMessages(sessions, request)
@@ -47,7 +47,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   let reason: AiTurnEndReason = 'done'
 
   emit({ type: 'turn-start', sessionId: request.sessionId })
-  await sessions.record(request.sessionId, [
+  await sessions.record(request.cwd, request.sessionId, [
     { type: 'turn/start', data: { turn, cwd: request.cwd, modelConfigId: request.modelConfigId } },
     { type: 'user/message', data: { content: [{ type: 'text', text: request.prompt }] } }
   ])
@@ -55,7 +55,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
     for (let step = 1; step <= MAX_STEPS; step += 1) {
       signal.throwIfAborted()
       emit({ type: 'step-start', step })
-      await sessions.record(request.sessionId, [{ type: 'step/start', data: { turn, step } }])
+      await sessions.record(request.cwd, request.sessionId, [
+        { type: 'step/start', data: { turn, step } }
+      ])
 
       const pending = new Map<number, PendingCall>()
       let text = ''
@@ -71,7 +73,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
           content: text.length > 0 ? text : null,
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
         })
-        await sessions.record(request.sessionId, [
+        await sessions.record(request.cwd, request.sessionId, [
           { type: 'assistant/message', data: { turn, step, content: toBlocks(text, toolCalls) } }
         ])
       }
@@ -90,7 +92,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
           signal
         })
       }
-      await sessions.record(request.sessionId, [{ type: 'step/end', data: { turn, step } }])
+      await sessions.record(request.cwd, request.sessionId, [
+        { type: 'step/end', data: { turn, step } }
+      ])
 
       if (toolCalls.length === 0) {
         break
@@ -110,7 +114,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   } finally {
     // 无论正常结束还是中断，都闭合这一轮：留下的历史就是用户下次能看到的全部内容
     try {
-      await sessions.record(request.sessionId, [{ type: 'turn/end', data: { turn, reason } }])
+      await sessions.record(request.cwd, request.sessionId, [
+        { type: 'turn/end', data: { turn, reason } }
+      ])
     } catch (error) {
       // 日志写失败不能吞掉本轮结论，先让界面看到错误再照常通知结束
       emit({ type: 'error', message: errorMessage(error) })
@@ -127,7 +133,7 @@ async function initialMessages(
   sessions: SessionStore,
   request: AiSendRequest
 ): Promise<ChatMessage[]> {
-  const history = await sessions.history(request.sessionId)
+  const history = await sessions.history(request.cwd, request.sessionId)
   const systemMessage: ChatMessage = { role: 'system', content: buildSystemPrompt(request.cwd) }
   const userMessage: ChatMessage = { role: 'user', content: request.prompt }
   return [systemMessage, ...history, userMessage]
@@ -222,7 +228,7 @@ async function executeCall(
     text: result.text,
     ...(result.card ? { card } : {})
   })
-  await sessions.record(request.sessionId, [
+  await sessions.record(request.cwd, request.sessionId, [
     {
       type: 'tool/result',
       data: {
@@ -231,7 +237,9 @@ async function executeCall(
         callId: call.id,
         name: call.function.name,
         ok: result.ok,
-        text: result.text
+        text: result.text,
+        // 卡片随日志保存，历史重放才能与实时看到的一致
+        ...(result.card ? { card: result.card } : {})
       }
     }
   ])

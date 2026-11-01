@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { History, Plus } from 'lucide-react'
-import AiComposer from '../AiComposer'
+import AiChatPanel from '../AiChatPanel'
 import AiSessionHistory from '../AiSessionHistory'
 import AiSessionTabs from '../AiSessionTabs'
 import PromptDialog from '../PromptDialog'
@@ -10,10 +10,11 @@ import type { AiSidebarProps } from './types'
 
 /**
  * 右侧 AI 边栏：
- * 顶部工具栏（新建会话 / 对话历史）+ 会话标签栏 + 对话区占位 + 底部输入区。
- * 会话状态由 App 持有，面板隐藏再打开时标签与历史记录保持不丢。
+ * 顶部工具栏（新建会话 / 对话历史）+ 会话标签栏 + 对话区 + 底部输入区。
+ * 会话列表由 App 持有，面板隐藏再打开时标签与历史记录保持不丢；
+ * 对话区按会话 id 重建，切换标签即重新载入对应会话的磁盘历史。
  */
-export default function AiSidebar({ width, sessions }: AiSidebarProps): React.JSX.Element {
+export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): React.JSX.Element {
   const {
     sessions: list,
     activeId,
@@ -32,8 +33,8 @@ export default function AiSidebar({ width, sessions }: AiSidebarProps): React.JS
     ? (list.find((session) => session.id === renamingId) ?? null)
     : null
 
-  /** 发送消息（当前仅更新会话活动时间与自动标题，模型调用后续接入） */
-  const handleSend = useCallback(
+  /** 发出消息后更新会话活动时间；自动标题的会话用首条消息替换标题 */
+  const handleUserSend = useCallback(
     (text: string): void => {
       if (activeId) {
         touch(activeId, text)
@@ -81,8 +82,9 @@ export default function AiSidebar({ width, sessions }: AiSidebarProps): React.JS
               variant="ghost"
               size="icon-xs"
               className="text-dim hover:text-fg"
-              title="新建会话"
+              title={cwd === null ? '先打开一个项目' : '新建会话'}
               aria-label="新建会话"
+              disabled={cwd === null}
               onClick={handleCreate}
             >
               <Plus className="size-3.5" />
@@ -110,12 +112,20 @@ export default function AiSidebar({ width, sessions }: AiSidebarProps): React.JS
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-        <p className="m-0 max-w-[220px] text-center leading-[1.6] text-dim">
-          {activeSession ? '对话内容将在此显示' : '点击顶部「+」新建会话开始对话'}
-        </p>
-      </div>
-      <AiComposer disabled={activeSession === null} onSend={handleSend} />
+      <AiChatPanel
+        key={activeSession?.id ?? 'no-session'}
+        sessionId={activeSession?.id ?? null}
+        cwd={cwd}
+        disabled={activeSession === null}
+        emptyHint={
+          cwd === null
+            ? '请先打开一个项目；AI 会话与项目绑定'
+            : activeSession
+              ? '输入消息开始对话；回复与代码块会按当前主题渲染'
+              : '点击顶部「+」新建会话开始对话'
+        }
+        onUserSend={handleUserSend}
+      />
       {renamingSession ? (
         <PromptDialog
           title="重命名会话"

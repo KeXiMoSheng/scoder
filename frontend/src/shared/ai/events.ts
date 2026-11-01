@@ -14,5 +14,7 @@ export const AI_CHANNELS = {
   /** 渲染进程 → 主进程：新建会话日志文件（invoke） */
   createSession: 'ai:sessions:create',
   /** 渲染进程 → 主进程：保存会话标题（invoke） */
-  updateSessionTitle: 'ai:sessions:title'
+  updateSessionTitle: 'ai:sessions:title',
+  /** 渲染进程 → 主进程：读取会话历史消息（invoke） */
+  loadMessages: 'ai:sessions:messages'
 } as const

@@ -7,4 +7,6 @@ export interface AiSidebarProps {
   width: number
   /** 会话状态（由 App 持有，侧边栏收起再展开时不丢标签与历史记录） */
   sessions: AiSessionsApi
+  /** 当前打开的项目根目录：作为 AI 工具的工作区边界，未打开项目时为 null */
+  cwd: string | null
 }

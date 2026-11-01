@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { join, relative, sep } from 'path'
 import { IGNORED_DIRECTORY_NAMES } from '../fs/service'
 import type { ToolDefinition } from './registry'
-import { optionalString, requireString } from './registry'
+import { optionalString, requireString, sectionText } from './registry'
 
 /** 单次 glob 返回的路径上限 */
 const GLOB_MAX_RESULTS = 200
@@ -156,6 +156,15 @@ export function createGlobTool(): ToolDefinition {
     presentCall(args) {
       const pattern = optionalString(args, 'pattern') ?? '*'
       return { kind: 'generic', title: `查找 ${pattern}` }
+    },
+    presentResult(args, outcome) {
+      const pattern = optionalString(args, 'pattern') ?? '*'
+      // 展开时只保留匹配列表，去掉给模型看的 `<pattern>`/`<matches>` 包裹
+      return {
+        kind: 'generic',
+        title: `查找 ${pattern}`,
+        body: sectionText(outcome.text, 'matches')
+      }
     }
   }
 }
@@ -230,6 +239,15 @@ export function createGrepTool(): ToolDefinition {
     presentCall(args) {
       const pattern = optionalString(args, 'pattern') ?? ''
       return { kind: 'generic', title: `搜索 /${pattern}/` }
+    },
+    presentResult(args, outcome) {
+      const pattern = optionalString(args, 'pattern') ?? ''
+      // 展开时只保留匹配行，去掉给模型看的 `<pattern>`/`<matches>` 包裹
+      return {
+        kind: 'generic',
+        title: `搜索 /${pattern}/`,
+        body: sectionText(outcome.text, 'matches')
+      }
     }
   }
 }

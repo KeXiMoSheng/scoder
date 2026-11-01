@@ -3,15 +3,18 @@ import { isAbsolute, join } from 'path'
 import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
   AiEvent,
+  AiLoadedSession,
   AiSendRequest,
   AiSessionCreateInput,
-  AiSessionSummary
+  AiSessionSummary,
+  ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById } from '../db'
 import { LocalFileSystem } from './fs/service'
 import { runTurn } from './loop/agentLoop'
 import { SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
+import { toMessageViews } from './session/view'
 import { createToolRegistry } from './tools'
 import { errorMessage } from './tools/registry'
 
@@ -50,7 +53,8 @@ export function registerAiHandlers(): void {
 
     const emit = (payload: AiEvent): void => {
       if (!event.sender.isDestroyed()) {
-        event.sender.send(AI_CHANNELS.event, payload)
+        // 带上会话 id：渲染进程可能同时开着多个会话，只应更新当前那个
+        event.sender.send(AI_CHANNELS.event, { sessionId: request.sessionId, event: payload })
       }
     }
     // 立即返回：本轮进展通过事件推送，不让 invoke 挂到整轮结束
@@ -70,24 +74,46 @@ export function registerAiHandlers(): void {
   })
 
   // 会话元数据：文件归主进程管，渲染进程只拿摘要、只写标题
-  ipcMain.handle(AI_CHANNELS.listSessions, (): Promise<AiSessionSummary[]> => sessions.list())
+  ipcMain.handle(
+    AI_CHANNELS.listSessions,
+    async (_event, cwd: string): Promise<AiSessionSummary[]> => {
+      return sessions.list(requireProjectPath(cwd))
+    }
+  )
 
   ipcMain.handle(
     AI_CHANNELS.createSession,
     async (_event, input: AiSessionCreateInput): Promise<void> => {
       requireSessionInput(input)
       // 幂等：已有同名 id 的日志不会被覆盖，标题也不会被回退
-      await sessions.ensure(input.id, input.title, input.autoTitle)
+      await sessions.ensure(input.cwd, input.id, input.title, input.autoTitle)
     }
   )
 
   ipcMain.handle(
     AI_CHANNELS.updateSessionTitle,
-    async (_event, id: string, title: string, autoTitle: boolean): Promise<void> => {
+    async (_event, cwd: string, id: string, title: string, autoTitle: boolean): Promise<void> => {
+      const project = requireProjectPath(cwd)
       if (typeof id !== 'string' || typeof title !== 'string' || typeof autoTitle !== 'boolean') {
         throw new Error('会话标题参数无效')
       }
-      await sessions.updateTitle(id, title, autoTitle)
+      await sessions.updateTitle(project, id, title, autoTitle)
+    }
+  )
+
+  // 历史消息：从日志重放成展示条目；卡片由工具定义现推，不执行任何工具
+  ipcMain.handle(
+    AI_CHANNELS.loadMessages,
+    async (_event, cwd: string, id: string): Promise<AiLoadedSession> => {
+      const project = requireProjectPath(cwd)
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      return {
+        messages: toMessageViews(await sessions.events(project, id), describeToolCall),
+        // 切回一个仍在执行的会话时，界面要能重新显示“正在生成”
+        running: running.has(id)
+      }
     }
   )
 
@@ -130,16 +156,48 @@ function validateRequest(request: AiSendRequest): void {
   }
 }
 
-/** 校验新建会话的输入：id 的文件名合法性交给仓库再查一遍 */
+/** 校验新建会话的输入：cwd 必须是绝对路径，id 的文件名合法性交给仓库再查一遍 */
 function requireSessionInput(input: AiSessionCreateInput): void {
   if (!input || typeof input !== 'object') {
     throw new Error('请求参数无效')
   }
+  requireProjectPath(input.cwd)
   if (typeof input.id !== 'string' || input.id.length === 0) {
     throw new Error('sessionId 无效')
   }
   if (typeof input.title !== 'string' || typeof input.autoTitle !== 'boolean') {
     throw new Error('会话标题参数无效')
+  }
+}
+
+/**
+ * 校验渲染进程传来的项目路径。
+ * 会话按项目隔离，cwd 既决定存储目录，也是 AI 工具的工作区边界。
+ */
+function requireProjectPath(cwd: unknown): string {
+  if (typeof cwd !== 'string' || !isAbsolute(cwd)) {
+    throw new Error('cwd 必须是绝对路径')
+  }
+  return cwd
+}
+
+/**
+ * 历史日志里的工具卡片：按工具定义从参数推导，不执行工具。
+ * 参数不合法或工具已下线时不给卡片，界面上只显示工具名与结果文本。
+ */
+function describeToolCall(name: string, rawArguments: string): ToolCardView | undefined {
+  const tool = registry.get(name)
+  if (!tool?.presentCall) {
+    return undefined
+  }
+  try {
+    const parsed: unknown = rawArguments.trim().length === 0 ? {} : JSON.parse(rawArguments)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return undefined
+    }
+    return tool.presentCall(parsed as Record<string, unknown>)
+  } catch {
+    return undefined
   }
 }
 
