@@ -36,7 +36,7 @@ export interface ToolCardView {
 
 /** 发起一轮对话的请求：工作区由渲染进程按当前打开的项目传入 */
 export interface AiSendRequest {
-  /** 会话 id：同一 id 复用历史消息（P0 仅存于主进程内存） */
+  /** 会话 id：同一 id 复用磁盘上的历史消息（一个会话一个 jsonl 文件） */
   sessionId: string
   /** 模型配置主键：API Key 不经过渲染进程，由主进程读库 */
   modelConfigId: number
@@ -64,6 +64,29 @@ export type AiEvent =
 /** 一轮对话的终止原因（turn-end 事件的载荷） */
 export type AiTurnEndReason = Extract<AiEvent, { type: 'turn-end' }>['reason']
 
+/**
+ * 会话摘要：主进程扫描会话目录后汇总，供渲染进程恢复标签栏与历史列表。
+ * 与磁盘日志的对应关系：title 取最后一条 session/title 事件，
+ * updatedAt 取最后一条事件的时间。
+ */
+export interface AiSessionSummary {
+  id: string
+  title: string
+  /** 标题仍为自动生成：首条消息发送后由渲染进程用消息摘要替换 */
+  autoTitle: boolean
+  /** 创建时间（毫秒时间戳） */
+  createdAt: number
+  /** 最后活动时间（毫秒时间戳） */
+  updatedAt: number
+}
+
+/** 新建会话的输入：id 由渲染进程生成，主进程只负责落盘 */
+export interface AiSessionCreateInput {
+  id: string
+  title: string
+  autoTitle: boolean
+}
+
 /** 经 preload 暴露给渲染进程的 AI 能力（白名单方法） */
 export interface AiAPI {
   /** 启动一轮对话；立即返回，后续进展通过 onEvent 推送 */
@@ -74,4 +97,10 @@ export interface AiAPI {
   respondApproval: (requestId: string, approved: boolean) => void
   /** 订阅主进程事件；返回取消订阅函数 */
   onEvent: (listener: (event: AiEvent) => void) => () => void
+  /** 列出磁盘上的全部会话（按最后活动时间倒序） */
+  listSessions: () => Promise<AiSessionSummary[]>
+  /** 新建会话日志文件（幂等：同 id 重复调用不会清空已有内容） */
+  createSession: (input: AiSessionCreateInput) => Promise<void>
+  /** 保存会话标题；autoTitle 为 true 表示仍是首条消息的摘要 */
+  updateSessionTitle: (id: string, title: string, autoTitle: boolean) => Promise<void>
 }

@@ -8,5 +8,11 @@ export const AI_CHANNELS = {
   /** 渲染进程 → 主进程：回应审批请求（单向 send） */
   approval: 'ai:approval',
   /** 主进程 → 渲染进程：流式事件（单向 send） */
-  event: 'ai:event'
+  event: 'ai:event',
+  /** 渲染进程 → 主进程：列出磁盘上的会话摘要（invoke） */
+  listSessions: 'ai:sessions:list',
+  /** 渲染进程 → 主进程：新建会话日志文件（invoke） */
+  createSession: 'ai:sessions:create',
+  /** 渲染进程 → 主进程：保存会话标题（invoke） */
+  updateSessionTitle: 'ai:sessions:title'
 } as const

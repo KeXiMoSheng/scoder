@@ -1,21 +1,13 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { AiSessionSummary } from '../../../shared/ai/types'
 
 /** 默认会话标题 */
 const DEFAULT_TITLE = '新会话'
 /** 自动标题的最大字符数（超出部分省略） */
 const TITLE_MAX_LENGTH = 20
 
-/** 一个 AI 会话：标题与时间用于标签栏和历史列表 */
-export interface AiSession {
-  id: string
-  title: string
-  /** 创建时间（毫秒时间戳） */
-  createdAt: number
-  /** 最后活动时间（新建或发送消息时更新，历史列表按它倒序） */
-  updatedAt: number
-  /** 标题仍为自动生成：首条消息发送后替换为消息摘要 */
-  autoTitle: boolean
-}
+/** 一个 AI 会话：与主进程返回的摘要同构，标题与时间用于标签栏和历史列表 */
+export type AiSession = AiSessionSummary
 
 /** 会话状态：标签顺序 + 当前激活项 */
 interface AiSessionsState {
@@ -131,28 +123,55 @@ function removeMatching(
 
 /**
  * AI 会话状态管理（新建/激活/重命名/关闭/活动时间）。
- * 当前仅有渲染进程内存态，与主进程 SessionStore 的 P0 实现一致；
- * 后续接 SQLite 时把这里换成 IPC 读取即可，组件层无需改动。
+ * 会话正文由主进程按 jsonl 追加落盘，这里只维护标签栏需要的元数据；
+ * 启动时从主进程恢复，所以关掉应用再打开仍能看到历史会话。
  */
 export function useAiSessions(): AiSessionsApi {
   const [state, setState] = useState<AiSessionsState>({ sessions: [], activeId: null })
+  // 与 state 同步的镜像：新建/重命名要先拿到当前列表，再决定写什么
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  // 启动时恢复磁盘上的会话；恢复失败只影响历史列表，不影响新建
+  useEffect(() => {
+    let cancelled = false
+    void window.api.ai
+      .listSessions()
+      .then((sessions) => {
+        if (cancelled) {
+          return
+        }
+        // 恢复是异步的：期间用户已经新建过会话时以内存状态为准
+        setState((prev) => (prev.sessions.length > 0 ? prev : { sessions, activeId: null }))
+      })
+      .catch((error: unknown) => console.warn('读取会话列表失败', error))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const create = useCallback((): void => {
-    setState((prev) => {
-      const session = buildSession(prev.sessions)
-      return { sessions: [...prev.sessions, session], activeId: session.id }
-    })
+    const session = buildSession(stateRef.current.sessions)
+    setState({ sessions: [...stateRef.current.sessions, session], activeId: session.id })
+    // 落盘失败只影响“重启后是否还在”，不应打断当前编辑
+    void window.api.ai
+      .createSession({ id: session.id, title: session.title, autoTitle: session.autoTitle })
+      .catch((error: unknown) => console.warn('新建会话文件失败', error))
   }, [])
 
   const ensureSession = useCallback((): void => {
-    setState((prev) => {
-      if (prev.sessions.length > 0) {
-        return prev
-      }
-      const session = buildSession(prev.sessions)
-      return { sessions: [session], activeId: session.id }
-    })
-  }, [])
+    const current = stateRef.current
+    if (current.sessions.length === 0) {
+      create()
+      return
+    }
+    // 恢复出来的会话没有激活项：打开面板时补上，避免界面停在“无会话”状态
+    if (current.activeId === null) {
+      setState({ sessions: current.sessions, activeId: current.sessions[0].id })
+    }
+  }, [create])
 
   const activate = useCallback((id: string): void => {
     setState((prev) => {
@@ -165,19 +184,20 @@ export function useAiSessions(): AiSessionsApi {
 
   const rename = useCallback((id: string, title: string): void => {
     const trimmed = title.trim()
-    if (!trimmed) {
+    const target = stateRef.current.sessions.find((session) => session.id === id)
+    // 空白名称与无变化的名称都不落盘
+    if (!trimmed || !target || target.title === trimmed) {
       return
     }
-    setState((prev) => {
-      const index = prev.sessions.findIndex((session) => session.id === id)
-      if (index === -1 || prev.sessions[index].title === trimmed) {
-        return prev
-      }
-      const sessions = prev.sessions.map((session, current) =>
-        current === index ? { ...session, title: trimmed, autoTitle: false } : session
-      )
-      return { sessions, activeId: prev.activeId }
+    setState({
+      sessions: stateRef.current.sessions.map((session) =>
+        session.id === id ? { ...session, title: trimmed, autoTitle: false } : session
+      ),
+      activeId: stateRef.current.activeId
     })
+    void window.api.ai
+      .updateSessionTitle(id, trimmed, false)
+      .catch((error: unknown) => console.warn('保存会话标题失败', error))
   }, [])
 
   const close = useCallback((id: string): void => {
@@ -196,19 +216,23 @@ export function useAiSessions(): AiSessionsApi {
 
   const touch = useCallback((id: string, prompt: string): void => {
     const now = Date.now()
-    setState((prev) => {
-      if (!prev.sessions.some((session) => session.id === id)) {
-        return prev
-      }
-      const sessions = prev.sessions.map((session) => {
-        if (session.id !== id) {
-          return session
-        }
-        const title = session.autoTitle ? summarizePrompt(prompt) : session.title
-        return { ...session, title, autoTitle: false, updatedAt: now }
-      })
-      return { sessions, activeId: prev.activeId }
+    const target = stateRef.current.sessions.find((session) => session.id === id)
+    if (!target) {
+      return
+    }
+    const title = target.autoTitle ? summarizePrompt(prompt) : target.title
+    setState({
+      sessions: stateRef.current.sessions.map((session) =>
+        session.id === id ? { ...session, title, autoTitle: false, updatedAt: now } : session
+      ),
+      activeId: stateRef.current.activeId
     })
+    // 标题真的变了才追写一条事件，避免每次发送都往日志里塞重复标题
+    if (title !== target.title) {
+      void window.api.ai
+        .updateSessionTitle(id, title, false)
+        .catch((error: unknown) => console.warn('保存会话标题失败', error))
+    }
   }, [])
 
   return {

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
-import type { AiAPI, AiEvent, AiSendRequest } from '../shared/ai/types'
+import type { AiAPI, AiEvent, AiSendRequest, AiSessionCreateInput } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
@@ -20,7 +20,13 @@ const ai: AiAPI = {
     const handler = (_event: IpcRendererEvent, payload: AiEvent): void => listener(payload)
     ipcRenderer.on(AI_CHANNELS.event, handler)
     return () => ipcRenderer.removeListener(AI_CHANNELS.event, handler)
-  }
+  },
+  // 会话元数据：文件在主进程的 userData/sessions 下，渲染进程只拿摘要与写标题
+  listSessions: () => ipcRenderer.invoke(AI_CHANNELS.listSessions),
+  createSession: (input: AiSessionCreateInput) =>
+    ipcRenderer.invoke(AI_CHANNELS.createSession, input),
+  updateSessionTitle: (id: string, title: string, autoTitle: boolean) =>
+    ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, id, title, autoTitle)
 }
 
 // Custom APIs for renderer

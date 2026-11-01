@@ -4,6 +4,7 @@ import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../ll
 import { streamChat, toOpenAiTools } from '../llm/openai'
 import { buildSystemPrompt } from '../prompt'
 import type { SessionStore } from '../session/store'
+import type { SessionBlock } from '../session/types'
 import { errorMessage, type ToolRegistry } from '../tools/registry'
 
 /** 一轮对话允许的最大模型步数：防止模型在工具循环里空转 */
@@ -36,15 +37,25 @@ export interface RunTurnOptions {
  */
 export async function runTurn(options: RunTurnOptions): Promise<void> {
   const { request, model, fs, registry, sessions, emit, signal } = options
-  const messages = initialMessages(sessions, request)
+  // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
+  const state = await sessions.ensure(request.sessionId)
+  await sessions.settle(request.sessionId)
+
+  const turn = state.turnCount + 1
+  const messages = await initialMessages(sessions, request)
   const tools = toOpenAiTools(registry.list())
   let reason: AiTurnEndReason = 'done'
 
   emit({ type: 'turn-start', sessionId: request.sessionId })
+  await sessions.record(request.sessionId, [
+    { type: 'turn/start', data: { turn, cwd: request.cwd, modelConfigId: request.modelConfigId } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: request.prompt }] } }
+  ])
   try {
     for (let step = 1; step <= MAX_STEPS; step += 1) {
       signal.throwIfAborted()
       emit({ type: 'step-start', step })
+      await sessions.record(request.sessionId, [{ type: 'step/start', data: { turn, step } }])
 
       const pending = new Map<number, PendingCall>()
       let text = ''
@@ -60,18 +71,30 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
           content: text.length > 0 ? text : null,
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
         })
-        sessions.replace(request.sessionId, messages)
+        await sessions.record(request.sessionId, [
+          { type: 'assistant/message', data: { turn, step, content: toBlocks(text, toolCalls) } }
+        ])
       }
+
+      // 工具执行属于本步，step/end 要等它们全部回报之后再写
+      for (const call of toolCalls) {
+        signal.throwIfAborted()
+        await executeCall(call, messages, {
+          fs,
+          registry,
+          request,
+          sessions,
+          turn,
+          step,
+          emit,
+          signal
+        })
+      }
+      await sessions.record(request.sessionId, [{ type: 'step/end', data: { turn, step } }])
+
       if (toolCalls.length === 0) {
         break
       }
-
-      for (const call of toolCalls) {
-        signal.throwIfAborted()
-        await executeCall(call, messages, { fs, registry, request, emit, signal })
-        sessions.replace(request.sessionId, messages)
-      }
-
       if (step === MAX_STEPS) {
         reason = 'error'
         emit({ type: 'error', message: `达到单轮最大步数 ${MAX_STEPS}，已停止` })
@@ -85,20 +108,46 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
       emit({ type: 'error', message: errorMessage(error) })
     }
   } finally {
-    // 无论正常结束还是中断，都把已发生的消息留在会话里
-    sessions.replace(request.sessionId, messages)
+    // 无论正常结束还是中断，都闭合这一轮：留下的历史就是用户下次能看到的全部内容
+    try {
+      await sessions.record(request.sessionId, [{ type: 'turn/end', data: { turn, reason } }])
+    } catch (error) {
+      // 日志写失败不能吞掉本轮结论，先让界面看到错误再照常通知结束
+      emit({ type: 'error', message: errorMessage(error) })
+    }
     emit({ type: 'turn-end', reason })
   }
 }
 
-/** 首轮插入系统提示；之后复用历史，只追加用户消息 */
-function initialMessages(sessions: SessionStore, request: AiSendRequest): ChatMessage[] {
-  const history = sessions.history(request.sessionId)
+/**
+ * 组装本次请求的消息序列：系统提示每轮现算，历史从日志重放得到。
+ * 系统提示不入库，改 prompt.ts 后对所有历史会话立即生效。
+ */
+async function initialMessages(
+  sessions: SessionStore,
+  request: AiSendRequest
+): Promise<ChatMessage[]> {
+  const history = await sessions.history(request.sessionId)
+  const systemMessage: ChatMessage = { role: 'system', content: buildSystemPrompt(request.cwd) }
   const userMessage: ChatMessage = { role: 'user', content: request.prompt }
-  if (history.length === 0) {
-    return [{ role: 'system', content: buildSystemPrompt(request.cwd) }, userMessage]
+  return [systemMessage, ...history, userMessage]
+}
+
+/** 把一步的输出转成落盘内容块：文本在前，工具调用按模型给出的顺序在后 */
+function toBlocks(text: string, toolCalls: readonly ChatToolCall[]): SessionBlock[] {
+  const blocks: SessionBlock[] = []
+  if (text.length > 0) {
+    blocks.push({ type: 'text', text })
   }
-  return [...history, userMessage]
+  for (const call of toolCalls) {
+    blocks.push({
+      type: 'tool-call',
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments
+    })
+  }
+  return blocks
 }
 
 /**
@@ -135,7 +184,7 @@ function finishCalls(pending: Map<number, PendingCall>): ChatToolCall[] {
     }))
 }
 
-/** 执行一次工具调用，并把结果作为 tool 消息回灌给模型 */
+/** 执行一次工具调用，把结果落盘后作为 tool 消息回灌给模型 */
 async function executeCall(
   call: ChatToolCall,
   messages: ChatMessage[],
@@ -143,11 +192,14 @@ async function executeCall(
     fs: FileSystemService
     registry: ToolRegistry
     request: AiSendRequest
+    sessions: SessionStore
+    turn: number
+    step: number
     emit: (event: AiEvent) => void
     signal: AbortSignal
   }
 ): Promise<void> {
-  const { fs, registry, request, emit, signal } = context
+  const { fs, registry, request, sessions, turn, step, emit, signal } = context
   const args = safeParseArguments(call.function.arguments)
   const card = registry.get(call.function.name)?.presentCall?.(args)
   emit({
@@ -170,6 +222,19 @@ async function executeCall(
     text: result.text,
     ...(result.card ? { card } : {})
   })
+  await sessions.record(request.sessionId, [
+    {
+      type: 'tool/result',
+      data: {
+        turn,
+        step,
+        callId: call.id,
+        name: call.function.name,
+        ok: result.ok,
+        text: result.text
+      }
+    }
+  ])
   messages.push({ role: 'tool', tool_call_id: call.id, content: result.text })
 }
 

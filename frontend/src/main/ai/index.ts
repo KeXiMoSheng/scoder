@@ -1,16 +1,30 @@
-import { ipcMain } from 'electron'
-import { isAbsolute } from 'path'
+import { app, ipcMain } from 'electron'
+import { isAbsolute, join } from 'path'
 import { AI_CHANNELS } from '../../shared/ai/events'
-import type { AiEvent, AiSendRequest } from '../../shared/ai/types'
+import type {
+  AiEvent,
+  AiSendRequest,
+  AiSessionCreateInput,
+  AiSessionSummary
+} from '../../shared/ai/types'
 import { findModelConfigById } from '../db'
 import { LocalFileSystem } from './fs/service'
 import { runTurn } from './loop/agentLoop'
+import { SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
 import { createToolRegistry } from './tools'
 import { errorMessage } from './tools/registry'
 
-/** 会话历史（P0 仅进程内；重启即清空） */
-const sessions = new SessionStore()
+/**
+ * 会话日志根目录：Electron 的 userData/sessions。
+ * 首次使用时才求值，避免模块加载阶段就依赖 app 是否已就绪。
+ */
+function sessionsRoot(): string {
+  return join(app.getPath('userData'), SESSIONS_DIR_NAME)
+}
+
+/** 会话历史：每个会话一个追加式 JSONL 文件（重启后仍在） */
+const sessions = new SessionStore(sessionsRoot)
 
 /** 工具注册表：工具本身无状态，整个进程共享一份 */
 const registry = createToolRegistry()
@@ -55,6 +69,28 @@ export function registerAiHandlers(): void {
     running.get(sessionId)?.abort()
   })
 
+  // 会话元数据：文件归主进程管，渲染进程只拿摘要、只写标题
+  ipcMain.handle(AI_CHANNELS.listSessions, (): Promise<AiSessionSummary[]> => sessions.list())
+
+  ipcMain.handle(
+    AI_CHANNELS.createSession,
+    async (_event, input: AiSessionCreateInput): Promise<void> => {
+      requireSessionInput(input)
+      // 幂等：已有同名 id 的日志不会被覆盖，标题也不会被回退
+      await sessions.ensure(input.id, input.title, input.autoTitle)
+    }
+  )
+
+  ipcMain.handle(
+    AI_CHANNELS.updateSessionTitle,
+    async (_event, id: string, title: string, autoTitle: boolean): Promise<void> => {
+      if (typeof id !== 'string' || typeof title !== 'string' || typeof autoTitle !== 'boolean') {
+        throw new Error('会话标题参数无效')
+      }
+      await sessions.updateTitle(id, title, autoTitle)
+    }
+  )
+
   // P1：写操作审批走这里（渲染进程 → 主进程的一次性决策）
   ipcMain.on(AI_CHANNELS.approval, (): void => {})
 }
@@ -91,6 +127,19 @@ function validateRequest(request: AiSendRequest): void {
   }
   if (typeof request.modelConfigId !== 'number' || !Number.isInteger(request.modelConfigId)) {
     throw new Error('modelConfigId 无效')
+  }
+}
+
+/** 校验新建会话的输入：id 的文件名合法性交给仓库再查一遍 */
+function requireSessionInput(input: AiSessionCreateInput): void {
+  if (!input || typeof input !== 'object') {
+    throw new Error('请求参数无效')
+  }
+  if (typeof input.id !== 'string' || input.id.length === 0) {
+    throw new Error('sessionId 无效')
+  }
+  if (typeof input.title !== 'string' || typeof input.autoTitle !== 'boolean') {
+    throw new Error('会话标题参数无效')
   }
 }
 
