@@ -11,8 +11,8 @@ export const AI_CHANNELS = {
   event: 'ai:event',
   /** 渲染进程 → 主进程：列出磁盘上的会话摘要（invoke） */
   listSessions: 'ai:sessions:list',
-  /** 渲染进程 → 主进程：新建会话日志文件（invoke） */
-  createSession: 'ai:sessions:create',
+  /** 渲染进程 → 主进程：删除一个会话日志（invoke） */
+  deleteSession: 'ai:sessions:delete',
   /** 渲染进程 → 主进程：保存会话标题（invoke） */
   updateSessionTitle: 'ai:sessions:title',
   /** 渲染进程 → 主进程：读取会话历史消息（invoke） */

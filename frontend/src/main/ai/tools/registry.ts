@@ -1,4 +1,5 @@
 import type { JsonSchemaObject, JsonValue, ToolCardView } from '../../../shared/ai/types'
+import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
 
 /** 工具执行上下文：由循环在每次调用时构造，工具不得跨调用缓存 */
@@ -7,6 +8,8 @@ export interface ToolContext {
   /** 会话工作目录（P0 恒为工作区根） */
   cwd: string
   sessionId: string
+  /** 会话级“已读”观测：写工具据此拿到 createIfAbsent / replaceIfVersion 意图 */
+  observation: ObservationStore
   /** 用户中止本轮对话时触发；长耗时工具必须转发 */
   signal: AbortSignal
 }
@@ -15,12 +18,14 @@ export interface ToolContext {
 export interface ToolOutcome {
   text: string
   meta?: JsonValue
+  /** 本次调用落盘的文件（相对工作区根）：循环据此通知界面刷新 */
+  changedPaths?: string[]
 }
 
 /**
  * 工具定义。
- * 工具只描述“做什么”和“怎么给模型看”，不持有文件句柄、不做权限判断；
- * 权限、观测与审批属于执行流水线（P1 在 Registry.execute 处插入）。
+ * 工具只描述“做什么”和“怎么给模型看”，不持有文件句柄、不做工作区边界判断：
+ * 边界由 fs.resolve 保证，“先读后改”由写工具通过 ctx.observation 落实。
  */
 export interface ToolDefinition {
   name: string
@@ -41,6 +46,8 @@ export interface ToolExecutionResult {
   ok: boolean
   text: string
   card?: ToolCardView
+  /** 本次调用落盘的文件（相对工作区根） */
+  changedPaths?: string[]
 }
 
 /** 从参数表读取必填字符串（模型偶尔传 null 或空串） */
@@ -90,8 +97,8 @@ export function sectionText(text: string, tag: string): string {
 
 /**
  * 工具注册表：名称 → 定义。
- * 与 deepseek-harness 的 ctx.tools 同构，但 P0 不引入依赖注入与事件总线，
- * 策略钩子（先读后改、沙箱、审批）在 execute 内以普通函数插入。
+ * 与 deepseek-harness 的 ctx.tools 同构，但不引入依赖注入与事件总线：
+ * 写策略通过 ctx.observation 以普通方法调用落实，不需要 waterfall。
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>()
@@ -137,12 +144,19 @@ export class ToolRegistry {
     if (missing.length > 0) {
       return { ok: false, text: `缺少必填参数：${missing.join(', ')}` }
     }
-    // P1：在此插入 pre-execute 策略（先读后改、工作区包含、危险路径、审批）
+    // 工作区边界由 fs.resolve 保证；先读后改由 ctx.observation 在写工具内落实
     try {
       const outcome = await tool.execute(args, ctx)
       // presentResult 缺失时用挂起卡片 + 结果文本兜底，保证每个工具都能展开看输出
       const card = tool.presentResult?.(args, outcome) ?? resultFallback(tool, args, outcome)
-      return { ok: true, text: outcome.text, ...(card ? { card } : {}) }
+      return {
+        ok: true,
+        text: outcome.text,
+        ...(card ? { card } : {}),
+        ...(outcome.changedPaths && outcome.changedPaths.length > 0
+          ? { changedPaths: outcome.changedPaths }
+          : {})
+      }
     } catch (error) {
       // 用户中止不是工具失败：向上传播，让循环以 aborted 收尾
       if (ctx.signal.aborted) throw error

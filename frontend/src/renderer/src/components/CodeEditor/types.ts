@@ -9,6 +9,11 @@ export interface CodeEditorHandle {
   saveDirtyUnder: (path: string) => Promise<void>
   /** 丢弃指定路径及其子路径的模型缓存（条目被重命名/移动后调用，避免旧路径残留） */
   dropCachedUnder: (path: string) => void
+  /**
+   * 磁盘上的文件被外部（AI 写工具）改后，重新载入编辑器缓存。
+   * 文件未打开、或缓冲区有未保存修改时保持现状，不覆盖用户输入。
+   */
+  reloadFromDisk: (path: string) => void
 }
 
 export interface CodeEditorProps {

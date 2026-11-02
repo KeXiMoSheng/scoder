@@ -73,13 +73,19 @@ export default function CodeEditor({
     [onDirtyChange]
   )
 
+  /** 缓冲区相对保存点是否有未保存修改 */
+  const isDirty = useCallback(
+    (model: monaco.editor.ITextModel): boolean =>
+      savedVersionRef.current.get(model.uri.fsPath) !== model.getAlternativeVersionId(),
+    []
+  )
+
   /** 计算 model 相对保存点的脏状态并上报 */
   const syncDirty = useCallback(
     (model: monaco.editor.ITextModel): void => {
-      const path = model.uri.fsPath
-      reportDirty(path, savedVersionRef.current.get(path) !== model.getAlternativeVersionId())
+      reportDirty(model.uri.fsPath, isDirty(model))
     },
-    [reportDirty]
+    [isDirty, reportDirty]
   )
 
   /** 挂载内容变更监听（每个 model 仅一次） */
@@ -279,9 +285,30 @@ export default function CodeEditor({
           reportedDirtyRef.current.delete(modelPath)
           model.dispose()
         }
+      },
+      reloadFromDisk(path: string): void {
+        const model = monaco.editor.getModel(monaco.Uri.file(path))
+        // 文件没在编辑器里打开过（或已有未保存修改）：切到该标签时会重新读盘，不覆盖用户输入
+        if (!model || isDirty(model)) {
+          return
+        }
+        void window.api
+          .readFile(path)
+          .then((content) => {
+            // 读盘期间用户可能开始输入：再判一次，避免冲掉刚写的内容
+            if (isDirty(model) || model.getValue() === content) {
+              return
+            }
+            model.setValue(content)
+            savedVersionRef.current.set(path, model.getAlternativeVersionId())
+            syncDirty(model)
+          })
+          .catch(() => {
+            // 读不到（例如刚被删除）：保持现状，让用户下次操作时看到真实错误
+          })
       }
     }),
-    [saveModel]
+    [isDirty, saveModel, syncDirty]
   )
 
   // 仅展示当前文件对应的错误（派生值，无需在 effect 中同步重置）

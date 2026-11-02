@@ -1,12 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
-import type {
-  AiAPI,
-  AiEventEnvelope,
-  AiSendRequest,
-  AiSessionCreateInput
-} from '../shared/ai/types'
+import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
@@ -30,8 +25,8 @@ const ai: AiAPI = {
   listSessions: (cwd: string) => ipcRenderer.invoke(AI_CHANNELS.listSessions, cwd),
   loadMessages: (cwd: string, sessionId: string) =>
     ipcRenderer.invoke(AI_CHANNELS.loadMessages, cwd, sessionId),
-  createSession: (input: AiSessionCreateInput) =>
-    ipcRenderer.invoke(AI_CHANNELS.createSession, input),
+  deleteSession: (cwd: string, id: string) =>
+    ipcRenderer.invoke(AI_CHANNELS.deleteSession, cwd, id),
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) =>
     ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, cwd, id, title, autoTitle)
 }

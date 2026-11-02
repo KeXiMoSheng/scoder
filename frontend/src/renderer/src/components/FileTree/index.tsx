@@ -261,6 +261,7 @@ export default function FileTree({
   rootPath,
   selectedPath,
   dirtyPaths,
+  refreshToken,
   onSelectFile,
   onBeforeEntryMove,
   onEntryMoved,
@@ -420,6 +421,24 @@ export default function FileTree({
       setRefreshing(false)
     }
   }, [refreshing, rootPath])
+
+  /** 外部刷新信号指向最新的 handleRefresh：避免 effect 依赖随 refreshing 反复重建 */
+  const externalRefreshRef = useRef(handleRefresh)
+  useEffect(() => {
+    externalRefreshRef.current = handleRefresh
+  }, [handleRefresh])
+
+  // AI 写工具改动磁盘后：复用手动刷新路径（重读已加载目录），保留展开状态与懒加载缓存。
+  // 去抖合并同一轮对话里的多次写入，避免连续写文件时互相把刷新挡掉。
+  useEffect(() => {
+    if (refreshToken === undefined || refreshToken === 0) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void externalRefreshRef.current()
+    }, 60)
+    return () => window.clearTimeout(timer)
+  }, [refreshToken])
 
   /** 新建目标目录：当前编辑器打开文件所在的同级目录；未打开文件时回退到根目录 */
   const getCreateTargetDir = useCallback((): string => {

@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { AiEvent, AiMessageView } from '../../../shared/ai/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { mergeFileChange } from '@shared/ai/changes'
+import type { AiEvent, AiMessageView, ToolFileChange } from '@shared/ai/types'
 
 /** 实时条目的 id 计数器：与历史条目的 seq 前缀区分，重开会话后整表重建不影响 */
 let liveId = 0
+
+/** 进行中的改动清单条目 id：turn-end 时替换成正式条目并移到末尾 */
+const PENDING_CHANGES_ID = 'live-changes-pending'
 
 /** 生成一个渲染期唯一的条目 id */
 function nextLiveId(prefix: string): string {
@@ -21,6 +25,25 @@ function appendText(previous: AiMessageView[], text: string): AiMessageView[] {
     return [...previous.slice(0, -1), { ...last, text: last.text + text }]
   }
   return [...previous, { kind: 'assistant', id: nextLiveId('assistant'), time: Date.now(), text }]
+}
+
+/** 更新/插入"进行中"的改动清单：位置保持在它第一次出现的地方 */
+function upsertPendingChanges(previous: AiMessageView[], files: ToolFileChange[]): AiMessageView[] {
+  const entry: AiMessageView = {
+    kind: 'changes',
+    id: PENDING_CHANGES_ID,
+    time: Date.now(),
+    files
+  }
+  const index = previous.findIndex(
+    (view) => view.kind === 'changes' && view.id === PENDING_CHANGES_ID
+  )
+  if (index === -1) {
+    return [...previous, entry]
+  }
+  const next = [...previous]
+  next[index] = entry
+  return next
 }
 
 /** 把工具调用参数转回原文：事件里已是对象，卡片展示需要字符串 */
@@ -57,6 +80,8 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
   const [messages, setMessages] = useState<AiMessageView[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 本轮改动清单：用 ref 累积（不额外触发渲染），turn-end 时作为末尾条目落进消息列表
+  const turnChangesRef = useRef<Map<string, ToolFileChange>>(new Map())
 
   // 载入磁盘历史：结果同时带回该会话是否仍在执行
   useEffect(() => {
@@ -92,7 +117,7 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
       if (sourceId !== sessionId) {
         return
       }
-      applyEvent(event, setMessages, setRunning, setError)
+      applyEvent(event, setMessages, setRunning, setError, turnChangesRef.current)
     })
   }, [sessionId])
 
@@ -137,12 +162,21 @@ function applyEvent(
   event: AiEvent,
   setMessages: React.Dispatch<React.SetStateAction<AiMessageView[]>>,
   setRunning: React.Dispatch<React.SetStateAction<boolean>>,
-  setError: React.Dispatch<React.SetStateAction<string | null>>
+  setError: React.Dispatch<React.SetStateAction<string | null>>,
+  turnChanges: Map<string, ToolFileChange>
 ): void {
   switch (event.type) {
     case 'turn-start': {
       setRunning(true)
       setError(null)
+      // 新一轮开始：上一轮的改动清单已经落成条目，这里清空累积器
+      turnChanges.clear()
+      // 上一轮若异常中断，可能残留进行中的清单条目
+      setMessages((previous) =>
+        previous.some((view) => view.kind === 'changes' && view.id === PENDING_CHANGES_ID)
+          ? previous.filter((view) => !(view.kind === 'changes' && view.id === PENDING_CHANGES_ID))
+          : previous
+      )
       break
     }
     case 'text-delta': {
@@ -177,6 +211,13 @@ function applyEvent(
             : message
         )
       )
+      // 累积本轮改动；一旦有文件被改就立刻显示，不依赖 turn-end（结束事件缺失时也能看到）
+      const change = event.card?.change
+      if (change) {
+        turnChanges.set(change.path, mergeFileChange(turnChanges.get(change.path), change))
+        const files = [...turnChanges.values()]
+        setMessages((previous) => upsertPendingChanges(previous, files))
+      }
       break
     }
     case 'error': {
@@ -185,10 +226,22 @@ function applyEvent(
     }
     case 'turn-end': {
       setRunning(false)
+      // 本轮改动清单收尾：移除进行中的条目，把最终结果放到消息末尾
+      const files = [...turnChanges.values()]
+      turnChanges.clear()
+      setMessages((previous) => {
+        const rest = previous.filter(
+          (view) => !(view.kind === 'changes' && view.id === PENDING_CHANGES_ID)
+        )
+        if (files.length === 0) {
+          return rest
+        }
+        return [...rest, { kind: 'changes', id: nextLiveId('changes'), time: Date.now(), files }]
+      })
       break
     }
     default: {
-      // step-start / approval-request 目前不影响消息列表
+      // step-start / file-changed / session-title / approval-request 不影响消息列表
       break
     }
   }

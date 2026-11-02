@@ -1,15 +1,16 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import type { MessageBoxOptions } from 'electron'
 import { isAbsolute, join } from 'path'
 import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
   AiEvent,
   AiLoadedSession,
   AiSendRequest,
-  AiSessionCreateInput,
   AiSessionSummary,
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById } from '../db'
+import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
 import { runTurn } from './loop/agentLoop'
 import { SESSIONS_DIR_NAME } from './session/jsonl'
@@ -31,6 +32,9 @@ const sessions = new SessionStore(sessionsRoot)
 
 /** 工具注册表：工具本身无状态，整个进程共享一份 */
 const registry = createToolRegistry()
+
+/** 会话级“已读”观测：先读后改策略的状态，按 sessionId 隔离 */
+const observations = new ObservationStore()
 
 /** 正在执行的会话 → 中止控制器 */
 const running = new Map<string, AbortController>()
@@ -81,12 +85,37 @@ export function registerAiHandlers(): void {
     }
   )
 
+  // 删除会话日志：磁盘文件不可恢复，先在主进程弹确认框
   ipcMain.handle(
-    AI_CHANNELS.createSession,
-    async (_event, input: AiSessionCreateInput): Promise<void> => {
-      requireSessionInput(input)
-      // 幂等：已有同名 id 的日志不会被覆盖，标题也不会被回退
-      await sessions.ensure(input.cwd, input.id, input.title, input.autoTitle)
+    AI_CHANNELS.deleteSession,
+    async (event, cwd: string, id: string): Promise<boolean> => {
+      const project = requireProjectPath(cwd)
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      // 正在执行的会话还在往这个文件里写，删了会被重新创建
+      if (running.has(id)) {
+        throw new Error('该会话正在执行，无法删除')
+      }
+      const summary = (await sessions.list(project)).find((item) => item.id === id)
+      const options: MessageBoxOptions = {
+        type: 'warning',
+        buttons: ['取消', '删除'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '删除会话',
+        message: `确定要删除会话「${summary?.title ?? id}」吗？`,
+        detail: '该会话的全部消息将被永久删除，且无法恢复。'
+      }
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const result = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options)
+      if (result.response !== 1) {
+        return false
+      }
+      await sessions.remove(project, id)
+      return true
     }
   )
 
@@ -117,7 +146,7 @@ export function registerAiHandlers(): void {
     }
   )
 
-  // P1：写操作审批走这里（渲染进程 → 主进程的一次性决策）
+  // 写操作审批通道保留但当前不接线：写工具的安全性由“先读后改”保证
   ipcMain.on(AI_CHANNELS.approval, (): void => {})
 }
 
@@ -130,7 +159,16 @@ async function startTurn(
 ): Promise<void> {
   try {
     const fs = await LocalFileSystem.create(request.cwd)
-    await runTurn({ request, model, fs, registry, sessions, emit, signal })
+    await runTurn({
+      request,
+      model,
+      fs,
+      observation: observations,
+      registry,
+      sessions,
+      emit,
+      signal
+    })
   } catch (error) {
     emit({ type: 'error', message: errorMessage(error) })
     emit({ type: 'turn-end', reason: 'error' })
@@ -153,20 +191,6 @@ function validateRequest(request: AiSendRequest): void {
   }
   if (typeof request.modelConfigId !== 'number' || !Number.isInteger(request.modelConfigId)) {
     throw new Error('modelConfigId 无效')
-  }
-}
-
-/** 校验新建会话的输入：cwd 必须是绝对路径，id 的文件名合法性交给仓库再查一遍 */
-function requireSessionInput(input: AiSessionCreateInput): void {
-  if (!input || typeof input !== 'object') {
-    throw new Error('请求参数无效')
-  }
-  requireProjectPath(input.cwd)
-  if (typeof input.id !== 'string' || input.id.length === 0) {
-    throw new Error('sessionId 无效')
-  }
-  if (typeof input.title !== 'string' || typeof input.autoTitle !== 'boolean') {
-    throw new Error('会话标题参数无效')
   }
 }
 
@@ -201,7 +225,7 @@ function describeToolCall(name: string, rawArguments: string): ToolCardView | un
   }
 }
 
-/** 应用退出前中止所有执行中的对话（P0 的工具都是短任务，这里只做信号收尾） */
+/** 应用退出前中止所有执行中的对话（工具都是短任务，这里只做信号收尾） */
 export function abortAllAiRuns(): void {
   for (const controller of running.values()) {
     controller.abort()

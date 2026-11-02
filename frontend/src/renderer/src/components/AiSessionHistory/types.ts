@@ -9,6 +9,8 @@ export interface AiSessionHistoryProps {
   activeId: string | null
   /** 点击某行：切换到该会话 */
   onSelect: (id: string) => void
+  /** 删除某个会话（磁盘日志一并删除，主进程会先弹确认框） */
+  onDelete: (id: string) => void
   /** 请求关闭弹层（点击外部或按 Esc） */
   onClose: () => void
 }

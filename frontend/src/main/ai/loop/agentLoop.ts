@@ -1,9 +1,11 @@
 import type { AiEvent, AiSendRequest, AiTurnEndReason } from '../../../shared/ai/types'
+import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
 import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../llm/openai'
 import { streamChat, toOpenAiTools } from '../llm/openai'
 import { buildSystemPrompt } from '../prompt'
 import type { SessionStore } from '../session/store'
+import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
 import { errorMessage, type ToolRegistry } from '../tools/registry'
 
@@ -22,6 +24,8 @@ export interface RunTurnOptions {
   request: AiSendRequest
   model: OpenAiConfig
   fs: FileSystemService
+  /** 会话级“已读”观测：写工具的“先读后改”就靠它 */
+  observation: ObservationStore
   registry: ToolRegistry
   sessions: SessionStore
   /** 事件出口：主进程里是 webContents.send，测试里可以直接收集 */
@@ -36,7 +40,7 @@ export interface RunTurnOptions {
  * @param options 注入的依赖与本轮请求
  */
 export async function runTurn(options: RunTurnOptions): Promise<void> {
-  const { request, model, fs, registry, sessions, emit, signal } = options
+  const { request, model, fs, observation, registry, sessions, emit, signal } = options
   // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
   const state = await sessions.ensure(request.cwd, request.sessionId)
   await sessions.settle(request.cwd, request.sessionId)
@@ -45,6 +49,11 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   const messages = await initialMessages(sessions, request)
   const tools = toOpenAiTools(registry.list())
   let reason: AiTurnEndReason = 'done'
+
+  // 首轮异步润色标题：与主回复并行，不阻塞也不影响结果；失败保留首条消息摘要
+  if (turn === 1) {
+    void refineTitle(request, model, sessions, emit, signal)
+  }
 
   emit({ type: 'turn-start', sessionId: request.sessionId })
   await sessions.record(request.cwd, request.sessionId, [
@@ -83,6 +92,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         signal.throwIfAborted()
         await executeCall(call, messages, {
           fs,
+          observation,
           registry,
           request,
           sessions,
@@ -196,6 +206,7 @@ async function executeCall(
   messages: ChatMessage[],
   context: {
     fs: FileSystemService
+    observation: ObservationStore
     registry: ToolRegistry
     request: AiSendRequest
     sessions: SessionStore
@@ -205,7 +216,7 @@ async function executeCall(
     signal: AbortSignal
   }
 ): Promise<void> {
-  const { fs, registry, request, sessions, turn, step, emit, signal } = context
+  const { fs, observation, registry, request, sessions, turn, step, emit, signal } = context
   const args = safeParseArguments(call.function.arguments)
   const card = registry.get(call.function.name)?.presentCall?.(args)
   emit({
@@ -219,6 +230,7 @@ async function executeCall(
     fs,
     cwd: request.cwd,
     sessionId: request.sessionId,
+    observation,
     signal
   })
   emit({
@@ -228,6 +240,10 @@ async function executeCall(
     text: result.text,
     ...(result.card ? { card } : {})
   })
+  // 写工具落盘后通知界面：文件树与已打开的编辑器需要跟着变
+  if (result.changedPaths && result.changedPaths.length > 0) {
+    emit({ type: 'file-changed', paths: result.changedPaths })
+  }
   await sessions.record(request.cwd, request.sessionId, [
     {
       type: 'tool/result',
@@ -244,6 +260,32 @@ async function executeCall(
     }
   ])
   messages.push({ role: 'tool', tool_call_id: call.id, content: result.text })
+}
+
+/**
+ * 用模型润色会话标题。
+ * 与 deepseek-harness 的 first-prompt provider 一致：只在首轮跑一次，
+ * 用户已手工改名（autoTitle=false）时不覆盖，失败保留首条消息摘要。
+ */
+async function refineTitle(
+  request: AiSendRequest,
+  model: OpenAiConfig,
+  sessions: SessionStore,
+  emit: (event: AiEvent) => void,
+  signal: AbortSignal
+): Promise<void> {
+  const title = await generateTitle(model, request.prompt, signal)
+  if (title === null) {
+    return
+  }
+  try {
+    const applied = await sessions.updateAutoTitle(request.cwd, request.sessionId, title)
+    if (applied) {
+      emit({ type: 'session-title', title })
+    }
+  } catch (error) {
+    console.warn('保存会话标题失败', error)
+  }
 }
 
 /** 展示用：参数解析失败时给空对象，真正的错误交给注册表回报 */

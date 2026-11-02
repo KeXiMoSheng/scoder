@@ -30,7 +30,7 @@ function clipLine(text: string): string {
 /**
  * read 工具：读取工作区内的文本文件。
  * 流程：解析路径 → 观测类型 → 读有界窗口 → 渲染行号文本。
- * P1 会在这里补一条“已读版本”记录，供 write/edit 做并发校验。
+ * 顺带把读到的版本记进会话观测，供 write/edit 做“先读后改”与并发校验。
  */
 export function createReadTool(): ToolDefinition {
   return {
@@ -57,6 +57,8 @@ export function createReadTool(): ToolDefinition {
       const target = await ctx.fs.resolve(filePath, ctx.cwd)
       const info = await ctx.fs.stat(target)
       if (!info) {
+        // 记下“确认不存在”：随后 write 可以据此合法新建同名文件
+        ctx.observation.record(ctx.sessionId, target, { kind: 'absent' })
         throw new Error(`文件不存在：${target.displayPath}`)
       }
       if (info.type === 'directory') {
@@ -66,6 +68,8 @@ export function createReadTool(): ToolDefinition {
         throw new Error(`不是普通文件：${target.displayPath}`)
       }
       const window = await ctx.fs.readWindow(target, offset, limit)
+      // 读到即观测：写工具据此拿到可以安全覆盖的版本基准
+      ctx.observation.record(ctx.sessionId, target, { kind: 'present', version: info.version })
       return {
         text: formatReadOutput(window),
         meta: { path: target.displayPath, offset, totalLines: window.totalLines }

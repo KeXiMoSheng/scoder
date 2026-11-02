@@ -20,18 +20,51 @@ export interface JsonSchemaObject {
 }
 
 /**
+ * diff 卡片里的一行。
+ * context 是未改动的上下文行，del 是被删掉的旧行，add 是新增行。
+ * 由主进程算好行类型，渲染进程直接上色，不再自己算 diff。
+ */
+export type ToolHunkLine = {
+  kind: 'context' | 'del' | 'add'
+  text: string
+}
+
+/** diff 卡片的一个变更块（含上下文行） */
+export type ToolHunk = {
+  lines: ToolHunkLine[]
+}
+
+/**
+ * 一次文件改动的统计，用于本轮改动清单。
+ * status 对齐 git 的记号：A 本轮新建，M 本轮修改。
+ */
+export type ToolFileChange = {
+  /** 相对工作区根的路径 */
+  path: string
+  /** 新增行数 */
+  added: number
+  /** 减少行数 */
+  removed: number
+  status: 'A' | 'M'
+}
+
+/**
  * 工具卡片：主进程根据调用参数或结果推导出的展示意图。
  * 渲染进程只负责画卡片，不参与工具执行，也不解析文件内容。
  */
 export interface ToolCardView {
   kind: 'generic' | 'read' | 'diff'
   title: string
-  /** 卡片正文（read 为带行号的窗口，diff 为补丁文本；P0 只产出 read） */
+  /** 卡片正文（read 为带行号的窗口；diff 卡片改用 hunks 渲染） */
   body?: string
   /** 涉及的文件（相对工作区根，供 UI 点击跳转） */
   path?: string
   /** 跳转行号（1 起） */
   line?: number
+  /** kind 为 diff 时的逐块变更（由主进程算好并随日志保存，重放一致） */
+  hunks?: ToolHunk[]
+  /** 本次调用对这个文件的影响（增删行数与 A/M），供改动清单汇总 */
+  change?: ToolFileChange
 }
 
 /** 发起一轮对话的请求：工作区由渲染进程按当前打开的项目传入 */
@@ -57,6 +90,10 @@ export type AiEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'tool-call'; callId: string; name: string; args: unknown; card?: ToolCardView }
   | { type: 'tool-result'; callId: string; ok: boolean; text: string; card?: ToolCardView }
+  /** 写工具落盘后的通知：渲染进程据此刷新文件树与已打开的编辑器 */
+  | { type: 'file-changed'; paths: string[] }
+  /** 自动标题润色完成：标签栏与历史列表据此更新标题 */
+  | { type: 'session-title'; title: string }
   | { type: 'approval-request'; requestId: string; toolName: string; reason: string }
   | { type: 'error'; message: string }
   | { type: 'turn-end'; reason: 'done' | 'aborted' | 'error' }
@@ -97,6 +134,8 @@ export type AiMessageView =
       /** 卡片展示意图：主进程按工具定义推导并随日志保存，历史与实时一致 */
       card?: ToolCardView
     }
+  /** 本轮改动清单：一轮对话结束时附着在消息末尾 */
+  | { kind: 'changes'; id: string; time: number; files: ToolFileChange[] }
 
 /** 打开会话时载入的内容：磁盘历史 + 该会话是否正在执行 */
 export interface AiLoadedSession {
@@ -112,21 +151,15 @@ export interface AiLoadedSession {
 export interface AiSessionSummary {
   id: string
   title: string
-  /** 标题仍为自动生成：首条消息发送后由渲染进程用消息摘要替换 */
+  /**
+   * 标题是否仍由自动生成（首条消息摘要或模型润色）。
+   * 用户手工重命名后置 false：此后自动标题不再覆盖它。
+   */
   autoTitle: boolean
   /** 创建时间（毫秒时间戳） */
   createdAt: number
   /** 最后活动时间（毫秒时间戳） */
   updatedAt: number
-}
-
-/** 新建会话的输入：id 由渲染进程生成，主进程负责落到该项目目录下 */
-export interface AiSessionCreateInput {
-  /** 会话所属项目根目录（绝对路径）：会话按项目隔离存储 */
-  cwd: string
-  id: string
-  title: string
-  autoTitle: boolean
 }
 
 /** 经 preload 暴露给渲染进程的 AI 能力（白名单方法） */
@@ -143,8 +176,8 @@ export interface AiAPI {
   loadMessages: (cwd: string, sessionId: string) => Promise<AiLoadedSession>
   /** 列出某个项目下的全部会话（按最后活动时间倒序） */
   listSessions: (cwd: string) => Promise<AiSessionSummary[]>
-  /** 新建会话日志文件（幂等：同 id 重复调用不会清空已有内容） */
-  createSession: (input: AiSessionCreateInput) => Promise<void>
-  /** 保存会话标题；autoTitle 为 true 表示仍是首条消息的摘要 */
+  /** 删除一个会话日志；返回 false 表示用户取消了确认 */
+  deleteSession: (cwd: string, id: string) => Promise<boolean>
+  /** 保存会话标题；autoTitle 为 true 表示仍是自动生成的标题 */
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) => Promise<void>
 }

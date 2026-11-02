@@ -130,6 +130,28 @@ export async function* streamChat(
   }
 }
 
+/**
+ * 不带工具跑一次对话，把流式文本收集成完整字符串。
+ * 会话标题这类辅助请求复用它，不再写一份 HTTP/SSE 解析。
+ * @param config 连接配置
+ * @param messages 请求消息
+ * @param signal 取消信号
+ * @returns 模型输出的全文
+ */
+export async function completeChat(
+  config: OpenAiConfig,
+  messages: ChatMessage[],
+  signal: AbortSignal
+): Promise<string> {
+  let text = ''
+  for await (const delta of streamChat(config, messages, [], signal)) {
+    if (delta.text) {
+      text += delta.text
+    }
+  }
+  return text
+}
+
 /** 解析一帧 SSE 数据；个别厂商会发送心跳等非 JSON 内容，直接忽略 */
 function parseDelta(data: string): StreamDelta | undefined {
   let chunk: StreamChunk

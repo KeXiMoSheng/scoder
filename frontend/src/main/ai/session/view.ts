@@ -5,7 +5,8 @@
  * - store 关心“模型看到什么”，不包含展示卡片；
  * - 这里关心“用户看到什么”，文本与工具卡片分段，结果回填到对应调用上。
  */
-import type { AiMessageView, ToolCardView } from '../../../shared/ai/types'
+import { mergeFileChange } from '../../../shared/ai/changes'
+import type { AiMessageView, ToolCardView, ToolFileChange } from '../../../shared/ai/types'
 import type { SessionBlock, SessionEvent } from './types'
 
 /** 由工具名与原始参数推导挂起卡片；历史日志里没有结果卡片时用它兜底 */
@@ -27,6 +28,8 @@ export function toMessageViews(
   const views: AiMessageView[] = []
   /** callId → 卡片在 views 里的下标，用于结果回填 */
   const toolIndex = new Map<string, number>()
+  /** 本轮改动清单：turn → 路径 → 统计 */
+  const turnChanges = new Map<number, Map<string, ToolFileChange>>()
 
   for (const event of events) {
     switch (event.type) {
@@ -79,6 +82,29 @@ export function toMessageViews(
           resultText: event.data.text,
           ...(card ? { card } : {})
         }
+        // 累积本轮改动，turn/end 时整理成清单
+        const change = event.data.card?.change
+        if (change) {
+          let files = turnChanges.get(event.data.turn)
+          if (!files) {
+            files = new Map()
+            turnChanges.set(event.data.turn, files)
+          }
+          files.set(change.path, mergeFileChange(files.get(change.path), change))
+        }
+        break
+      }
+      case 'turn/end': {
+        const files = turnChanges.get(event.data.turn)
+        turnChanges.delete(event.data.turn)
+        if (files && files.size > 0) {
+          views.push({
+            kind: 'changes',
+            id: `changes-${event.seq}`,
+            time: event.time,
+            files: [...files.values()]
+          })
+        }
         break
       }
       default:
@@ -115,6 +141,10 @@ function resultCard(
 ): ToolCardView | undefined {
   // 工具已经给出了带正文的卡片（如 read 的带行号窗口）：保持原样
   if (base?.body !== undefined && base.body.length > 0) {
+    return base
+  }
+  // diff 卡片的信息在 hunks 里，不能被结果文本顶掉
+  if (base?.hunks !== undefined && base.hunks.length > 0) {
     return base
   }
   if (text.length === 0) {

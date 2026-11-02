@@ -5,24 +5,36 @@ import type { AiSessionSummary } from '../../../shared/ai/types'
 const DEFAULT_TITLE = '新会话'
 /** 自动标题的最大字符数（超出部分省略） */
 const TITLE_MAX_LENGTH = 20
+/** 新建会话的默认标题形态：新会话 / 新会话 2 / 新会话 3 … */
+const DEFAULT_TITLE_PATTERN = /^新会话(?: \d+)?$/
 
 /** 一个 AI 会话：与主进程返回的摘要同构，标题与时间用于标签栏和历史列表 */
 export type AiSession = AiSessionSummary
 
-/** 会话状态：所属项目 + 标签顺序 + 当前激活项 */
+/** 会话状态：所属项目 + 标签栏顺序 + 磁盘历史 + 当前激活项 */
 interface AiSessionsState {
   /** 该状态属于哪个项目：与当前 projectPath 不一致时视为“尚未加载” */
   projectPath: string | null
+  /** 已打开的会话标签（只有用户显式打开/新建的才会进来） */
   sessions: AiSession[]
+  /** 磁盘上的全部会话：历史面板的数据源，不自动展开成标签 */
+  history: AiSession[]
   activeId: string | null
 }
 
 /** 没有项目或正在切换项目时的空状态（复用同一对象，避免无谓重渲染） */
-const EMPTY_STATE: AiSessionsState = { projectPath: null, sessions: [], activeId: null }
+const EMPTY_STATE: AiSessionsState = {
+  projectPath: null,
+  sessions: [],
+  history: [],
+  activeId: null
+}
 
 export interface AiSessionsApi {
-  /** 当前项目的全部会话（按创建顺序，即标签栏顺序） */
+  /** 当前打开的会话标签（按创建顺序，即标签栏顺序） */
   sessions: AiSession[]
+  /** 磁盘上的全部会话：历史面板用，不自动展开成标签 */
+  history: AiSession[]
   /** 当前激活会话 id；无会话时为 null */
   activeId: string | null
   /** 当前激活的会话；无会话时为 null */
@@ -31,10 +43,18 @@ export interface AiSessionsApi {
   create: () => void
   /** 没有会话时新建一个并激活；已有会话则激活第一个（打开 AI 面板时调用） */
   ensureSession: () => void
-  /** 激活指定会话（仅当其存在） */
+  /** 激活指定会话（仅当其已在标签栏中） */
   activate: (id: string) => void
+  /** 从历史打开会话：未在标签栏中则先加入再激活（关闭过的标签可重新打开） */
+  open: (id: string) => void
+  /** 重新读取磁盘上的会话列表（打开历史面板时调用） */
+  refreshHistory: () => void
   /** 重命名会话（空白名称忽略） */
   rename: (id: string, title: string) => void
+  /** 主进程润色完自动标题后同步到标签与历史 */
+  applyServerTitle: (id: string, title: string) => void
+  /** 删除会话（磁盘日志一并删除；用户取消时无变化） */
+  remove: (id: string) => void
   /** 关闭单个会话标签（不删除磁盘日志） */
   close: (id: string) => void
   /** 关闭除指定会话外的全部标签（不删除磁盘日志） */
@@ -76,6 +96,20 @@ function buildSession(sessions: AiSession[]): AiSession {
     updatedAt: now,
     autoTitle: true
   }
+}
+
+/**
+ * 把会话并入历史列表：同 id 覆盖，否则追加。
+ * 新建/改名/活动时间变化都要同步 history，历史面板才不会显示旧数据。
+ */
+function appendToHistory(history: AiSession[], session: AiSession): AiSession[] {
+  const index = history.findIndex((item) => item.id === session.id)
+  if (index === -1) {
+    return [...history, session]
+  }
+  const next = [...history]
+  next[index] = session
+  return next
 }
 
 /** 用首条消息生成会话标题：取首个非空行，超长截断 */
@@ -123,7 +157,7 @@ function removeMatching(
       }
     }
   }
-  return { projectPath: state.projectPath, sessions, activeId }
+  return { projectPath: state.projectPath, sessions, history: state.history, activeId }
 }
 
 /**
@@ -138,13 +172,29 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
   const [state, setState] = useState<AiSessionsState>({
     projectPath,
     sessions: [],
+    history: [],
     activeId: null
   })
 
   // 项目切换后旧列表立即失效：磁盘结果到达前不展示上一个项目的会话
   const current = state.projectPath === projectPath ? state : EMPTY_STATE
 
-  // 载入当前项目的会话列表
+  /** 重新读取磁盘上的会话列表；只更新 history，不影响已打开的标签 */
+  const refreshHistory = useCallback((): void => {
+    if (projectPath === null) {
+      return
+    }
+    void window.api.ai
+      .listSessions(projectPath)
+      .then((history) => {
+        setState((previous) =>
+          previous.projectPath === projectPath ? { ...previous, history } : previous
+        )
+      })
+      .catch((error: unknown) => console.warn('读取会话列表失败', error))
+  }, [projectPath])
+
+  // 打开项目：标签栏保持为空（不自动展开历史会话），只把磁盘会话读进历史列表
   useEffect(() => {
     if (projectPath === null) {
       return
@@ -152,11 +202,13 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
     let cancelled = false
     void window.api.ai
       .listSessions(projectPath)
-      .then((sessions) => {
+      .then((history) => {
         if (cancelled) {
           return
         }
-        setState({ projectPath, sessions, activeId: null })
+        setState((previous) =>
+          previous.projectPath === projectPath ? { ...previous, history } : previous
+        )
       })
       .catch((error: unknown) => console.warn('读取会话列表失败', error))
     return () => {
@@ -169,17 +221,14 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
       return
     }
     const session = buildSession(current.sessions)
-    setState({ projectPath, sessions: [...current.sessions, session], activeId: session.id })
-    // 落盘失败只影响“重启后是否还在”，不应打断当前编辑
-    void window.api.ai
-      .createSession({
-        cwd: projectPath,
-        id: session.id,
-        title: session.title,
-        autoTitle: session.autoTitle
-      })
-      .catch((error: unknown) => console.warn('新建会话文件失败', error))
-  }, [current.sessions, projectPath])
+    // 只在内存里建会话：首次发送时由主进程建日志，避免产生空会话文件
+    setState({
+      projectPath,
+      sessions: [...current.sessions, session],
+      history: appendToHistory(current.history, session),
+      activeId: session.id
+    })
+  }, [current.history, current.sessions, projectPath])
 
   const ensureSession = useCallback((): void => {
     if (projectPath === null) {
@@ -191,9 +240,9 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
     }
     // 恢复出来的会话没有激活项：打开面板时补上，避免界面停在“无会话”状态
     if (current.activeId === null) {
-      setState({ projectPath, sessions: current.sessions, activeId: current.sessions[0].id })
+      setState({ ...current, activeId: current.sessions[0].id })
     }
-  }, [create, current.activeId, current.sessions, projectPath])
+  }, [create, current, projectPath])
 
   const activate = useCallback(
     (id: string): void => {
@@ -206,6 +255,29 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
           return previous
         }
         return { ...previous, activeId: id }
+      })
+    },
+    [projectPath]
+  )
+
+  /**
+   * 从历史打开会话：已在标签栏里就只是激活，否则先加入标签再激活。
+   * 这是“关闭所有标签后还能从历史回来”的关键一步。
+   */
+  const open = useCallback(
+    (id: string): void => {
+      setState((previous) => {
+        if (previous.projectPath !== projectPath) {
+          return previous
+        }
+        if (previous.sessions.some((session) => session.id === id)) {
+          return previous.activeId === id ? previous : { ...previous, activeId: id }
+        }
+        const target = previous.history.find((session) => session.id === id)
+        if (!target) {
+          return previous
+        }
+        return { ...previous, sessions: [...previous.sessions, target], activeId: id }
       })
     },
     [projectPath]
@@ -224,13 +296,18 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
         sessions: current.sessions.map((session) =>
           session.id === id ? { ...session, title: trimmed, autoTitle: false } : session
         ),
+        history: appendToHistory(current.history, {
+          ...target,
+          title: trimmed,
+          autoTitle: false
+        }),
         activeId: current.activeId
       })
       void window.api.ai
         .updateSessionTitle(projectPath, id, trimmed, false)
         .catch((error: unknown) => console.warn('保存会话标题失败', error))
     },
-    [current.activeId, current.sessions, projectPath]
+    [current.activeId, current.history, current.sessions, projectPath]
   )
 
   const close = useCallback(
@@ -261,6 +338,61 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
     [projectPath]
   )
 
+  /**
+   * 主进程润色完标题后同步到标签与历史。
+   * 服务端只在 autoTitle 仍为 true 时提交，这里只负责展示。
+   */
+  const applyServerTitle = useCallback(
+    (id: string, title: string): void => {
+      if (projectPath === null) {
+        return
+      }
+      setState((previous) => {
+        if (previous.projectPath !== projectPath) {
+          return previous
+        }
+        const apply = (session: AiSession): AiSession =>
+          session.id === id ? { ...session, title, autoTitle: true } : session
+        return {
+          ...previous,
+          sessions: previous.sessions.map(apply),
+          history: previous.history.map(apply)
+        }
+      })
+    },
+    [projectPath]
+  )
+
+  /**
+   * 删除会话：主进程先弹确认框，用户取消时 deleted 为 false。
+   * 成功后同时从标签与历史里移除，并处理激活项回退。
+   */
+  const remove = useCallback(
+    (id: string): void => {
+      if (projectPath === null) {
+        return
+      }
+      void window.api.ai
+        .deleteSession(projectPath, id)
+        .then((deleted) => {
+          if (!deleted) {
+            return
+          }
+          setState((previous) => {
+            if (previous.projectPath !== projectPath) {
+              return previous
+            }
+            return removeMatching(
+              { ...previous, history: previous.history.filter((session) => session.id !== id) },
+              (session) => session.id === id
+            )
+          })
+        })
+        .catch((error: unknown) => console.warn('删除会话失败', error))
+    },
+    [projectPath]
+  )
+
   const touch = useCallback(
     (id: string, prompt: string): void => {
       const now = Date.now()
@@ -268,32 +400,40 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
       if (!target || projectPath === null) {
         return
       }
-      const title = target.autoTitle ? summarizePrompt(prompt) : target.title
+      // 只有仍是默认标题时才用首条消息生成摘要；
+      // 模型润色过的标题与用户改名都保持不变（改名会置 autoTitle=false 钉住）
+      const shouldSummarize = target.autoTitle && DEFAULT_TITLE_PATTERN.test(target.title)
+      const title = shouldSummarize ? summarizePrompt(prompt) : target.title
+      const updated = { ...target, title, updatedAt: now }
       setState({
         projectPath,
-        sessions: current.sessions.map((session) =>
-          session.id === id ? { ...session, title, autoTitle: false, updatedAt: now } : session
-        ),
+        sessions: current.sessions.map((session) => (session.id === id ? updated : session)),
+        history: appendToHistory(current.history, updated),
         activeId: current.activeId
       })
       // 标题真的变了才追写一条事件，避免每次发送都往日志里塞重复标题
       if (title !== target.title) {
         void window.api.ai
-          .updateSessionTitle(projectPath, id, title, false)
+          .updateSessionTitle(projectPath, id, title, target.autoTitle)
           .catch((error: unknown) => console.warn('保存会话标题失败', error))
       }
     },
-    [current.activeId, current.sessions, projectPath]
+    [current.activeId, current.history, current.sessions, projectPath]
   )
 
   return {
     sessions: current.sessions,
+    history: current.history,
     activeId: current.activeId,
     activeSession: current.sessions.find((session) => session.id === current.activeId) ?? null,
     create,
     ensureSession,
     activate,
+    open,
+    refreshHistory,
     rename,
+    applyServerTitle,
+    remove,
     close,
     closeOthers,
     touch

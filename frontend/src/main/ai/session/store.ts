@@ -17,6 +17,7 @@ import {
   createSessionLog,
   listProjectLogs,
   readSessionLog,
+  removeSessionLog,
   sessionLogPath,
   truncateTornTail
 } from './jsonl'
@@ -223,6 +224,41 @@ export class SessionStore {
     if (state) {
       state.title = title
       state.autoTitle = autoTitle
+    }
+  }
+
+  /**
+   * 用自动生成的标题覆盖当前标题。
+   * 用户已经手工重命名（autoTitle 为 false）时不再覆盖——重命名即“钉住”，
+   * 之后只有用户自己改才能变。
+   * @returns 是否真的写入
+   */
+  async updateAutoTitle(cwd: string, id: string, title: string): Promise<boolean> {
+    const state = await this.ensure(cwd, id)
+    if (!state.autoTitle) {
+      return false
+    }
+    await this.updateTitle(cwd, id, title, true)
+    return true
+  }
+
+  /**
+   * 删除一个会话的全部日志，并清掉进程内状态。
+   * 排到该会话写入链末尾：先让进行中的写完成再删，
+   * 避免删到一半又被追加、或删完立刻被重建。
+   * @param cwd 会话所属项目根目录
+   * @param id 会话 id
+   */
+  async remove(cwd: string, id: string): Promise<void> {
+    const key = refKey(cwd, id)
+    try {
+      await this.enqueue(key, async () => {
+        await removeSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
+        this.states.delete(key)
+      })
+    } finally {
+      // 会话已经不存在，写入链也一并清掉
+      this.chains.delete(key)
     }
   }
 

@@ -13,7 +13,7 @@ import TitleBar from './components/TitleBar'
 import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
-import { isAtOrUnder } from './lib/filePath'
+import { isAtOrUnder, joinPath } from './lib/filePath'
 import { cn } from './lib/utils'
 
 /** 左侧文件树面板宽度（px） */
@@ -61,6 +61,7 @@ function App(): React.JSX.Element {
   const aiSessions = useAiSessions(projectPath)
   // 单独取出稳定回调：避免快捷键监听依赖整个会话对象而反复重建
   const ensureAiSession = aiSessions.ensureSession
+  const applyServerTitle = aiSessions.applyServerTitle
   const [dirtyPaths, setDirtyPaths] = useState<ReadonlySet<string>>(new Set())
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const [aiPanelVisible, setAiPanelVisible] = useState(false)
@@ -71,6 +72,8 @@ function App(): React.JSX.Element {
   const [terminalHeight, setTerminalHeight] = useState<number | null>(null)
   // 系统配置页：以覆盖层形式显示在工作区之上，工作区保持挂载（编辑/终端状态不丢失）
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 文件树刷新信号：AI 写工具落盘后递增，文件树据此重读已加载目录
+  const [fsRefreshToken, setFsRefreshToken] = useState(0)
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
   const { themeId, setThemeId } = useTheme()
 
@@ -171,6 +174,30 @@ function App(): React.JSX.Element {
       return next
     })
   }, [])
+
+  // AI 写工具改动磁盘后：重载已打开的缓冲区并刷新文件树；模型润色完标题后同步标签。
+  // 工具给的是相对工作区根的路径，转回绝对路径后才能对上编辑器的 model。
+  useEffect(() => {
+    if (projectPath === null) {
+      return
+    }
+    const separator = projectPath.includes('\\') ? '\\' : '/'
+    return window.api.ai.onEvent(({ sessionId, event }) => {
+      if (event.type === 'session-title') {
+        applyServerTitle(sessionId, event.title)
+        return
+      }
+      if (event.type !== 'file-changed') {
+        return
+      }
+      for (const relative of event.paths) {
+        editorRef.current?.reloadFromDisk(
+          joinPath(projectPath, relative.split('/').join(separator))
+        )
+      }
+      setFsRefreshToken((token) => token + 1)
+    })
+  }, [applyServerTitle, projectPath])
 
   /** 条目重命名/移动前：先保存受影响的脏缓冲区，失败时中止本次操作 */
   const handleBeforeEntryMove = useCallback(async (path: string): Promise<void> => {
@@ -393,6 +420,7 @@ function App(): React.JSX.Element {
                 rootPath={projectPath}
                 selectedPath={activePath}
                 dirtyPaths={dirtyPaths}
+                refreshToken={fsRefreshToken}
                 onSelectFile={handleSelectFile}
                 onBeforeEntryMove={handleBeforeEntryMove}
                 onEntryMoved={handleEntryMoved}

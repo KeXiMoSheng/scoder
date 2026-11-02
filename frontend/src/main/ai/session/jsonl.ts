@@ -4,7 +4,7 @@
  * 只做“文件里有什么、怎么安全写进去”，不关心对话语义；
  * 事件的含义与重放都在 store.ts。
  */
-import { appendFile, mkdir, readFile, readdir, truncate, writeFile } from 'fs/promises'
+import { appendFile, mkdir, readFile, readdir, rm, truncate, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import { dirname, join } from 'path'
 import { SessionLogError } from './errors'
@@ -201,6 +201,22 @@ export async function createSessionLog(path: string, header: SessionLogHeader): 
       return false
     }
     throw new SessionLogError(`创建会话日志失败：${path}`, 'SESSION_LOG_WRITE_FAILED', {
+      cause: error
+    })
+  }
+}
+
+/**
+ * 删除会话日志文件。
+ * 与创建相反，这里必须真的删掉：目标是从历史里彻底移除。
+ * 文件已不存在时视为成功（重复删除不报错）。
+ * @param path 日志文件绝对路径
+ */
+export async function removeSessionLog(path: string): Promise<void> {
+  try {
+    await rm(path, { force: true })
+  } catch (error) {
+    throw new SessionLogError(`删除会话日志失败：${path}`, 'SESSION_LOG_WRITE_FAILED', {
       cause: error
     })
   }

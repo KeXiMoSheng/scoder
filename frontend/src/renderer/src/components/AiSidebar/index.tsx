@@ -17,11 +17,15 @@ import type { AiSidebarProps } from './types'
 export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): React.JSX.Element {
   const {
     sessions: list,
+    history,
     activeId,
     activeSession,
     create,
     activate,
+    open,
+    refreshHistory,
     rename,
+    remove,
     close,
     closeOthers,
     touch
@@ -48,12 +52,22 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
     setHistoryOpen(false)
   }, [create])
 
+  /** 打开历史弹层：每次展开都重新读盘，保证标题与时间是新的 */
+  const toggleHistory = useCallback((): void => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (next) {
+      refreshHistory()
+    }
+  }, [historyOpen, refreshHistory])
+
+  /** 点击历史会话：关闭过的标签也能重新打开（open 负责把它加回标签栏） */
   const handleSelectHistory = useCallback(
     (id: string): void => {
-      activate(id)
+      open(id)
       setHistoryOpen(false)
     },
-    [activate]
+    [open]
   )
 
   return (
@@ -97,7 +111,7 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
               title="对话历史"
               aria-label="对话历史"
               aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen((prev) => !prev)}
+              onClick={toggleHistory}
             >
               <History className="size-3.5" />
             </Button>
@@ -105,9 +119,10 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
         </header>
         {historyOpen ? (
           <AiSessionHistory
-            sessions={list}
+            sessions={history}
             activeId={activeId}
             onSelect={handleSelectHistory}
+            onDelete={remove}
             onClose={() => setHistoryOpen(false)}
           />
         ) : null}

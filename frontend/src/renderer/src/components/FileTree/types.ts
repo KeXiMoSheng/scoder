@@ -16,6 +16,8 @@ export interface FileTreeProps {
   /** 有未保存修改的文件路径集合（显示脏标记圆点） */
   dirtyPaths: ReadonlySet<string>
   onSelectFile: (file: FileNode) => void
+  /** 外部（AI 写工具）改动磁盘后的刷新信号：值变化即重读已加载目录，不重挂载 */
+  refreshToken?: number
   /** 条目被重命名/移动前调用（例如先把脏缓冲区落盘）；抛错则中止本次操作 */
   onBeforeEntryMove: (path: string) => Promise<void>
   /** 条目重命名/移动完成后调用（oldPath → newPath） */

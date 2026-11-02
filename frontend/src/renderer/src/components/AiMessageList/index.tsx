@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Wrench } from 'lucide-react'
-import type { AiMessageView } from '@shared/ai/types'
+import { ChevronDown, ChevronRight, FileDiff, Loader2, Wrench } from 'lucide-react'
+import type { AiMessageView, ToolFileChange, ToolHunk } from '@shared/ai/types'
+import FileRow from '../FileRow'
 import MarkdownPreview from '../MarkdownPreview'
+import { basename } from '../../lib/filePath'
 import { cn } from '../../lib/utils'
 import type { AiMessageListProps } from './types'
 
@@ -62,6 +64,8 @@ export default function AiMessageList({
             return <AssistantMessage key={message.id} text={message.text} />
           case 'tool':
             return <ToolCard key={message.id} message={message} />
+          case 'changes':
+            return <ChangesSummary key={message.id} files={message.files} />
         }
       })}
       {running ? (
@@ -104,7 +108,7 @@ function AssistantMessage({ text }: { text: string }): React.JSX.Element {
 /**
  * 工具卡片：默认收起，只显示工具名与状态。
  * 点击标题行（左侧工具图标或右侧箭头都可以）展开正文：
- * 带行号窗口、补丁或失败原因。
+ * read 看带行号窗口，write/edit 看 diff，失败时看原因。
  */
 function ToolCard({
   message
@@ -113,9 +117,12 @@ function ToolCard({
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const title = message.card?.title ?? message.name
-  // 失败时没有卡片正文，退回到结果文本，方便直接看到错误原因
-  const body = message.card?.body ?? (message.ok === false ? message.resultText : undefined)
-  const hasBody = typeof body === 'string' && body.length > 0
+  // diff 卡片用结构化行渲染；只有纯文本正文的工具（如 read）才走 pre
+  const hunks = message.card?.kind === 'diff' ? (message.card.hunks ?? []) : []
+  // 卡片优先；卡片没有正文（失败、旧日志或 diff 为空）时退回结果文本，保证总能展开
+  const body = message.card?.body ?? message.resultText
+  const hasHunks = hunks.length > 0
+  const hasBody = hasHunks || (typeof body === 'string' && body.length > 0)
   const statusLabel =
     message.status === 'pending' ? '执行中' : message.ok === false ? '失败' : '完成'
   const Chevron = expanded ? ChevronDown : ChevronRight
@@ -157,10 +164,82 @@ function ToolCard({
         {hasBody ? <Chevron className="size-3.5 shrink-0 text-dim" /> : null}
       </button>
       {expanded && hasBody ? (
-        <pre className="m-0 max-h-64 overflow-auto px-2 py-1.5 text-[11px] leading-[1.5] break-all whitespace-pre-wrap text-dim">
-          {body}
-        </pre>
+        hasHunks ? (
+          <DiffBody hunks={hunks} />
+        ) : (
+          <pre className="m-0 max-h-64 overflow-auto px-2 py-1.5 text-[11px] leading-[1.5] break-all whitespace-pre-wrap text-dim">
+            {body}
+          </pre>
+        )
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * 本轮改动清单：一轮对话结束后附着在消息末尾。
+ * 复用文件树的 FileRow（图标 + 文件名 + 行尾插槽），保证与左侧列表同一套视觉。
+ */
+function ChangesSummary({ files }: { files: readonly ToolFileChange[] }): React.JSX.Element {
+  const added = files.reduce((total, file) => total + file.added, 0)
+  const removed = files.reduce((total, file) => total + file.removed, 0)
+  return (
+    <div className="mb-3 overflow-hidden rounded-md border border-line bg-elevated">
+      <div className="flex items-center gap-1.5 border-b border-line px-2 py-1.5 text-[12px] text-dim">
+        <FileDiff className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">本轮改动 {files.length} 个文件</span>
+        <span className="shrink-0 text-link">+{added}</span>
+        <span className="shrink-0 text-danger">-{removed}</span>
+      </div>
+      <ul className="m-0 list-none p-0">
+        {files.map((file) => (
+          <li key={file.path} className="px-2 py-1 text-[12px]" title={file.path}>
+            <FileRow
+              name={basename(file.path)}
+              trailing={
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-link">+{file.added}</span>
+                  <span className="text-danger">-{file.removed}</span>
+                  {/* git 风格的标记：A 本轮新建，M 本轮修改 */}
+                  <span
+                    className={cn('font-medium', file.status === 'A' ? 'text-link' : 'text-dim')}
+                  >
+                    {file.status}
+                  </span>
+                </span>
+              }
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** diff 正文：删除行红底、新增行蓝底，上下文行保持低调 */
+function DiffBody({ hunks }: { hunks: readonly ToolHunk[] }): React.JSX.Element {
+  return (
+    <div className="max-h-64 overflow-auto px-2 py-1.5 text-[11px] leading-[1.5]">
+      {hunks.map((hunk, hunkIndex) => (
+        <div
+          key={hunkIndex}
+          className={hunkIndex > 0 ? 'mt-1.5 border-t border-line pt-1.5' : undefined}
+        >
+          {hunk.lines.map((line, lineIndex) => (
+            <pre
+              key={lineIndex}
+              className={cn(
+                'm-0 whitespace-pre-wrap break-all',
+                line.kind === 'del' && 'bg-danger/10 text-danger',
+                line.kind === 'add' && 'bg-link/10 text-link',
+                line.kind === 'context' && 'text-dim'
+              )}
+            >
+              {`${line.kind === 'del' ? '-' : line.kind === 'add' ? '+' : ' '} ${line.text}`}
+            </pre>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
