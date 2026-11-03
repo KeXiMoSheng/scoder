@@ -8,6 +8,10 @@ import type { AiContextUsageProps } from './types'
 const COMPACT_NOTICE = '压缩功能尚未开放，当前仅统计用量'
 const NOTICE_DURATION = 2400
 
+/** 两个快捷按钮共用同一套低对比样式，与面板背景保持一致 */
+const PANEL_BUTTON_CLASS =
+  'inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border-none bg-hover px-2 text-[11px] font-medium text-fg transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-40'
+
 /** 去掉小数末尾的 .0：1.0M → 1M */
 function trimZero(value: number): string {
   return value.toFixed(1).replace(/\.0$/, '')
@@ -155,7 +159,7 @@ export default function AiContextUsage({
             <div className="mt-1.5 grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                className="inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border-none bg-hover px-2 text-[11px] font-medium text-fg transition-colors hover:bg-accent"
+                className={PANEL_BUTTON_CLASS}
                 title="压缩当前会话（暂未开放真实压缩）"
                 onClick={handleCompact}
               >
@@ -164,7 +168,7 @@ export default function AiContextUsage({
               </button>
               <button
                 type="button"
-                className="inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border-none bg-link px-2 text-[11px] font-medium text-[color:var(--bg)] transition-[filter] hover:brightness-110 disabled:cursor-default disabled:opacity-40"
+                className={PANEL_BUTTON_CLASS}
                 title={canCreate ? '新建会话' : '先打开一个项目'}
                 disabled={!canCreate}
                 onClick={handleCreate}
