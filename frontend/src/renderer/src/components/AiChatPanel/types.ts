@@ -11,4 +11,6 @@ export interface AiChatPanelProps {
   emptyHint: string
   /** 用户发出消息后的回调：用于更新会话标题与活动时间 */
   onUserSend: (text: string) => void
+  /** 输入区用量面板里的「新建会话」 */
+  onCreateSession: () => void
 }

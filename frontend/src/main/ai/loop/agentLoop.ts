@@ -2,6 +2,7 @@ import type { AiRuntimeSettings } from '../../../shared/ai/settings'
 import type { AiEvent, AiSendRequest, AiTurnEndReason } from '../../../shared/ai/types'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
+import { toContextUsage } from '../context'
 import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../llm/openai'
 import { streamChat, toOpenAiTools } from '../llm/openai'
 import { buildSystemPrompt } from '../prompt'
@@ -98,10 +99,20 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
 
       const pending = new Map<number, PendingCall>()
       let text = ''
+      /** 本步模型调用返回的真实用量；供应商未返回时保持 undefined */
+      let stepUsage: StreamDelta['usage']
       for await (const delta of streamChat(model, messages, tools, signal)) {
         text += appendDelta(delta, pending, emit)
+        if (delta.usage) {
+          stepUsage = delta.usage
+        }
       }
       const toolCalls = finishCalls(pending)
+
+      // 只推真实用量：拿到 usage 后立刻更新面板，没拿到就保持上一次的值
+      if (stepUsage) {
+        emit({ type: 'context-usage', usage: toContextUsage(stepUsage) })
+      }
 
       // 有文本或工具调用才写 assistant 消息；空响应直接结束本轮
       if (text.length > 0 || toolCalls.length > 0) {
@@ -145,7 +156,11 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         break
       }
       await sessions.record(request.cwd, request.sessionId, [
-        { type: 'step/end', data: { turn, step } }
+        {
+          type: 'step/end',
+          // usage 随日志保存：重开会话时直接展示最后一次真实计数
+          data: { turn, step, ...(stepUsage ? { usage: stepUsage } : {}) }
+        }
       ])
 
       if (stoppedByGuard) {

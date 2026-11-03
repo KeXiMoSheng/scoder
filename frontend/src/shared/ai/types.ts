@@ -92,6 +92,30 @@ export interface ToolCardView {
   change?: ToolFileChange
 }
 
+/**
+ * 服务商返回的一次模型调用用量。
+ * 字段名做了驼峰化，数值保持服务商原始计数，不再做任何估算。
+ */
+export interface AiTokenUsage {
+  /** 本次请求的输入 token（包含系统提示、历史、工具声明与工具结果） */
+  promptTokens: number
+  /** 本次生成的输出 token */
+  completionTokens: number
+  /** 输入 + 输出 */
+  totalTokens: number
+}
+
+/**
+ * 上下文用量：直接取服务商返回的真实 usage，
+ * 已用 = 输入 + 输出（输出会进入下一次请求，同样占用窗口）。
+ */
+export interface AiContextUsage {
+  /** 已占用 token */
+  usedTokens: number
+  /** 上下文窗口上限 */
+  limitTokens: number
+}
+
 /** 发起一轮对话的请求：工作区由渲染进程按当前打开的项目传入 */
 export interface AiSendRequest {
   /** 会话 id：同一 id 复用磁盘上的历史消息（一个会话一个 jsonl 文件） */
@@ -119,6 +143,8 @@ export type AiEvent =
   | { type: 'file-changed'; paths: string[] }
   /** 自动标题润色完成：标签栏与历史列表据此更新标题 */
   | { type: 'session-title'; title: string }
+  /** 上下文用量变化：服务商返回真实 usage 后推送 */
+  | { type: 'context-usage'; usage: AiContextUsage }
   | { type: 'approval-request'; requestId: string; toolName: string; reason: string }
   | { type: 'error'; message: string }
   | { type: 'turn-end'; reason: 'done' | 'aborted' | 'error' }
@@ -162,10 +188,12 @@ export type AiMessageView =
   /** 本轮改动清单：一轮对话结束时附着在消息末尾 */
   | { kind: 'changes'; id: string; time: number; files: ToolFileChange[] }
 
-/** 打开会话时载入的内容：磁盘历史 + 该会话是否正在执行 */
+/** 打开会话时载入的内容：磁盘历史 + 执行状态 + 按日志重放出的上下文用量 */
 export interface AiLoadedSession {
   messages: AiMessageView[]
   running: boolean
+  /** 打开会话时的上下文用量；从未调用过模型时为 0 */
+  usage: AiContextUsage
 }
 
 /**

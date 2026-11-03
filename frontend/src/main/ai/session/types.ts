@@ -5,7 +5,7 @@
  * 没有格式代际迁移、没有 surface 替换操作、没有流式 chunk 时间线。
  * 日志是唯一真相，发给模型的 ChatMessage 由重放得到（见 store.ts）。
  */
-import type { AiTurnEndReason, ToolCardView } from '../../../shared/ai/types'
+import type { AiTokenUsage, AiTurnEndReason, ToolCardView } from '../../../shared/ai/types'
 
 /**
  * 当前日志格式版本。
@@ -62,7 +62,7 @@ export interface SessionEventMap {
     card?: ToolCardView
   }
   /** 一次模型调用结束（含其请求的工具执行） */
-  'step/end': { turn: number; step: number }
+  'step/end': { turn: number; step: number; usage?: AiTokenUsage }
   /** 一轮对话结束：正常完成、用户中止、出错或上次崩溃补记 */
   'turn/end': { turn: number; reason: StoredTurnEndReason }
 }

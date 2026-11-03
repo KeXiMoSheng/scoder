@@ -137,6 +137,7 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
               : '点击顶部「+」新建会话开始对话'
         }
         onUserSend={handleUserSend}
+        onCreateSession={handleCreate}
       />
       {renamingSession ? (
         <PromptDialog

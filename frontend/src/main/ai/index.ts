@@ -10,6 +10,7 @@ import type {
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById, getAiRuntimeSettings } from '../db'
+import { lastContextUsage } from './context'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
 import { runTurn } from './loop/agentLoop'
@@ -138,10 +139,13 @@ export function registerAiHandlers(): void {
       if (typeof id !== 'string' || id.length === 0) {
         throw new Error('sessionId 无效')
       }
+      const events = await sessions.events(project, id)
       return {
-        messages: toMessageViews(await sessions.events(project, id), describeToolCall),
+        messages: toMessageViews(events, describeToolCall),
         // 切回一个仍在执行的会话时，界面要能重新显示“正在生成”
-        running: running.has(id)
+        running: running.has(id),
+        // 只展示服务商真实返回的用量；从未调用过模型或未返回 usage 时为 0
+        usage: lastContextUsage(events)
       }
     }
   )

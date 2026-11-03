@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import type { ModelConfig } from '@shared/model-config/types'
+import AiContextUsage from '../AiContextUsage'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Textarea } from '../ui/textarea'
 import type { AiComposerProps } from './types'
 
 /**
  * 发送按钮：绿底方块 + 黑色前进箭头，输入为空或无会话时禁用。
- * ml-auto 把它固定在行尾，左侧留给模型选择器和后续工具按钮。
+ * 由右侧工具组固定在行尾，左侧留给模型选择器与上下文用量入口。
  */
 const SEND_BUTTON_CLASS =
-  'ml-auto inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-[#3fb950] p-0 text-[#0b0f14] transition-[filter] hover:brightness-110 disabled:cursor-default disabled:opacity-40'
+  'inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-[#3fb950] p-0 text-[#0b0f14] transition-[filter] hover:brightness-110 disabled:cursor-default disabled:opacity-40'
 
 /**
  * AI 输入区：多行输入框 + 底部状态栏（左模型选择器、右发送按钮）。
@@ -19,6 +20,9 @@ const SEND_BUTTON_CLASS =
 export default function AiComposer({
   disabled = false,
   running = false,
+  usage,
+  canCreateSession,
+  onCreateSession,
   onSend
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
@@ -80,7 +84,7 @@ export default function AiComposer({
           }
         }}
       />
-      {/* 状态栏：模型选择器只占模型名所需宽度，后续工具按钮插在发送键之前 */}
+      {/* 状态栏：左侧模型选择器，右侧上下文用量与发送键 */}
       <div className="mt-2 flex items-center gap-2">
         {/* 用主题化的 Select 而非原生 select：原生下拉弹层的高亮色由系统决定，不随主题变化 */}
         <Select
@@ -108,16 +112,23 @@ export default function AiComposer({
             ))}
           </SelectContent>
         </Select>
-        <button
-          type="button"
-          className={SEND_BUTTON_CLASS}
-          aria-label="发送消息"
-          title="发送（Enter）"
-          disabled={!canSend}
-          onClick={submit}
-        >
-          <ArrowRight className="size-4" strokeWidth={2.5} />
-        </button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <AiContextUsage
+            usage={usage}
+            canCreate={canCreateSession}
+            onCreateSession={onCreateSession}
+          />
+          <button
+            type="button"
+            className={SEND_BUTTON_CLASS}
+            aria-label="发送消息"
+            title="发送（Enter）"
+            disabled={!canSend}
+            onClick={submit}
+          >
+            <ArrowRight className="size-4" strokeWidth={2.5} />
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import type { JsonSchemaObject } from '../../../shared/ai/types'
+import type { AiTokenUsage, JsonSchemaObject } from '../../../shared/ai/types'
 import type { ToolDefinition } from '../tools/registry'
 
 /** 一次模型调用的连接配置（来自本地 SQLite 的 model_configs 行） */
@@ -29,7 +29,7 @@ export interface OpenAiToolSpec {
   function: { name: string; description: string; parameters: JsonSchemaObject }
 }
 
-/** 流式增量：文本片段或工具调用的参数片段（工具调用按 index 合并） */
+/** 流式增量：文本片段、工具调用参数片段或最终 usage（工具调用按 index 合并） */
 export interface StreamDelta {
   text?: string
   toolCalls?: {
@@ -38,6 +38,8 @@ export interface StreamDelta {
     name?: string
     argumentsDelta?: string
   }[]
+  /** 服务商在流的末尾返回的本次调用用量 */
+  usage?: AiTokenUsage
 }
 
 /** 模型流里一帧的最小结构（只声明用到的字段） */
@@ -53,6 +55,12 @@ interface StreamChunk {
     }
     finish_reason?: string | null
   }[]
+  /** stream_options.include_usage 打开的供应商会在最后追加一帧 usage */
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  } | null
 }
 
 /** 工具定义 → 模型可读的 function 列表（P0 不带任何执行期元数据） */
@@ -152,8 +160,8 @@ async function openStream(
 
 /**
  * 调用 OpenAI 兼容的 chat/completions 流式接口。
- * 只做三件事：把 SSE 帧解析成增量、把取消信号透传给 fetch、在建立连接失败时重试。
- * 不负责计费与 reasoning 字段（P2 再补）。
+ * 负责 SSE → 增量、透传取消信号、建立连接失败时重试，
+ * 并通过 stream_options.include_usage 请求服务商的真实 token 用量。
  * @param config 连接配置
  * @param messages 完整会话历史
  * @param tools 工具声明，空数组表示不带工具
@@ -165,13 +173,17 @@ export async function* streamChat(
   tools: OpenAiToolSpec[],
   signal: AbortSignal
 ): AsyncGenerator<StreamDelta> {
-  const body = JSON.stringify({
-    model: config.modelName,
-    messages,
-    stream: true,
-    ...(tools.length > 0 ? { tools } : {})
-  })
-  const response = await openStream(config, body, signal)
+  let response: Response
+  try {
+    response = await openStream(config, requestBody(config, messages, tools, true), signal)
+  } catch (error) {
+    // 个别兼容实现会拒绝 stream_options；退回普通流式请求，聊天不中断，只是拿不到 usage
+    if (!rejectsStreamOptions(error)) {
+      throw error
+    }
+    console.warn('供应商不支持 stream_options.include_usage，本次不返回真实用量')
+    response = await openStream(config, requestBody(config, messages, tools, false), signal)
+  }
   if (!response.body) {
     throw new Error('模型响应没有可读流')
   }
@@ -199,6 +211,33 @@ export async function* streamChat(
   } finally {
     reader.releaseLock()
   }
+}
+
+/** 构造流式请求体；includeUsage 为 false 时用于不支持 stream_options 的供应商 */
+function requestBody(
+  config: OpenAiConfig,
+  messages: ChatMessage[],
+  tools: OpenAiToolSpec[],
+  includeUsage: boolean
+): string {
+  return JSON.stringify({
+    model: config.modelName,
+    messages,
+    stream: true,
+    ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+    ...(tools.length > 0 ? { tools } : {})
+  })
+}
+
+/**
+ * 判断失败是否因为供应商不认识 stream_options/include_usage。
+ * 只在 400/422 且错误详情提到该字段时退回，避免吞掉其它参数错误。
+ */
+function rejectsStreamOptions(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return /HTTP (400|422)/.test(error.message) && /stream_options|include_usage/i.test(error.message)
 }
 
 /**
@@ -231,20 +270,44 @@ function parseDelta(data: string): StreamDelta | undefined {
   } catch {
     return undefined
   }
-  const choice = chunk.choices?.[0]
-  const delta = choice?.delta
-  if (!delta) return undefined
   const result: StreamDelta = {}
-  if (typeof delta.content === 'string' && delta.content.length > 0) {
-    result.text = delta.content
+  const delta = chunk.choices?.[0]?.delta
+  if (delta) {
+    if (typeof delta.content === 'string' && delta.content.length > 0) {
+      result.text = delta.content
+    }
+    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+      result.toolCalls = delta.tool_calls.map((call) => ({
+        index: call.index ?? 0,
+        ...(call.id ? { id: call.id } : {}),
+        ...(call.function?.name ? { name: call.function.name } : {}),
+        ...(call.function?.arguments ? { argumentsDelta: call.function.arguments } : {})
+      }))
+    }
   }
-  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
-    result.toolCalls = delta.tool_calls.map((call) => ({
-      index: call.index ?? 0,
-      ...(call.id ? { id: call.id } : {}),
-      ...(call.function?.name ? { name: call.function.name } : {}),
-      ...(call.function?.arguments ? { argumentsDelta: call.function.arguments } : {})
-    }))
+  // usage 帧通常没有 choices（或 delta 为空），不能因为没文本就丢掉
+  const usage = toTokenUsage(chunk.usage)
+  if (usage) {
+    result.usage = usage
   }
   return Object.keys(result).length > 0 ? result : undefined
+}
+
+/** 把服务商的 snake_case usage 归一化为驼峰结构；全零或缺失时返回 undefined */
+function toTokenUsage(raw: StreamChunk['usage']): AiTokenUsage | undefined {
+  if (!raw) {
+    return undefined
+  }
+  const promptTokens = tokenCount(raw.prompt_tokens)
+  const completionTokens = tokenCount(raw.completion_tokens)
+  const totalTokens = tokenCount(raw.total_tokens) || promptTokens + completionTokens
+  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
+    return undefined
+  }
+  return { promptTokens, completionTokens, totalTokens }
+}
+
+/** usage 字段可能缺失或为小数；只接受非负有限数，其余按 0 处理 */
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : 0
 }

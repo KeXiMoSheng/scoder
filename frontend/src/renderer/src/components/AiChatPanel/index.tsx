@@ -15,9 +15,10 @@ export default function AiChatPanel({
   cwd,
   disabled,
   emptyHint,
-  onUserSend
+  onUserSend,
+  onCreateSession
 }: AiChatPanelProps): React.JSX.Element {
-  const { messages, running, error, send } = useAiChat(sessionId, cwd)
+  const { messages, running, error, usage, send } = useAiChat(sessionId, cwd)
 
   const handleSend = useCallback(
     (text: string, modelConfigId: number): void => {
@@ -30,7 +31,14 @@ export default function AiChatPanel({
   return (
     <>
       <AiMessageList messages={messages} running={running} error={error} emptyHint={emptyHint} />
-      <AiComposer disabled={disabled} running={running} onSend={handleSend} />
+      <AiComposer
+        disabled={disabled}
+        running={running}
+        usage={usage}
+        canCreateSession={cwd !== null}
+        onCreateSession={onCreateSession}
+        onSend={handleSend}
+      />
     </>
   )
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { mergeFileChange } from '@shared/ai/changes'
-import type { AiEvent, AiMessageView, ToolFileChange } from '@shared/ai/types'
+import type { AiContextUsage, AiEvent, AiMessageView, ToolFileChange } from '@shared/ai/types'
 
 /** 实时条目的 id 计数器：与历史条目的 seq 前缀区分，重开会话后整表重建不影响 */
 let liveId = 0
@@ -62,6 +62,8 @@ export interface AiChatApi {
   running: boolean
   /** 最近一次错误，展示在消息列表底部 */
   error: string | null
+  /** 当前上下文用量；载入前为 null */
+  usage: AiContextUsage | null
   /** 发送一条消息；未打开项目时只在本地报错 */
   send: (text: string, modelConfigId: number) => void
   /** 中止当前会话正在执行的一轮对话 */
@@ -80,6 +82,8 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
   const [messages, setMessages] = useState<AiMessageView[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 上下文用量由主进程统计；载入历史时带回一次，之后由 context-usage 事件更新
+  const [usage, setUsage] = useState<AiContextUsage | null>(null)
   // 本轮改动清单：用 ref 累积（不额外触发渲染），turn-end 时作为末尾条目落进消息列表
   const turnChangesRef = useRef<Map<string, ToolFileChange>>(new Map())
 
@@ -97,6 +101,7 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
         }
         setMessages(loaded.messages)
         setRunning(loaded.running)
+        setUsage(loaded.usage)
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
@@ -117,7 +122,7 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
       if (sourceId !== sessionId) {
         return
       }
-      applyEvent(event, setMessages, setRunning, setError, turnChangesRef.current)
+      applyEvent(event, setMessages, setRunning, setError, setUsage, turnChangesRef.current)
     })
   }, [sessionId])
 
@@ -154,7 +159,7 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
     }
   }, [sessionId])
 
-  return { messages, running, error, send, abort }
+  return { messages, running, error, usage, send, abort }
 }
 
 /** 把一条主进程事件并入消息列表 */
@@ -163,6 +168,7 @@ function applyEvent(
   setMessages: React.Dispatch<React.SetStateAction<AiMessageView[]>>,
   setRunning: React.Dispatch<React.SetStateAction<boolean>>,
   setError: React.Dispatch<React.SetStateAction<string | null>>,
+  setUsage: React.Dispatch<React.SetStateAction<AiContextUsage | null>>,
   turnChanges: Map<string, ToolFileChange>
 ): void {
   switch (event.type) {
@@ -222,6 +228,10 @@ function applyEvent(
     }
     case 'error': {
       setError(event.message)
+      break
+    }
+    case 'context-usage': {
+      setUsage(event.usage)
       break
     }
     case 'turn-end': {
