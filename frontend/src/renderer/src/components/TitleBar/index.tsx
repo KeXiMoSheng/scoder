@@ -20,6 +20,9 @@ import {
   MenubarRadioGroup,
   MenubarRadioItem,
   MenubarSeparator,
+  MenubarSub,
+  MenubarSubContent,
+  MenubarSubTrigger,
   MenubarTrigger
 } from '../ui/menubar'
 import type { TitleBarProps } from './types'
@@ -39,12 +42,14 @@ const MENU_ITEM_CLASS = 'px-2.5 py-1 text-[12px]'
  */
 export default function TitleBar({
   projectPath,
+  recentProjects,
   themeId,
   terminalVisible,
   aiPanelVisible,
   settingsOpen,
   onOpenFolder,
   onCloseFolder,
+  onOpenRecent,
   onThemeChange,
   onNewTerminal,
   onToggleAiPanel,
@@ -84,6 +89,25 @@ export default function TitleBar({
             <MenubarItem className={MENU_ITEM_CLASS} onSelect={onOpenFolder}>
               打开文件夹…
             </MenubarItem>
+            {recentProjects.length > 0 ? (
+              <MenubarSub>
+                <MenubarSubTrigger className={MENU_ITEM_CLASS}>最近打开</MenubarSubTrigger>
+                <MenubarSubContent className="min-w-[200px]">
+                  {recentProjects.map((project) => (
+                    <MenubarItem
+                      key={project.path}
+                      className={cn(MENU_ITEM_CLASS, 'max-w-[420px]')}
+                      disabled={project.path === projectPath}
+                      title={project.path}
+                      onSelect={() => onOpenRecent(project.path)}
+                    >
+                      {/* 历史项目统一展示绝对路径，超长时省略保整行不换行 */}
+                      <span className="truncate">{project.path}</span>
+                    </MenubarItem>
+                  ))}
+                </MenubarSubContent>
+              </MenubarSub>
+            ) : null}
             <MenubarSeparator />
             <MenubarItem
               className={MENU_ITEM_CLASS}

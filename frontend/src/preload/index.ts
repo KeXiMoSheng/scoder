@@ -10,6 +10,7 @@ import type { ModelConfigInput } from '../shared/model-config/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
+import { WORKSPACE_CHANNELS } from '../shared/workspace/events'
 
 // AI 通道：只做转发，不在渲染进程做任何权限判断（审批与工作区边界都在主进程）
 const ai: AiAPI = {
@@ -87,6 +88,11 @@ const api: ScoderAPI = {
   getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
   saveAiRuntimeSettings: (input: AiRuntimeSettings) =>
     ipcRenderer.invoke(AI_RUNTIME_CHANNELS.save, input),
+  // 工作区最近项目 / 启动恢复：均走 invoke 拿主进程落库结果
+  listRecentProjects: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.listRecent),
+  recordProjectOpened: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.recordOpened, path),
+  clearRestoreProject: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.clearRestore),
+  getLastProject: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.getLastProject),
   ai
 }
 

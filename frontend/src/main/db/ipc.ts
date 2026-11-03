@@ -1,8 +1,17 @@
 import { BrowserWindow, dialog, ipcMain, type MessageBoxOptions } from 'electron'
+import { promises as fs } from 'fs'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
+import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
+import type { RecentProject } from '../../shared/workspace/types'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
+import {
+  clearRestoreProject,
+  getLastProjectPath,
+  listRecentProjects,
+  recordProjectOpened
+} from './workspace-projects'
 import {
   createModelConfig,
   deleteModelConfig,
@@ -38,6 +47,39 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle(AI_RUNTIME_CHANNELS.save, (_event, input: AiRuntimeSettings): AiRuntimeSettings =>
     saveAiRuntimeSettings(input)
   )
+
+  registerWorkspaceHandlers()
+}
+
+/**
+ * 工作区最近项目 / 启动恢复通道。
+ * getLastProject 会校验目录仍然存在：项目被删除或移动时返回 null，
+ * 避免启动去打开一个不存在的目录。
+ */
+function registerWorkspaceHandlers(): void {
+  ipcMain.handle(WORKSPACE_CHANNELS.listRecent, (): RecentProject[] => listRecentProjects())
+
+  ipcMain.handle(WORKSPACE_CHANNELS.recordOpened, (_event, path: string): void => {
+    recordProjectOpened(path)
+  })
+
+  ipcMain.handle(WORKSPACE_CHANNELS.clearRestore, (): void => {
+    clearRestoreProject()
+  })
+
+  ipcMain.handle(WORKSPACE_CHANNELS.getLastProject, async (): Promise<string | null> => {
+    const path = getLastProjectPath()
+    if (!path) {
+      return null
+    }
+    try {
+      // 目录必须存在且仍可读，否则放弃本次自动恢复
+      const stat = await fs.stat(path)
+      return stat.isDirectory() ? path : null
+    } catch {
+      return null
+    }
+  })
 }
 
 /** 删除前弹系统对话框确认，用户取消时返回 false */

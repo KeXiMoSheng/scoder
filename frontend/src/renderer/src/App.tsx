@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RecentProject } from '@shared/workspace/types'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
 import type { CodeEditorHandle } from './components/CodeEditor/types'
@@ -43,6 +44,8 @@ function clamp(value: number, min: number, max: number): number {
 
 function App(): React.JSX.Element {
   const [projectPath, setProjectPath] = useState<string | null>(null)
+  // 最近打开的项目（MRU，最多 5 个），供「文件」菜单展示
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([])
   // 多标签文件状态（打开/激活/关闭/路径同步）
   const {
     files,
@@ -133,24 +136,48 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', handleWindowResize)
   }, [sidebarMaxWidth, aiPanelMaxWidth, terminalMinHeight, terminalMaxHeight])
 
+  /** 重新拉取最近项目列表（打开/关闭后调用，让菜单与磁盘状态一致） */
+  const refreshRecent = useCallback((): void => {
+    void window.api.listRecentProjects().then(setRecentProjects)
+  }, [])
+
+  /** 打开一个具体目录：同步工作区状态、清空上一个项目的标签与脏标记，并写入最近项目 */
+  const openProjectPath = useCallback(
+    (dirPath: string): void => {
+      setProjectPath(dirPath)
+      closeAll()
+      setDirtyPaths(new Set())
+      // 打开新目录时确保文件树可见（之前可能被拖拽收起）
+      setSidebarVisible(true)
+      void window.api.recordProjectOpened(dirPath).then(refreshRecent)
+    },
+    [closeAll, refreshRecent]
+  )
+
   const handleOpenProject = useCallback(async (): Promise<void> => {
     const dirPath = await window.api.openProjectDirectory()
-    if (!dirPath) {
-      return
+    if (dirPath) {
+      openProjectPath(dirPath)
     }
-    setProjectPath(dirPath)
-    closeAll()
-    setDirtyPaths(new Set())
-    // 打开新目录时确保文件树可见（之前可能被拖拽收起）
-    setSidebarVisible(true)
-  }, [closeAll])
+  }, [openProjectPath])
 
-  /** 关闭当前文件夹：清空项目路径、标签页与脏标记，回到未打开状态 */
+  /** 关闭当前文件夹：清空项目路径、标签页与脏标记，回到未打开状态；同时取消下次启动的自动打开 */
   const handleCloseProject = useCallback((): void => {
     setProjectPath(null)
     closeAll()
     setDirtyPaths(new Set())
+    void window.api.clearRestoreProject()
   }, [closeAll])
+
+  // 应用启动：读取上次未手动关闭的目录并自动打开，同时加载最近项目列表
+  useEffect(() => {
+    void window.api.getLastProject().then((last) => {
+      if (last) {
+        setProjectPath(last)
+      }
+    })
+    refreshRecent()
+  }, [refreshRecent])
 
   const handleSelectFile = useCallback(
     (file: FileNode): void => {
@@ -389,12 +416,14 @@ function App(): React.JSX.Element {
     <div className="flex h-full flex-col">
       <TitleBar
         projectPath={projectPath}
+        recentProjects={recentProjects}
         themeId={themeId}
         terminalVisible={terminalVisible}
         aiPanelVisible={aiPanelVisible}
         settingsOpen={settingsOpen}
         onOpenFolder={handleOpenProject}
         onCloseFolder={handleCloseProject}
+        onOpenRecent={(path) => openProjectPath(path)}
         onThemeChange={setThemeId}
         onNewTerminal={handleNewTerminal}
         onToggleAiPanel={toggleAiPanel}

@@ -8,6 +8,7 @@ import type { AiRuntimeSettings } from './ai/settings'
 import type { FileEntry, SearchResult } from './files/types'
 import type { ModelConfig, ModelConfigInput } from './model-config/types'
 import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
+import type { RecentProject } from './workspace/types'
 
 /** 经 preload contextBridge 暴露给渲染进程的能力（白名单方法） */
 export interface ScoderAPI {
@@ -61,6 +62,14 @@ export interface ScoderAPI {
   getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
   /** 保存 AI 运行参数，返回校验并落库后的结果 */
   saveAiRuntimeSettings: (input: AiRuntimeSettings) => Promise<AiRuntimeSettings>
+  /** 最近项目列表（MRU，最多 5 个），供「文件」菜单展示 */
+  listRecentProjects: () => Promise<RecentProject[]>
+  /** 记录一个刚打开的项目：更新 MRU 并作为下次启动的默认打开项 */
+  recordProjectOpened: (path: string) => Promise<void>
+  /** 手动关闭文件夹：清除启动恢复项（MRU 历史保留） */
+  clearRestoreProject: () => Promise<void>
+  /** 上次未手动关闭的项目路径（目录已不存在时返回 null），供启动自动打开 */
+  getLastProject: () => Promise<string | null>
   /** AI 助手通道：会话、流式事件与中止 */
   ai: AiAPI
 }
