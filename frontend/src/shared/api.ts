@@ -4,6 +4,7 @@
  * 各域的数据结构放在同级目录的 xxx/types.ts，通道名放在各自的 events.ts。
  */
 import type { AiAPI } from './ai/types'
+import type { AiRuntimeSettings } from './ai/settings'
 import type { FileEntry, SearchResult } from './files/types'
 import type { ModelConfig, ModelConfigInput } from './model-config/types'
 import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
@@ -56,6 +57,10 @@ export interface ScoderAPI {
   updateModelConfig: (id: number, input: ModelConfigInput) => Promise<ModelConfig>
   /** 删除模型配置（主进程弹出确认框）；用户取消时返回 false */
   deleteModelConfig: (id: number) => Promise<boolean>
+  /** 读取 AI 运行参数（步数预算、续接段数、重复调用保护） */
+  getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
+  /** 保存 AI 运行参数，返回校验并落库后的结果 */
+  saveAiRuntimeSettings: (input: AiRuntimeSettings) => Promise<AiRuntimeSettings>
   /** AI 助手通道：会话、流式事件与中止 */
   ai: AiAPI
 }

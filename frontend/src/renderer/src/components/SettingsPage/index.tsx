@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
+import AiSettings from '../AiSettings'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
 import {
@@ -16,7 +17,7 @@ import type { SettingsPageProps } from './types'
 import type { SettingsSectionId } from '../SettingsSidebar/types'
 
 /** 面包屑中展示的分区名：与 SettingsSidebar 的菜单文案保持一致 */
-const SECTION_LABELS: Record<SettingsSectionId, string> = { models: '模型' }
+const SECTION_LABELS: Record<SettingsSectionId, string> = { models: '模型', ai: 'AI 助手' }
 
 /** 系统配置页：左侧分区导航 + 右侧设置内容，嵌入在标题栏下方的工作区位置 */
 export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.Element {
@@ -45,6 +46,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
           {section === 'models' ? <ModelSettings /> : null}
+          {section === 'ai' ? <AiSettings /> : null}
         </div>
       </SidebarInset>
     </SidebarProvider>

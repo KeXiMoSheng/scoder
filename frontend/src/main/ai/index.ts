@@ -9,7 +9,7 @@ import type {
   AiSessionSummary,
   ToolCardView
 } from '../../shared/ai/types'
-import { findModelConfigById } from '../db'
+import { findModelConfigById, getAiRuntimeSettings } from '../db'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
 import { runTurn } from './loop/agentLoop'
@@ -166,6 +166,8 @@ async function startTurn(
       observation: observations,
       registry,
       sessions,
+      // 每轮开始时现读：用户在设置页改完，下一条消息立即生效
+      settings: getAiRuntimeSettings(),
       emit,
       signal
     })

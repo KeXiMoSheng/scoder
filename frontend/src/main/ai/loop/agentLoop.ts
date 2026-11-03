@@ -1,3 +1,4 @@
+import type { AiRuntimeSettings } from '../../../shared/ai/settings'
 import type { AiEvent, AiSendRequest, AiTurnEndReason } from '../../../shared/ai/types'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
@@ -7,10 +8,8 @@ import { buildSystemPrompt } from '../prompt'
 import type { SessionStore } from '../session/store'
 import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
-import { errorMessage, type ToolRegistry } from '../tools/registry'
-
-/** 一轮对话允许的最大模型步数：防止模型在工具循环里空转 */
-const MAX_STEPS = 24
+import { errorMessage, type ToolExecutionResult, type ToolRegistry } from '../tools/registry'
+import { RepeatCallGuard } from './repeatGuard'
 
 /** 流式累积中的工具调用（同一 index 的片段合并成一次调用） */
 interface PendingCall {
@@ -28,6 +27,8 @@ export interface RunTurnOptions {
   observation: ObservationStore
   registry: ToolRegistry
   sessions: SessionStore
+  /** 本轮使用的运行参数：由调用方从设置读取，循环本身不碰数据库 */
+  settings: AiRuntimeSettings
   /** 事件出口：主进程里是 webContents.send，测试里可以直接收集 */
   emit: (event: AiEvent) => void
   /** 用户中止信号 */
@@ -36,11 +37,11 @@ export interface RunTurnOptions {
 
 /**
  * 执行一轮对话：模型流 → 文本增量 → 工具调用 → 结果回灌 → 下一步。
- * 停止条件：模型不再请求工具、用户中止、达到步数上限或发生错误。
+ * 停止条件：模型不再请求工具、用户中止、重复调用守卫叫停、续接段数到顶或发生错误。
  * @param options 注入的依赖与本轮请求
  */
 export async function runTurn(options: RunTurnOptions): Promise<void> {
-  const { request, model, fs, observation, registry, sessions, emit, signal } = options
+  const { request, model, fs, observation, registry, sessions, emit, signal, settings } = options
   // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
   const state = await sessions.ensure(request.cwd, request.sessionId)
   await sessions.settle(request.cwd, request.sessionId)
@@ -60,9 +61,36 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
     { type: 'turn/start', data: { turn, cwd: request.cwd, modelConfigId: request.modelConfigId } },
     { type: 'user/message', data: { content: [{ type: 'text', text: request.prompt }] } }
   ])
+  // 重复调用守卫：整轮对话共用一个实例，只有用户发新消息才会重置
+  const guard = new RepeatCallGuard({
+    thresholds: settings.repeatRemindThresholds,
+    stopThreshold: settings.repeatStopThreshold
+  })
+  /** 当前是第几段（一段 = settings.maxSteps 步预算） */
+  let round = 1
+  /** 当前段剩余步数 */
+  let budget = settings.maxSteps
+  /** 已发出的模型调用步数：跨段连续编号，日志里能看出真实的执行顺序 */
+  let step = 0
+
   try {
-    for (let step = 1; step <= MAX_STEPS; step += 1) {
+    while (true) {
       signal.throwIfAborted()
+
+      // 一段预算用尽：不判失败，注入续接指令接着干；到总段数上限才真正停止
+      if (budget === 0) {
+        if (round >= settings.maxRounds) {
+          reason = 'error'
+          emit({ type: 'error', message: `达到最大自动续接段数 ${settings.maxRounds}，已停止` })
+          break
+        }
+        round += 1
+        budget = settings.maxSteps
+        messages.push({ role: 'user', content: continuePrompt(round, settings) })
+      }
+
+      step += 1
+      budget -= 1
       emit({ type: 'step-start', step })
       await sessions.record(request.cwd, request.sessionId, [
         { type: 'step/start', data: { turn, step } }
@@ -87,31 +115,45 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         ])
       }
 
+      const callContext: CallContext = {
+        fs,
+        observation,
+        registry,
+        request,
+        sessions,
+        turn,
+        step,
+        emit,
+        signal,
+        guard
+      }
+
       // 工具执行属于本步，step/end 要等它们全部回报之后再写
-      for (const call of toolCalls) {
+      let stoppedByGuard = false
+      for (const [index, call] of toolCalls.entries()) {
         signal.throwIfAborted()
-        await executeCall(call, messages, {
-          fs,
-          observation,
-          registry,
-          request,
-          sessions,
-          turn,
-          step,
-          emit,
-          signal
-        })
+        const stop = await executeCall(call, messages, callContext)
+        if (!stop) {
+          continue
+        }
+        // 判定原地打转：本步剩下的调用不再执行，但必须补结果，
+        // 否则历史里这条 assistant 消息的 tool_calls 会有去无回
+        for (const rest of toolCalls.slice(index + 1)) {
+          await recordSkippedCall(rest, messages, callContext)
+        }
+        stoppedByGuard = true
+        break
       }
       await sessions.record(request.cwd, request.sessionId, [
         { type: 'step/end', data: { turn, step } }
       ])
 
-      if (toolCalls.length === 0) {
+      if (stoppedByGuard) {
+        reason = 'error'
         break
       }
-      if (step === MAX_STEPS) {
-        reason = 'error'
-        emit({ type: 'error', message: `达到单轮最大步数 ${MAX_STEPS}，已停止` })
+      if (toolCalls.length === 0) {
+        break
       }
     }
   } catch (error) {
@@ -200,32 +242,41 @@ function finishCalls(pending: Map<number, PendingCall>): ChatToolCall[] {
     }))
 }
 
-/** 执行一次工具调用，把结果落盘后作为 tool 消息回灌给模型 */
+/** 工具执行与结果回灌共用的上下文 */
+interface CallContext {
+  fs: FileSystemService
+  observation: ObservationStore
+  registry: ToolRegistry
+  request: AiSendRequest
+  sessions: SessionStore
+  turn: number
+  step: number
+  emit: (event: AiEvent) => void
+  signal: AbortSignal
+  /** 跨步骤累计的重复调用守卫 */
+  guard: RepeatCallGuard
+}
+
+/**
+ * 执行一次工具调用，把结果落盘后作为 tool 消息回灌给模型。
+ * @returns 是否因重复调用守卫叫停而中止本轮
+ */
 async function executeCall(
   call: ChatToolCall,
   messages: ChatMessage[],
-  context: {
-    fs: FileSystemService
-    observation: ObservationStore
-    registry: ToolRegistry
-    request: AiSendRequest
-    sessions: SessionStore
-    turn: number
-    step: number
-    emit: (event: AiEvent) => void
-    signal: AbortSignal
+  context: CallContext
+): Promise<boolean> {
+  const { fs, observation, registry, request, signal, guard } = context
+  emitToolCall(call, context)
+
+  const action = guard.observe(call.function.name, call.function.arguments)
+  if (action.kind === 'stop') {
+    // 不再执行这次调用：用失败结果收尾，日志与消息序列才能保持自洽
+    context.emit({ type: 'error', message: action.text })
+    await writeToolResult(call, { ok: false, text: action.text }, messages, context)
+    return true
   }
-): Promise<void> {
-  const { fs, observation, registry, request, sessions, turn, step, emit, signal } = context
-  const args = safeParseArguments(call.function.arguments)
-  const card = registry.get(call.function.name)?.presentCall?.(args)
-  emit({
-    type: 'tool-call',
-    callId: call.id,
-    name: call.function.name,
-    args,
-    ...(card ? { card } : {})
-  })
+
   const result = await registry.execute(call.function.name, call.function.arguments, {
     fs,
     cwd: request.cwd,
@@ -233,12 +284,60 @@ async function executeCall(
     observation,
     signal
   })
+  await writeToolResult(call, result, messages, context)
+
+  // 提醒紧跟在工具结果之后：模型下一步就能看到；不进日志，历史重放时自然消失
+  if (action.kind === 'remind') {
+    messages.push({ role: 'user', content: action.text })
+  }
+  return false
+}
+
+/** 通知界面出现一张挂起卡片；参数解析失败时给空对象，真正的错误交给注册表回报 */
+function emitToolCall(call: ChatToolCall, context: CallContext): void {
+  const args = safeParseArguments(call.function.arguments)
+  const card = context.registry.get(call.function.name)?.presentCall?.(args)
+  context.emit({
+    type: 'tool-call',
+    callId: call.id,
+    name: call.function.name,
+    args,
+    ...(card ? { card } : {})
+  })
+}
+
+/**
+ * 因守卫叫停而不再执行的调用也要走一遍结果回灌：
+ * 界面上的挂起卡片要收尾，日志里每个 tool_call 也必须有对应的 tool/result。
+ */
+async function recordSkippedCall(
+  call: ChatToolCall,
+  messages: ChatMessage[],
+  context: CallContext
+): Promise<void> {
+  emitToolCall(call, context)
+  await writeToolResult(
+    call,
+    { ok: false, text: '因检测到重复调用，本次调用未执行' },
+    messages,
+    context
+  )
+}
+
+/** 把一次调用的结果推给界面、写入日志并回灌模型 */
+async function writeToolResult(
+  call: ChatToolCall,
+  result: ToolExecutionResult,
+  messages: ChatMessage[],
+  context: CallContext
+): Promise<void> {
+  const { request, sessions, turn, step, emit } = context
   emit({
     type: 'tool-result',
     callId: call.id,
     ok: result.ok,
     text: result.text,
-    ...(result.card ? { card } : {})
+    ...(result.card ? { card: result.card } : {})
   })
   // 写工具落盘后通知界面：文件树与已打开的编辑器需要跟着变
   if (result.changedPaths && result.changedPaths.length > 0) {
@@ -286,6 +385,21 @@ async function refineTitle(
   } catch (error) {
     console.warn('保存会话标题失败', error)
   }
+}
+
+/**
+ * 步数预算用尽时注入的续接指令。
+ * 只进内存消息序列、不落盘：它描述的是“同一轮对话继续干”，不是用户新说的话。
+ */
+function continuePrompt(round: number, settings: AiRuntimeSettings): string {
+  return (
+    '<auto_continue>\n' +
+    `上一段工作已用满 ${settings.maxSteps} 步预算。继续推进同一个任务（第 ${round}/${settings.maxRounds} 段）：\n` +
+    '1. 先核对工作区当前状态，不要假设之前的改动已经生效；\n' +
+    '2. 从上次中断的地方接着做，不要重复已经完成的工作；\n' +
+    '3. 任务全部完成时直接给出最终结论。\n' +
+    '</auto_continue>'
+  )
 }
 
 /** 展示用：参数解析失败时给空对象，真正的错误交给注册表回报 */

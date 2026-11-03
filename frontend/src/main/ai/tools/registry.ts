@@ -34,6 +34,12 @@ export interface ToolDefinition {
   parameters: JsonSchemaObject
   /** 声明为 true 才允许与同批次的兄弟调用并发；P0 一律串行 */
   isConcurrencySafe?: (args: Record<string, unknown>) => boolean
+  /**
+   * 单次调用的合作式时限（毫秒），不声明表示不限时。
+   * 只有转发 ctx.signal 的工具才可能被准时打断；到点后以失败结果回灌给模型，
+   * 由模型自己决定重试、换方法还是放弃。当前工具都是短任务，先把口子留在这里。
+   */
+  timeoutMs?: number
   execute: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolOutcome>
   /** 执行前推导的挂起卡片（纯函数，只依赖参数，供实时展示与回放） */
   presentCall?: (args: Record<string, unknown>) => ToolCardView | undefined
@@ -145,8 +151,13 @@ export class ToolRegistry {
       return { ok: false, text: `缺少必填参数：${missing.join(', ')}` }
     }
     // 工作区边界由 fs.resolve 保证；先读后改由 ctx.observation 在写工具内落实
+    const timeout = tool.timeoutMs === undefined ? undefined : new AbortController()
+    const timer =
+      timeout === undefined ? undefined : setTimeout(() => timeout.abort(), tool.timeoutMs)
     try {
-      const outcome = await tool.execute(args, ctx)
+      const signal =
+        timeout === undefined ? ctx.signal : AbortSignal.any([ctx.signal, timeout.signal])
+      const outcome = await tool.execute(args, { ...ctx, signal })
       // presentResult 缺失时用挂起卡片 + 结果文本兜底，保证每个工具都能展开看输出
       const card = tool.presentResult?.(args, outcome) ?? resultFallback(tool, args, outcome)
       return {
@@ -160,7 +171,12 @@ export class ToolRegistry {
     } catch (error) {
       // 用户中止不是工具失败：向上传播，让循环以 aborted 收尾
       if (ctx.signal.aborted) throw error
+      if (timeout?.signal.aborted) {
+        return { ok: false, text: `工具执行超时（超过 ${tool.timeoutMs}ms），已中止` }
+      }
       return { ok: false, text: `工具执行失败：${errorMessage(error)}` }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
   }
 }

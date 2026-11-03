@@ -67,10 +67,93 @@ export function toOpenAiTools(tools: ToolDefinition[]): OpenAiToolSpec[] {
   }))
 }
 
+/** 首次请求之外最多重试几次；重试只覆盖建立连接阶段 */
+const MAX_RETRIES = 5
+
+/** 这些状态码属于临时故障，值得重试；鉴权、参数错误等重试也没用 */
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504])
+
+/** 指数退避：500ms 起步，最长 10s，叠加 ±10% 抖动避免同时重试 */
+function retryDelay(attempt: number): number {
+  const base = Math.min(500 * 2 ** attempt, 10_000)
+  const jitter = base * 0.1 * (Math.random() * 2 - 1)
+  return Math.round(base + jitter)
+}
+
+/** 可被用户中止打断的等待 */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason)
+      return
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * 建立连接并拿到响应头；只有这一阶段能重试。
+ * 流一旦开始产出就不再重试，否则会把已经显示给用户的文本重复一遍。
+ * @param config 连接配置
+ * @param body 已经序列化好的请求体，重试时原样复用
+ * @param signal 用户中止信号
+ */
+async function openStream(
+  config: OpenAiConfig,
+  body: string,
+  signal: AbortSignal
+): Promise<Response> {
+  const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(config.apiKey.length > 0 ? { Authorization: `Bearer ${config.apiKey}` } : {})
+  }
+  let lastError: unknown
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      const delay = retryDelay(attempt - 1)
+      console.warn(`模型请求失败，${delay}ms 后进行第 ${attempt} 次重试`)
+      await sleep(delay, signal)
+    }
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal
+      })
+    } catch (error) {
+      // 用户中止不是失败，直接向上传播
+      if (signal.aborted) throw error
+      lastError = error
+      continue
+    }
+    if (response.ok) {
+      return response
+    }
+    const detail = await response.text().catch(() => '')
+    const error = new Error(`模型请求失败（HTTP ${response.status}）：${detail.slice(0, 500)}`)
+    if (!RETRYABLE_STATUS.has(response.status)) {
+      throw error
+    }
+    lastError = error
+  }
+  throw lastError
+}
+
 /**
  * 调用 OpenAI 兼容的 chat/completions 流式接口。
- * 只做两件事：把 SSE 帧解析成增量、把取消信号透传给 fetch。
- * 不负责重试、计费、reasoning 字段（P2 再补）。
+ * 只做三件事：把 SSE 帧解析成增量、把取消信号透传给 fetch、在建立连接失败时重试。
+ * 不负责计费与 reasoning 字段（P2 再补）。
  * @param config 连接配置
  * @param messages 完整会话历史
  * @param tools 工具声明，空数组表示不带工具
@@ -82,25 +165,13 @@ export async function* streamChat(
   tools: OpenAiToolSpec[],
   signal: AbortSignal
 ): AsyncGenerator<StreamDelta> {
-  const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(config.apiKey.length > 0 ? { Authorization: `Bearer ${config.apiKey}` } : {})
-    },
-    body: JSON.stringify({
-      model: config.modelName,
-      messages,
-      stream: true,
-      ...(tools.length > 0 ? { tools } : {})
-    }),
-    signal
+  const body = JSON.stringify({
+    model: config.modelName,
+    messages,
+    stream: true,
+    ...(tools.length > 0 ? { tools } : {})
   })
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`模型请求失败（HTTP ${response.status}）：${detail.slice(0, 500)}`)
-  }
+  const response = await openStream(config, body, signal)
   if (!response.body) {
     throw new Error('模型响应没有可读流')
   }

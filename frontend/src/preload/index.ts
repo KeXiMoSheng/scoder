@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
+import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../shared/ai/settings'
 import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { FILES_CHANNELS } from '../shared/files/events'
@@ -82,6 +83,10 @@ const api: ScoderAPI = {
   updateModelConfig: (id: number, input: ModelConfigInput) =>
     ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.update, id, input),
   deleteModelConfig: (id: number) => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.delete, id),
+  // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
+  getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
+  saveAiRuntimeSettings: (input: AiRuntimeSettings) =>
+    ipcRenderer.invoke(AI_RUNTIME_CHANNELS.save, input),
   ai
 }
 

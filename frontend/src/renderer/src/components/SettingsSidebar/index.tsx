@@ -1,4 +1,4 @@
-import { Bot, Settings2 } from 'lucide-react'
+import { Bot, Settings2, Sparkles } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +14,10 @@ import {
 import type { SettingsSection, SettingsSidebarProps } from './types'
 
 /** 设置分区清单：后续新增分区（如聊天、快捷键）时在此追加即可 */
-const SETTINGS_SECTIONS: readonly SettingsSection[] = [{ id: 'models', label: '模型', icon: Bot }]
+const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  { id: 'models', label: '模型', icon: Bot },
+  { id: 'ai', label: 'AI 助手', icon: Sparkles }
+]
 
 /** 设置页左侧导航：顶部为页面标题，下方按分区清单渲染菜单 */
 export default function SettingsSidebar({

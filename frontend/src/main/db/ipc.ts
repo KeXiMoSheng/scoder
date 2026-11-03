@@ -1,6 +1,8 @@
 import { BrowserWindow, dialog, ipcMain, type MessageBoxOptions } from 'electron'
+import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
+import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
 import {
   createModelConfig,
   deleteModelConfig,
@@ -10,9 +12,9 @@ import {
 } from './model-configs'
 
 /**
- * 向渲染进程提供模型配置的读取与增删改（白名单 IPC）。
+ * 向渲染进程提供模型配置与应用设置的读写（白名单 IPC）。
  * 这一层只做三件事：接收参数、处理需要窗口的交互（确认框）、转发给仓储；
- * 数据规则与 SQL 都在 model-configs.ts，便于脱离 Electron 单测。
+ * 数据规则与 SQL 都在各自的仓储文件里，便于脱离 Electron 单测。
  */
 export function registerDatabaseHandlers(): void {
   ipcMain.handle(MODEL_CONFIG_CHANNELS.list, (): ModelConfig[] => listModelConfigs())
@@ -30,6 +32,12 @@ export function registerDatabaseHandlers(): void {
     const window = BrowserWindow.fromWebContents(event.sender)
     return confirmAndDelete(window, id)
   })
+
+  // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
+  ipcMain.handle(AI_RUNTIME_CHANNELS.get, (): AiRuntimeSettings => getAiRuntimeSettings())
+  ipcMain.handle(AI_RUNTIME_CHANNELS.save, (_event, input: AiRuntimeSettings): AiRuntimeSettings =>
+    saveAiRuntimeSettings(input)
+  )
 }
 
 /** 删除前弹系统对话框确认，用户取消时返回 false */

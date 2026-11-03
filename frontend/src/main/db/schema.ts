@@ -12,7 +12,7 @@ export const APPLICATION_ID = 0x53434f44
  * 当前库结构版本。
  * 加表/加字段时：递增此常量，并在 MIGRATIONS 末尾追加一步；不要修改已发布的历史步骤。
  */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /** 一次结构升级：只在库的 user_version 小于该步版本时执行一次 */
 interface Migration {
@@ -38,15 +38,31 @@ const CREATE_MODEL_CONFIGS_SQL = `
 `
 
 /**
+ * 应用设置表：key-value，value 存 JSON 文本。
+ * 目前只放 AI 运行参数；后续需要新的全局配置时直接加 key，不用再加表。
+ */
+const CREATE_APP_SETTINGS_SQL = `
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )
+`
+
+/**
  * 有序迁移列表，版本必须从 1 开始连续递增。
- * 以后加 AI 会话表（ai_sessions / ai_messages）时，在这里追加 version: 2，
- * 并把 SCHEMA_VERSION 改成 2，旧库启动时就会自动补表。
+ * 旧库启动时会按版本号自动补齐缺的结构。
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
     description: '模型配置表',
     up: (db) => db.exec(CREATE_MODEL_CONFIGS_SQL)
+  },
+  {
+    version: 2,
+    description: '应用设置表',
+    up: (db) => db.exec(CREATE_APP_SETTINGS_SQL)
   }
 ]
 
