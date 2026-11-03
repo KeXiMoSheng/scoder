@@ -147,6 +147,10 @@ function resultCard(
   if (base?.hunks !== undefined && base.hunks.length > 0) {
     return base
   }
+  // todo 卡片的信息在 todos 里，同样不能用结果文本顶掉
+  if (base?.todos !== undefined) {
+    return base
+  }
   if (text.length === 0) {
     return base
   }

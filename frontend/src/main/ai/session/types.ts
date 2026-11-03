@@ -37,7 +37,7 @@ export type StoredTurnEndReason = AiTurnEndReason | 'interrupted'
 
 /** 事件载荷：键是事件类型，值是该类型的 data 结构 */
 export interface SessionEventMap {
-  /** 会话标题变更；取最后一条作为当前标题，auto 表示仍是首条消息摘要 */
+  /** 会话标题变更；取最后一条作为当前标题，auto 表示仍由自动流程管理（默认名/模型润色） */
   'session/title': { title: string; auto: boolean }
   /** 一轮对话开始：cwd 与模型记在这里，同一会话换过项目也能追溯 */
   'turn/start': { turn: number; cwd: string; modelConfigId: number }

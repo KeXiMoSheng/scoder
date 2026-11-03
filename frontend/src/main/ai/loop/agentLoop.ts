@@ -51,7 +51,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   const tools = toOpenAiTools(registry.list())
   let reason: AiTurnEndReason = 'done'
 
-  // 首轮异步润色标题：与主回复并行，不阻塞也不影响结果；失败保留首条消息摘要
+  // 首轮异步润色标题：与主回复并行，不阻塞也不影响结果；失败保留默认标题
   if (turn === 1) {
     void refineTitle(request, model, sessions, emit, signal)
   }
@@ -364,7 +364,7 @@ async function writeToolResult(
 /**
  * 用模型润色会话标题。
  * 与 deepseek-harness 的 first-prompt provider 一致：只在首轮跑一次，
- * 用户已手工改名（autoTitle=false）时不覆盖，失败保留首条消息摘要。
+ * 用户已手工改名（autoTitle=false）时不覆盖，失败保留默认标题。
  */
 async function refineTitle(
   request: AiSendRequest,

@@ -37,15 +37,12 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
     ? (list.find((session) => session.id === renamingId) ?? null)
     : null
 
-  /** 发出消息后更新会话活动时间；自动标题的会话用首条消息替换标题 */
-  const handleUserSend = useCallback(
-    (text: string): void => {
-      if (activeId) {
-        touch(activeId, text)
-      }
-    },
-    [activeId, touch]
-  )
+  /** 发出消息后更新会话活动时间（标题不再取消息内容，由模型润色或用户改名决定） */
+  const handleUserSend = useCallback((): void => {
+    if (activeId) {
+      touch(activeId)
+    }
+  }, [activeId, touch])
 
   const handleCreate = useCallback((): void => {
     create()

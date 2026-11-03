@@ -3,10 +3,6 @@ import type { AiSessionSummary } from '../../../shared/ai/types'
 
 /** 默认会话标题 */
 const DEFAULT_TITLE = '新会话'
-/** 自动标题的最大字符数（超出部分省略） */
-const TITLE_MAX_LENGTH = 20
-/** 新建会话的默认标题形态：新会话 / 新会话 2 / 新会话 3 … */
-const DEFAULT_TITLE_PATTERN = /^新会话(?: \d+)?$/
 
 /** 一个 AI 会话：与主进程返回的摘要同构，标题与时间用于标签栏和历史列表 */
 export type AiSession = AiSessionSummary
@@ -59,8 +55,8 @@ export interface AiSessionsApi {
   close: (id: string) => void
   /** 关闭除指定会话外的全部标签（不删除磁盘日志） */
   closeOthers: (id: string) => void
-  /** 发送一条消息后更新活动时间；自动标题的会话用首条消息替换标题 */
-  touch: (id: string, prompt: string) => void
+  /** 发送一条消息后只更新活动时间；标题不再取消息内容，由模型润色或用户改名决定 */
+  touch: (id: string) => void
 }
 
 /** 生成会话 id：优先用 crypto.randomUUID，不可用时退化为时间戳 + 自增序号 */
@@ -110,19 +106,6 @@ function appendToHistory(history: AiSession[], session: AiSession): AiSession[] 
   const next = [...history]
   next[index] = session
   return next
-}
-
-/** 用首条消息生成会话标题：取首个非空行，超长截断 */
-function summarizePrompt(prompt: string): string {
-  const line = prompt
-    .split(/\r?\n/)
-    .find((item) => item.trim().length > 0)
-    ?.trim()
-  if (!line) {
-    return DEFAULT_TITLE
-  }
-  const chars = [...line]
-  return chars.length > TITLE_MAX_LENGTH ? `${chars.slice(0, TITLE_MAX_LENGTH).join('')}…` : line
 }
 
 /**
@@ -393,30 +376,24 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
     [projectPath]
   )
 
+  /**
+   * 发送消息后只更新活动时间。
+   * 标题不再用消息内容截取：仍保持「新会话」默认名，直到首轮模型润色或用户手动改名。
+   */
   const touch = useCallback(
-    (id: string, prompt: string): void => {
+    (id: string): void => {
       const now = Date.now()
       const target = current.sessions.find((session) => session.id === id)
       if (!target || projectPath === null) {
         return
       }
-      // 只有仍是默认标题时才用首条消息生成摘要；
-      // 模型润色过的标题与用户改名都保持不变（改名会置 autoTitle=false 钉住）
-      const shouldSummarize = target.autoTitle && DEFAULT_TITLE_PATTERN.test(target.title)
-      const title = shouldSummarize ? summarizePrompt(prompt) : target.title
-      const updated = { ...target, title, updatedAt: now }
+      const updated = { ...target, updatedAt: now }
       setState({
         projectPath,
         sessions: current.sessions.map((session) => (session.id === id ? updated : session)),
         history: appendToHistory(current.history, updated),
         activeId: current.activeId
       })
-      // 标题真的变了才追写一条事件，避免每次发送都往日志里塞重复标题
-      if (title !== target.title) {
-        void window.api.ai
-          .updateSessionTitle(projectPath, id, title, target.autoTitle)
-          .catch((error: unknown) => console.warn('保存会话标题失败', error))
-      }
     },
     [current.activeId, current.history, current.sessions, projectPath]
   )

@@ -4,12 +4,22 @@
 export type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
-/** 工具参数 schema 的单个属性（P0 只使用模型真正需要的子集） */
-export interface JsonSchemaProperty {
+/** 工具参数 schema 的标量属性（P0 只使用模型真正需要的子集） */
+export interface JsonSchemaScalarProperty {
   type: 'string' | 'number' | 'integer' | 'boolean'
   description: string
   enum?: string[]
 }
+
+/** 工具参数 schema 的数组属性：元素固定为对象（todo 清单这类结构化列表） */
+export interface JsonSchemaArrayProperty {
+  type: 'array'
+  description: string
+  items: JsonSchemaObject
+}
+
+/** 工具参数 schema 的单个属性 */
+export type JsonSchemaProperty = JsonSchemaScalarProperty | JsonSchemaArrayProperty
 
 /** 工具参数 schema：与 OpenAI function.parameters 兼容的对象形态 */
 export interface JsonSchemaObject {
@@ -48,12 +58,25 @@ export type ToolFileChange = {
   status: 'A' | 'M'
 }
 
+/** 任务清单条目的三态生命周期 */
+export type TodoStatus = 'pending' | 'in_progress' | 'completed'
+
+/**
+ * 任务清单的一条：一句简短的祈使句加三态状态。
+ * 清单每次整体替换，条目不需要稳定 id，因此刻意保持最小形状。
+ */
+export type TodoItem = {
+  /** 任务内容，展示在卡片里的一行 */
+  content: string
+  status: TodoStatus
+}
+
 /**
  * 工具卡片：主进程根据调用参数或结果推导出的展示意图。
  * 渲染进程只负责画卡片，不参与工具执行，也不解析文件内容。
  */
 export interface ToolCardView {
-  kind: 'generic' | 'read' | 'diff'
+  kind: 'generic' | 'read' | 'diff' | 'todo'
   title: string
   /** 卡片正文（read 为带行号的窗口；diff 卡片改用 hunks 渲染） */
   body?: string
@@ -63,6 +86,8 @@ export interface ToolCardView {
   line?: number
   /** kind 为 diff 时的逐块变更（由主进程算好并随日志保存，重放一致） */
   hunks?: ToolHunk[]
+  /** kind 为 todo 时的清单快照：整表替换后模型认为的最新计划 */
+  todos?: TodoItem[]
   /** 本次调用对这个文件的影响（增删行数与 A/M），供改动清单汇总 */
   change?: ToolFileChange
 }
@@ -152,7 +177,7 @@ export interface AiSessionSummary {
   id: string
   title: string
   /**
-   * 标题是否仍由自动生成（首条消息摘要或模型润色）。
+   * 标题是否仍由自动生成（默认名或模型润色）。
    * 用户手工重命名后置 false：此后自动标题不再覆盖它。
    */
   autoTitle: boolean

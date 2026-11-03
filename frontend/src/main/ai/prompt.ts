@@ -8,6 +8,7 @@
 export function buildSystemPrompt(cwd: string): string {
   return [
     roleSection(cwd),
+    planSection(),
     discoverySection(),
     writeSection(),
     failureSection(),
@@ -20,6 +21,16 @@ function roleSection(cwd: string): string {
   return [
     '你是 scoder 桌面编辑器里的编程助手，帮助用户理解和修改当前项目。',
     `当前工作区：${cwd}。所有工具路径都相对于该目录，展示给用户的路径也使用相对路径。`
+  ].join('\n')
+}
+
+/** 多步任务的规划：开工前先列清单，进度对用户可见 */
+function planSection(): string {
+  return [
+    '多步任务的规则：',
+    '1. 需要多次工具调用或多处改动的任务，开工前先用 todo_write 把工作拆成具体步骤，一步一条；一两步就能完成的简单任务不要用。',
+    '2. 同一时刻只保留一条 in_progress：开始做哪条就把它标成进行中，完成一条立即标成 completed，再开始下一条。',
+    '3. 每次提交完整清单（整体替换），步骤有增减时重新整理，不要留已经不适用的旧条目。'
   ].join('\n')
 }
 

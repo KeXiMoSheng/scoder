@@ -2,7 +2,7 @@
  * 会话标题生成。
  *
  * 对应 deepseek-harness 的 session-title-first-prompt-llm：只在首轮跑一次，
- * 把首条用户消息润色成更可读的短标题；失败就保留首条消息摘要作为兜底，
+ * 把首条用户消息润色成更可读的短标题；失败就保留默认标题「新会话」，
  * 用户手工改名（autoTitle=false）后不再覆盖。
  *
  * 标题只用于展示，永远不进入模型输入。
@@ -10,7 +10,7 @@
 import type { OpenAiConfig } from '../llm/openai'
 import { completeChat } from '../llm/openai'
 
-/** 标题长度上限：与渲染层的首条消息摘要一致，避免两边长度跳变 */
+/** 标题长度上限：标签栏与历史列表一行可容纳的字符数 */
 const TITLE_MAX_CHARS = 20
 
 /** 首条消息送进模型的最大字符数：标题不需要全文 */
@@ -49,9 +49,9 @@ export async function generateTitle(
     )
     return sanitizeTitle(raw)
   } catch (error) {
-    // 标题只是锦上添花：失败时静默保留首条消息摘要，不打扰用户
+    // 标题只是锦上添花：失败时静默保留默认标题，不打扰用户
     if (!signal.aborted) {
-      console.warn('生成会话标题失败，保留首条消息摘要', error)
+      console.warn('生成会话标题失败，保留默认标题', error)
     }
     return null
   }

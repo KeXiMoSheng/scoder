@@ -30,7 +30,7 @@ import {
 } from './types'
 import { textOf } from './view'
 
-/** 新建会话的默认标题（渲染进程会再用首条消息覆盖） */
+/** 新建会话的默认标题（首轮由模型润色，用户也可手动改名） */
 export const DEFAULT_TITLE = '新会话'
 
 /** 会话的进程内状态：只存写路径需要的计数，事件本身不常驻内存 */
@@ -70,7 +70,7 @@ export class SessionStore {
    * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param title 新建时使用的初始标题
-   * @param autoTitle 初始标题是否仍为自动生成的摘要
+   * @param autoTitle 初始标题是否仍由自动流程管理（默认名）
    */
   async ensure(
     cwd: string,
@@ -215,7 +215,7 @@ export class SessionStore {
    * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param title 新标题
-   * @param autoTitle 是否仍为自动生成的摘要标题
+   * @param autoTitle 是否仍为自动生成的标题（模型润色）
    */
   async updateTitle(cwd: string, id: string, title: string, autoTitle: boolean): Promise<void> {
     await this.ensure(cwd, id, title, autoTitle)
