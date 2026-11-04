@@ -6,13 +6,22 @@ import {
   Circle,
   CircleDot,
   FileDiff,
+  Folder,
   ListChecks,
   Loader2,
   Wrench
 } from 'lucide-react'
-import type { AiMessageView, TodoItem, ToolFileChange, ToolHunk } from '@shared/ai/types'
+import { attachmentKey } from '@shared/ai/attachments'
+import type {
+  AiAttachmentView,
+  AiMessageView,
+  TodoItem,
+  ToolFileChange,
+  ToolHunk
+} from '@shared/ai/types'
 import FileRow from '../FileRow'
 import MarkdownPreview from '../MarkdownPreview'
+import { attachmentLineLabel } from '../../lib/aiAttachment'
 import { basename } from '../../lib/filePath'
 import { cn } from '../../lib/utils'
 import type { AiMessageListProps } from './types'
@@ -28,7 +37,8 @@ export default function AiMessageList({
   messages,
   running,
   error,
-  emptyHint
+  emptyHint,
+  onOpenFile
 }: AiMessageListProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // 用户向上翻看历史时不要被新内容拽回底部
@@ -69,7 +79,14 @@ export default function AiMessageList({
       {messages.map((message) => {
         switch (message.kind) {
           case 'user':
-            return <UserBubble key={message.id} text={message.text} />
+            return (
+              <UserBubble
+                key={message.id}
+                text={message.text}
+                attachments={message.attachments}
+                onOpenFile={onOpenFile}
+              />
+            )
           case 'assistant':
             return <AssistantMessage key={message.id} text={message.text} />
           case 'tool':
@@ -93,14 +110,70 @@ export default function AiMessageList({
   )
 }
 
-/** 用户消息：右对齐气泡，保留原始换行 */
-function UserBubble({ text }: { text: string }): React.JSX.Element {
+/**
+ * 用户消息：右对齐气泡，保留原始换行；附加的上下文以小标签排在正文下方，
+ * 复用文件树的 FileRow，目录与选中行用图标/行号区分。
+ */
+function UserBubble({
+  text,
+  attachments,
+  onOpenFile
+}: {
+  text: string
+  attachments?: readonly AiAttachmentView[]
+  onOpenFile: (path: string) => void
+}): React.JSX.Element {
   return (
     <div className="mb-3 flex justify-end">
       <div className="max-w-[85%] rounded-md border border-line bg-elevated px-2.5 py-1.5">
-        <p className="m-0 text-[13px] leading-[1.6] break-words whitespace-pre-wrap text-fg">
-          {text}
-        </p>
+        {text.length > 0 ? (
+          <p className="m-0 text-[13px] leading-[1.6] break-words whitespace-pre-wrap text-fg">
+            {text}
+          </p>
+        ) : null}
+        {attachments && attachments.length > 0 ? (
+          <ul className="mt-1.5 flex list-none flex-wrap gap-1 p-0">
+            {attachments.map((attachment) => {
+              const lineLabel = attachmentLineLabel(attachment)
+              const content = (
+                <>
+                  <FileRow
+                    name={basename(attachment.path)}
+                    icon={
+                      attachment.kind === 'directory' ? (
+                        <Folder className="size-3.5 fill-current text-[#dcb67a]" />
+                      ) : undefined
+                    }
+                    className="gap-1"
+                  />
+                  {lineLabel ? (
+                    <span className="ml-0.5 shrink-0 text-[10px]">{lineLabel}</span>
+                  ) : null}
+                </>
+              )
+              return (
+                <li
+                  key={attachmentKey(attachment)}
+                  className="inline-flex h-5 max-w-[220px] items-center rounded-[3px] border border-line bg-base px-1 text-[11px] leading-5 text-dim"
+                >
+                  {attachment.kind === 'directory' ? (
+                    content
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex min-w-0 cursor-pointer items-center border-none bg-transparent p-0 text-inherit transition-colors hover:text-fg"
+                      aria-label={`打开 ${basename(attachment.path)}`}
+                      title={`打开 ${attachment.path}`}
+                      onClick={() => onOpenFile(attachment.path)}
+                    >
+                      {content}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
       </div>
     </div>
   )

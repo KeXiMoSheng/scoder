@@ -14,6 +14,12 @@ import type { CodeEditorProps, LoadFailure, MarkdownViewMode } from './types'
 /** Markdown 视图模式偏好（跨会话保留） */
 const VIEW_MODE_STORAGE_KEY = 'scoder.markdownViewMode'
 
+/**
+ * 每个 model 的保存点版本：model 是全局缓存，保存点也跟随 model 而非组件实例，
+ * 组件重挂载（热更新）后复用缓存时不会因查不到保存点而误报脏点。
+ */
+const savedVersions = new WeakMap<monaco.editor.ITextModel, number>()
+
 /** 分栏模式下的编辑区宽度占比上下限 */
 const SPLIT_MIN_RATIO = 0.2
 const SPLIT_MAX_RATIO = 0.8
@@ -40,20 +46,20 @@ function readStoredViewMode(): MarkdownViewMode {
 export default function CodeEditor({
   file,
   onDirtyChange,
+  onSendSelectionToAi,
   ref
 }: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const [failure, setFailure] = useState<LoadFailure | null>(null)
-  // 每个缓冲区最近一次保存（或从磁盘载入）时的替代版本号：
-  // 撤销回保存点后版本号复原，脏标记随之消失（与 VS Code 一致）
-  const savedVersionRef = useRef<Map<string, number>>(new Map())
   // 各文件已上报的脏状态（仅在翻转时通知外部，避免每次击键都触发重渲染）
   const reportedDirtyRef = useRef<Map<string, boolean>>(new Map())
   // 已挂载内容变更监听的 model（避免重复挂载）
   const observedModelsRef = useRef<WeakSet<monaco.editor.ITextModel>>(new WeakSet())
   // 供编辑器内快捷键与右键菜单调用，避免创建 effect 依赖
   const saveCurrentRef = useRef<() => void>(() => {})
+  // 右键菜单「发送选中行给 AI」的出口：编辑器只创建一次，回调通过 ref 保持最新
+  const sendSelectionRef = useRef(onSendSelectionToAi)
   // Markdown 视图模式（仅对 Markdown 文件生效，其他文件不渲染工具栏）
   const [viewMode, setViewMode] = useState<MarkdownViewMode>(readStoredViewMode)
   // 分栏模式下编辑区宽度占比（拖动中间分隔条调整）
@@ -76,7 +82,7 @@ export default function CodeEditor({
   /** 缓冲区相对保存点是否有未保存修改 */
   const isDirty = useCallback(
     (model: monaco.editor.ITextModel): boolean =>
-      savedVersionRef.current.get(model.uri.fsPath) !== model.getAlternativeVersionId(),
+      savedVersions.get(model) !== model.getAlternativeVersionId(),
     []
   )
 
@@ -106,7 +112,7 @@ export default function CodeEditor({
       const path = model.uri.fsPath
       const version = model.getAlternativeVersionId()
       await window.api.writeFile(path, model.getValue())
-      savedVersionRef.current.set(path, version)
+      savedVersions.set(model, version)
       reportDirty(path, model.getAlternativeVersionId() !== version)
     },
     [reportDirty]
@@ -130,6 +136,10 @@ export default function CodeEditor({
     saveCurrentRef.current = () => void saveCurrent()
   }, [saveCurrent])
 
+  useEffect(() => {
+    sendSelectionRef.current = onSendSelectionToAi
+  }, [onSendSelectionToAi])
+
   // 创建编辑器实例（仅一次）；容器尺寸变化由 automaticLayout 自动跟随
   useEffect(() => {
     const container = containerRef.current
@@ -152,6 +162,35 @@ export default function CodeEditor({
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 0,
       run: () => saveCurrentRef.current()
+    })
+    editor.addAction({
+      id: 'scoder.sendSelectionToAi',
+      label: '发送选中行给 AI',
+      // 只有存在非空选区时才出现在右键菜单里
+      precondition: 'editorHasSelection',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1,
+      run: (editor) => {
+        const model = editor.getModel()
+        const selection = editor.getSelection()
+        if (!model || !selection || selection.isEmpty()) {
+          return
+        }
+        const startLine = selection.startLineNumber
+        // 选区在下一行行首结束时，那一行并没有被选中，剔除避免多发一行
+        const endLine =
+          selection.endColumn === 1 && selection.endLineNumber > startLine
+            ? selection.endLineNumber - 1
+            : selection.endLineNumber
+        const range = new monaco.Range(startLine, 1, endLine, model.getLineMaxColumn(endLine))
+        sendSelectionRef.current({
+          path: model.uri.fsPath,
+          kind: 'selection',
+          startLine,
+          endLine,
+          text: model.getValueInRange(range)
+        })
+      }
     })
     editorRef.current = editor
     return () => {
@@ -197,6 +236,11 @@ export default function CodeEditor({
       // 错误提示按路径派生过滤（errorMessage），切换文件后旧错误自然隐藏
       observeModel(cachedModel)
       editor.setModel(cachedModel)
+      // 模型缓存可能早于本次组件挂载（热更新重挂载后保存点已丢失）：
+      // 以当前内容为基线，避免仅打开文件就误报脏点
+      if (!savedVersions.has(cachedModel)) {
+        savedVersions.set(cachedModel, cachedModel.getAlternativeVersionId())
+      }
       syncDirty(cachedModel)
       return
     }
@@ -209,7 +253,7 @@ export default function CodeEditor({
           return
         }
         const model = monaco.editor.createModel(content, detectLanguage(file.name), uri)
-        savedVersionRef.current.set(file.path, model.getAlternativeVersionId())
+        savedVersions.set(model, model.getAlternativeVersionId())
         observeModel(model)
         editor.setModel(model)
         syncDirty(model)
@@ -265,7 +309,7 @@ export default function CodeEditor({
           .filter(
             (model) =>
               isAtOrUnder(model.uri.fsPath, path) &&
-              savedVersionRef.current.get(model.uri.fsPath) !== model.getAlternativeVersionId()
+              savedVersions.get(model) !== model.getAlternativeVersionId()
           )
         for (const model of dirtyModels) {
           await saveModel(model)
@@ -281,7 +325,7 @@ export default function CodeEditor({
           if (editor?.getModel() === model) {
             editor.setModel(null)
           }
-          savedVersionRef.current.delete(modelPath)
+          savedVersions.delete(model)
           reportedDirtyRef.current.delete(modelPath)
           model.dispose()
         }
@@ -300,7 +344,7 @@ export default function CodeEditor({
               return
             }
             model.setValue(content)
-            savedVersionRef.current.set(path, model.getAlternativeVersionId())
+            savedVersions.set(model, model.getAlternativeVersionId())
             syncDirty(model)
           })
           .catch(() => {

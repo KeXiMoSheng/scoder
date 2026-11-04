@@ -11,4 +11,6 @@ export interface AiMessageListProps {
   error: string | null
   /** 没有任何消息时显示的提示文案 */
   emptyHint: string
+  /** 点击消息里的附件打开对应文件 */
+  onOpenFile: (path: string) => void
 }

@@ -9,6 +9,11 @@ export function pathSeparator(path: string): string {
   return path.includes('\\') ? '\\' : '/'
 }
 
+/** 是否为绝对路径（POSIX、Windows 盘符或 UNC） */
+export function isAbsolutePath(path: string): boolean {
+  return path.startsWith('/') || path.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(path)
+}
+
 /** 取路径最后一段（文件名或目录名） */
 export function basename(path: string): string {
   const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -44,4 +49,17 @@ export function isAtOrUnder(child: string, base: string): boolean {
     return true
   }
   return child.startsWith(base + pathSeparator(base))
+}
+
+/**
+ * 把绝对路径转成相对 base 的展示路径（分隔符统一为 /）。
+ * 不在 base 之下时原样返回，避免把外部路径拼成看似工作区的相对路径。
+ */
+export function relativePath(path: string, base: string): string {
+  const separator = pathSeparator(base)
+  const prefix = base.endsWith(separator) ? base : base + separator
+  if (!path.startsWith(prefix)) {
+    return path
+  }
+  return path.slice(prefix.length).split(pathSeparator(path)).join('/')
 }

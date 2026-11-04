@@ -31,7 +31,7 @@ const NOTICE_TIMEOUT = 4000
 const DirtyPathsContext = createContext<ReadonlySet<string>>(new Set())
 
 /** 通过 context 传递右键菜单入口：同样保持 TreeNode 组件标识稳定 */
-const OpenContextMenuContext = createContext<(event: React.MouseEvent, path: string) => void>(
+const OpenContextMenuContext = createContext<(event: React.MouseEvent, data: FileNode) => void>(
   () => {}
 )
 
@@ -216,7 +216,7 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       onContextMenu={(event) => {
         // 拦截系统默认行为，改由文件树展示自定义菜单
         event.preventDefault()
-        openContextMenu(event, node.data.path)
+        openContextMenu(event, node.data)
       }}
       onClick={() => {
         // 单击目录切换展开/折叠；文件的选择由行容器统一处理（onSelect 中打开）
@@ -265,7 +265,8 @@ export default function FileTree({
   onSelectFile,
   onBeforeEntryMove,
   onEntryMoved,
-  onEntryDeleted
+  onEntryDeleted,
+  onSendToAi
 }: FileTreeProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null)
   const { width, height } = useContainerSize(listRef)
@@ -479,7 +480,7 @@ export default function FileTree({
         treeRef.current?.open(targetDir)
         treeRef.current?.openParents(entry.path)
         if (!isDirectory) {
-          onSelectFile(entry)
+          onSelectFile(entry.path)
         }
       } catch (reason) {
         setNotice(`创建失败：${extractErrorMessage(reason)}`)
@@ -549,7 +550,7 @@ export default function FileTree({
     (nodes: NodeApi<FileNode>[]): void => {
       const node = nodes[0]
       if (node && !node.data.isDirectory) {
-        onSelectFile(node.data)
+        onSelectFile(node.data.path)
       }
     },
     [onSelectFile]
@@ -569,8 +570,13 @@ export default function FileTree({
   }, [])
 
   /** 打开右键菜单：坐标贴近鼠标，贴边修正由 ContextMenu 组件完成 */
-  const openContextMenu = useCallback((event: React.MouseEvent, path: string): void => {
-    setContextMenu({ x: event.clientX, y: event.clientY, path })
+  const openContextMenu = useCallback((event: React.MouseEvent, data: FileNode): void => {
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      path: data.path,
+      isDirectory: data.isDirectory
+    })
   }, [])
 
   /** 菜单操作：重命名（复用行内编辑；节点可能因刷新失效，按路径回查） */
@@ -651,7 +657,7 @@ export default function FileTree({
     }
   }
 
-  // 右键菜单条目（数据驱动）。扩展点：后续「发送给 AI」等操作在此数组追加即可
+  // 右键菜单条目（数据驱动）：发送给 AI 对文件与目录都开放，重命名/删除受搜索模式与根目录限制
   let contextMenuEntries: ContextMenuEntry[] = []
   if (contextMenu) {
     const targetPath = contextMenu.path
@@ -663,6 +669,12 @@ export default function FileTree({
         ? '当前目录不支持该操作'
         : undefined
     contextMenuEntries = [
+      {
+        id: 'send-to-ai',
+        label: '发送给 AI',
+        onSelect: () => onSendToAi(targetPath, contextMenu.isDirectory)
+      },
+      null,
       {
         id: 'rename',
         label: '重命名',

@@ -6,9 +6,11 @@ import { toContextUsage } from '../context'
 import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../llm/openai'
 import { streamChat, toOpenAiTools } from '../llm/openai'
 import { buildSystemPrompt } from '../prompt'
+import { toAttachmentBlocks } from '../session/attachments'
 import type { SessionStore } from '../session/store'
 import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
+import { modelTextOf } from '../session/view'
 import { errorMessage, type ToolExecutionResult, type ToolRegistry } from '../tools/registry'
 import { RepeatCallGuard } from './repeatGuard'
 
@@ -48,7 +50,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   await sessions.settle(request.cwd, request.sessionId)
 
   const turn = state.turnCount + 1
-  const messages = await initialMessages(sessions, request)
+  // 附件在落盘前整理成内容块：只有选中行带文本，文件/目录只记录路径与类型
+  const attachments = await toAttachmentBlocks(fs, request.attachments)
+  const messages = await initialMessages(sessions, request, attachments)
   const tools = toOpenAiTools(registry.list())
   let reason: AiTurnEndReason = 'done'
 
@@ -60,7 +64,10 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   emit({ type: 'turn-start', sessionId: request.sessionId })
   await sessions.record(request.cwd, request.sessionId, [
     { type: 'turn/start', data: { turn, cwd: request.cwd, modelConfigId: request.modelConfigId } },
-    { type: 'user/message', data: { content: [{ type: 'text', text: request.prompt }] } }
+    {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: request.prompt }, ...attachments] }
+    }
   ])
   // 重复调用守卫：整轮对话共用一个实例，只有用户发新消息才会重置
   const guard = new RepeatCallGuard({
@@ -195,14 +202,19 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
 /**
  * 组装本次请求的消息序列：系统提示每轮现算，历史从日志重放得到。
  * 系统提示不入库，改 prompt.ts 后对所有历史会话立即生效。
+ * @param attachments 本轮新附加文件的内容块（历史里的附件已由重放展开）
  */
 async function initialMessages(
   sessions: SessionStore,
-  request: AiSendRequest
+  request: AiSendRequest,
+  attachments: readonly SessionBlock[]
 ): Promise<ChatMessage[]> {
   const history = await sessions.history(request.cwd, request.sessionId)
   const systemMessage: ChatMessage = { role: 'system', content: buildSystemPrompt(request.cwd) }
-  const userMessage: ChatMessage = { role: 'user', content: request.prompt }
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: modelTextOf([{ type: 'text', text: request.prompt }, ...attachments])
+  }
   return [systemMessage, ...history, userMessage]
 }
 

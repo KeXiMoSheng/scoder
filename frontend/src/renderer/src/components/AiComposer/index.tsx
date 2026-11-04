@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, Folder, X } from 'lucide-react'
+import { attachmentKey } from '@shared/ai/attachments'
 import type { ModelConfig } from '@shared/model-config/types'
 import AiContextUsage from '../AiContextUsage'
+import FileRow from '../FileRow'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Textarea } from '../ui/textarea'
+import { attachmentLabel, attachmentLineLabel } from '../../lib/aiAttachment'
+import { basename } from '../../lib/filePath'
 import type { AiComposerProps } from './types'
 
 /**
@@ -23,6 +27,9 @@ export default function AiComposer({
   usage,
   canCreateSession,
   onCreateSession,
+  attachments,
+  onRemoveAttachment,
+  onOpenFile,
   onSend
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
@@ -59,12 +66,65 @@ export default function AiComposer({
     if (!text || disabled || running || selectedModelId === null) {
       return
     }
-    onSend(text, selectedModelId)
+    onSend(text, selectedModelId, attachments)
     setValue('')
-  }, [disabled, onSend, running, selectedModelId, value])
+  }, [attachments, disabled, onSend, running, selectedModelId, value])
 
   return (
     <div className="shrink-0 border-t border-line p-2">
+      {attachments.length > 0 ? (
+        <div className="mb-1.5 flex flex-wrap gap-1" aria-label="已附加的上下文">
+          {attachments.map((attachment) => {
+            const lineLabel = attachmentLineLabel(attachment)
+            const content = (
+              <>
+                <FileRow
+                  name={basename(attachment.path)}
+                  icon={
+                    attachment.kind === 'directory' ? (
+                      <Folder className="size-3.5 fill-current text-[#dcb67a]" />
+                    ) : undefined
+                  }
+                  className="gap-1"
+                />
+                {lineLabel ? (
+                  <span className="ml-0.5 shrink-0 text-[10px] text-dim">{lineLabel}</span>
+                ) : null}
+              </>
+            )
+            return (
+              <span
+                key={attachmentKey(attachment)}
+                className="inline-flex h-5 max-w-[220px] items-center rounded-[3px] border border-line bg-elevated pl-1.5 text-[12px] leading-5 text-fg"
+              >
+                {attachment.kind === 'directory' ? (
+                  <span title={attachment.path}>{content}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex min-w-0 cursor-pointer items-center border-none bg-transparent p-0 text-inherit transition-opacity hover:opacity-80"
+                    aria-label={`打开 ${basename(attachment.path)}`}
+                    title={`打开 ${attachment.path}`}
+                    onClick={() => onOpenFile(attachment.path)}
+                  >
+                    {content}
+                  </button>
+                )}
+                {/* 与编辑器标签的关闭按钮同一套交互：悬停出底色，点击只移除自己 */}
+                <button
+                  type="button"
+                  className="relative ml-0.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-dim transition-colors hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)] hover:text-fg"
+                  aria-label={`移除 ${attachmentLabel(attachment)}`}
+                  title="移除"
+                  onClick={() => onRemoveAttachment(attachment)}
+                >
+                  <X className="size-2.5" />
+                </button>
+              </span>
+            )
+          })}
+        </div>
+      ) : null}
       <Textarea
         className="max-h-40 min-h-[64px] resize-none bg-base text-[13px] focus-visible:border-accent-hover"
         placeholder={

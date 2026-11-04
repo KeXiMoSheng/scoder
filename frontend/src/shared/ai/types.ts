@@ -116,6 +116,29 @@ export interface AiContextUsage {
   limitTokens: number
 }
 
+/**
+ * 用户附加给 AI 的上下文类型：
+ * file/directory 只提供路径与类型，selection 额外携带选中的行内容。
+ */
+export type AiAttachmentKind = 'file' | 'directory' | 'selection'
+
+/** 渲染进程传给主进程的附件：路径为绝对路径，必须位于工作区内 */
+export interface AiAttachment extends AiAttachmentView {
+  /** kind 为 selection 时的选中文本（整行内容）；其他类型缺省 */
+  text?: string
+}
+
+/** 展示用附件：会话重放与本地回显共用，不包含可能很大的选中文本 */
+export interface AiAttachmentView {
+  /** 文件/目录路径：发给模型的展示路径（相对工作区根）；本地回显时也转成相对路径 */
+  path: string
+  kind: AiAttachmentKind
+  /** kind 为 selection 时的起始行（1 起） */
+  startLine?: number
+  /** kind 为 selection 时的结束行（1 起，含） */
+  endLine?: number
+}
+
 /** 发起一轮对话的请求：工作区由渲染进程按当前打开的项目传入 */
 export interface AiSendRequest {
   /** 会话 id：同一 id 复用磁盘上的历史消息（一个会话一个 jsonl 文件） */
@@ -126,6 +149,11 @@ export interface AiSendRequest {
   cwd: string
   /** 用户本轮输入 */
   prompt: string
+  /**
+   * 用户附加的上下文：file/directory 只带路径与类型，
+   * selection 额外带选中行内容。
+   */
+  attachments?: AiAttachment[]
 }
 
 /**
@@ -167,7 +195,14 @@ export interface AiEventEnvelope {
  * 流式追加时只需在尾部新建或更新最后一个，不必回改前面的结构。
  */
 export type AiMessageView =
-  | { kind: 'user'; id: string; time: number; text: string }
+  | {
+      kind: 'user'
+      id: string
+      time: number
+      text: string
+      /** 本轮附加的上下文（文件/目录/选中行）；没有附件时缺省 */
+      attachments?: AiAttachmentView[]
+    }
   | { kind: 'assistant'; id: string; time: number; text: string }
   | {
       kind: 'tool'

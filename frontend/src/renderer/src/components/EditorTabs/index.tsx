@@ -14,7 +14,8 @@ export default function EditorTabs({
   onClose,
   onCloseOthers,
   onCloseToRight,
-  onCloseAll
+  onCloseAll,
+  onSendToAi
 }: EditorTabsProps): React.JSX.Element {
   const [menu, setMenu] = useState<TabMenuState | null>(null)
 
@@ -23,10 +24,11 @@ export default function EditorTabs({
 
   /**
    * 构建标签右键菜单条目（数据驱动）。
-   * 扩展点：后续「发送给 AI」等操作在此数组追加条目即可；
-   * 以 null 作为分隔线，可与关闭系列操作视觉分组。
+   * 发送给 AI 与关闭系列操作以分隔线分组；以 null 作为分隔线。
    */
   const buildMenuEntries = (index: number, path: string): ContextMenuEntry[] => [
+    { id: 'send-to-ai', label: '发送给 AI', onSelect: () => onSendToAi(path) },
+    null,
     { id: 'close', label: '关闭', onSelect: () => onClose(path) },
     {
       id: 'close-others',

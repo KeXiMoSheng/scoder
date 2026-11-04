@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { mergeFileChange } from '@shared/ai/changes'
-import type { AiContextUsage, AiEvent, AiMessageView, ToolFileChange } from '@shared/ai/types'
+import type {
+  AiAttachment,
+  AiContextUsage,
+  AiEvent,
+  AiMessageView,
+  ToolFileChange
+} from '@shared/ai/types'
+import { toAttachmentView } from '../lib/aiAttachment'
 
 /** 实时条目的 id 计数器：与历史条目的 seq 前缀区分，重开会话后整表重建不影响 */
 let liveId = 0
@@ -64,8 +71,8 @@ export interface AiChatApi {
   error: string | null
   /** 当前上下文用量；载入前为 null */
   usage: AiContextUsage | null
-  /** 发送一条消息；未打开项目时只在本地报错 */
-  send: (text: string, modelConfigId: number) => void
+  /** 发送一条消息（可附带本轮要发送给 AI 的上下文附件）；未打开项目时只在本地报错 */
+  send: (text: string, modelConfigId: number, attachments?: readonly AiAttachment[]) => void
   /** 中止当前会话正在执行的一轮对话 */
   abort: () => void
 }
@@ -127,7 +134,7 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
   }, [sessionId])
 
   const send = useCallback(
-    (text: string, modelConfigId: number): void => {
+    (text: string, modelConfigId: number, attachments?: readonly AiAttachment[]): void => {
       if (sessionId === null) {
         setError('请先新建一个会话')
         return
@@ -138,13 +145,26 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
       }
       setError(null)
       setRunning(true)
+      const views = attachments?.map((attachment) => toAttachmentView(attachment, cwd)) ?? []
       // 用户消息本地先上屏，不等主进程回包：发送失败时再补一条错误提示
       setMessages((previous) => [
         ...previous,
-        { kind: 'user', id: nextLiveId('user'), time: Date.now(), text }
+        {
+          kind: 'user',
+          id: nextLiveId('user'),
+          time: Date.now(),
+          text,
+          ...(views.length > 0 ? { attachments: views } : {})
+        }
       ])
       window.api.ai
-        .send({ sessionId, modelConfigId, cwd, prompt: text })
+        .send({
+          sessionId,
+          modelConfigId,
+          cwd,
+          prompt: text,
+          ...(attachments && attachments.length > 0 ? { attachments: [...attachments] } : {})
+        })
         .catch((sendError: unknown) => {
           setRunning(false)
           setError(`发送失败：${describeError(sendError)}`)

@@ -1,6 +1,7 @@
 /** CodeEditor 组件的对外类型定义 */
 
 import type { Ref } from 'react'
+import type { AiAttachment } from '@shared/ai/types'
 import type { OpenedFile } from '../../hooks/useOpenedFiles'
 
 /** 暴露给 App 的命令式接口（通过 ref 调用） */
@@ -21,6 +22,8 @@ export interface CodeEditorProps {
   file: OpenedFile | null
   /** 未保存状态变化通知（按文件绝对路径归属） */
   onDirtyChange: (path: string, dirty: boolean) => void
+  /** 把编辑器中选中的整行发送给 AI（附当前文件路径、行号与选中文本） */
+  onSendSelectionToAi: (attachment: AiAttachment) => void
   ref?: Ref<CodeEditorHandle>
 }
 

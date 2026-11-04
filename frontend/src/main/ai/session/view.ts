@@ -6,7 +6,13 @@
  * - 这里关心“用户看到什么”，文本与工具卡片分段，结果回填到对应调用上。
  */
 import { mergeFileChange } from '../../../shared/ai/changes'
-import type { AiMessageView, ToolCardView, ToolFileChange } from '../../../shared/ai/types'
+import { attachmentKey } from '../../../shared/ai/attachments'
+import type {
+  AiAttachmentView,
+  AiMessageView,
+  ToolCardView,
+  ToolFileChange
+} from '../../../shared/ai/types'
 import type { SessionBlock, SessionEvent } from './types'
 
 /** 由工具名与原始参数推导挂起卡片；历史日志里没有结果卡片时用它兜底 */
@@ -35,8 +41,15 @@ export function toMessageViews(
     switch (event.type) {
       case 'user/message': {
         const text = textOf(event.data.content)
-        if (text.length > 0) {
-          views.push({ kind: 'user', id: `user-${event.seq}`, time: event.time, text })
+        const attachments = attachmentsOf(event.data.content)
+        if (text.length > 0 || attachments.length > 0) {
+          views.push({
+            kind: 'user',
+            id: `user-${event.seq}`,
+            time: event.time,
+            text,
+            ...(attachments.length > 0 ? { attachments } : {})
+          })
         }
         break
       }
@@ -117,6 +130,7 @@ export function toMessageViews(
 /**
  * 拼接内容块里的全部文本。
  * 与 store.ts 的重放共用：两处的“文本”定义必须一致。
+ * 只取 text 块，用户附加的上下文不进入展示文本。
  * @param blocks 内容块数组
  */
 export function textOf(blocks: readonly SessionBlock[]): string {
@@ -124,6 +138,66 @@ export function textOf(blocks: readonly SessionBlock[]): string {
     .filter((block): block is Extract<SessionBlock, { type: 'text' }> => block.type === 'text')
     .map((block) => block.text)
     .join('')
+}
+
+/**
+ * 拼接发给模型的内容：文本块原样保留，附加的上下文展开成带类型的引用；
+ * 只有 selection 会携带选中文本，file/directory 仅给出路径与类型。
+ * 与 textOf 刻意分开：附件信息只进入上下文，不进入用户气泡正文。
+ * @param blocks 内容块数组
+ */
+export function modelTextOf(blocks: readonly SessionBlock[]): string {
+  const parts: string[] = []
+  const attachments: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.length > 0) {
+        parts.push(block.text)
+      }
+    } else if (block.type === 'attachment') {
+      attachments.push(attachmentOf(block))
+    }
+  }
+  if (attachments.length > 0) {
+    parts.push(
+      `用户附加的上下文（file/directory 只给出路径与类型，需要内容时请用工具读取）：\n${attachments.join('\n')}`
+    )
+  }
+  return parts.join('\n\n')
+}
+
+/** 把一条附件块渲染成模型可读的 XML 片段 */
+function attachmentOf(block: Extract<SessionBlock, { type: 'attachment' }>): string {
+  if (block.kind === 'selection') {
+    const startLine = block.startLine ?? 1
+    const endLine = block.endLine ?? startLine
+    return `<attachment path="${block.path}" type="selection" lines="${startLine}-${endLine}">\n${block.text ?? ''}\n</attachment>`
+  }
+  return `<attachment path="${block.path}" type="${block.kind}" />`
+}
+
+/** 取出用户附加的上下文（供气泡展示）；同一附件只保留一份 */
+export function attachmentsOf(blocks: readonly SessionBlock[]): AiAttachmentView[] {
+  const attachments: AiAttachmentView[] = []
+  const seen = new Set<string>()
+  for (const block of blocks) {
+    if (block.type !== 'attachment') {
+      continue
+    }
+    const view: AiAttachmentView = {
+      path: block.path,
+      kind: block.kind,
+      ...(block.kind === 'selection'
+        ? { startLine: block.startLine ?? 1, endLine: block.endLine ?? block.startLine ?? 1 }
+        : {})
+    }
+    const key = attachmentKey(view)
+    if (!seen.has(key)) {
+      seen.add(key)
+      attachments.push(view)
+    }
+  }
+  return attachments
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import type { AiAttachment } from '@shared/ai/types'
 import AiComposer from '../AiComposer'
 import AiMessageList from '../AiMessageList'
 import { useAiChat } from '../../hooks/useAiChat'
@@ -16,27 +17,41 @@ export default function AiChatPanel({
   disabled,
   emptyHint,
   onUserSend,
-  onCreateSession
+  onCreateSession,
+  attachments,
+  onRemoveAttachment,
+  onAttachmentsSent,
+  onOpenFile
 }: AiChatPanelProps): React.JSX.Element {
   const { messages, running, error, usage, send } = useAiChat(sessionId, cwd)
 
   const handleSend = useCallback(
-    (text: string, modelConfigId: number): void => {
+    (text: string, modelConfigId: number, attachments: readonly AiAttachment[]): void => {
       onUserSend(text)
-      send(text, modelConfigId)
+      send(text, modelConfigId, attachments)
+      onAttachmentsSent()
     },
-    [onUserSend, send]
+    [onAttachmentsSent, onUserSend, send]
   )
 
   return (
     <>
-      <AiMessageList messages={messages} running={running} error={error} emptyHint={emptyHint} />
+      <AiMessageList
+        messages={messages}
+        running={running}
+        error={error}
+        emptyHint={emptyHint}
+        onOpenFile={onOpenFile}
+      />
       <AiComposer
         disabled={disabled}
         running={running}
         usage={usage}
         canCreateSession={cwd !== null}
         onCreateSession={onCreateSession}
+        attachments={attachments}
+        onRemoveAttachment={onRemoveAttachment}
+        onOpenFile={onOpenFile}
         onSend={handleSend}
       />
     </>

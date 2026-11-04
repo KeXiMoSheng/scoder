@@ -14,6 +14,8 @@ export interface EditorTabsProps {
   onCloseOthers: (path: string) => void
   onCloseToRight: (path: string) => void
   onCloseAll: () => void
+  /** 把标签对应的文件作为附件发送给 AI（添加到右侧输入区） */
+  onSendToAi: (path: string) => void
 }
 
 /** 标签右键菜单状态：显示坐标（视口坐标系）与目标文件路径 */

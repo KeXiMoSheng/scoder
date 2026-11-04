@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { attachmentKey } from '@shared/ai/attachments'
+import type { AiAttachment } from '@shared/ai/types'
 import type { RecentProject } from '@shared/workspace/types'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
 import type { CodeEditorHandle } from './components/CodeEditor/types'
 import EditorTabs from './components/EditorTabs'
 import FileTree from './components/FileTree'
-import type { FileNode } from './components/FileTree/types'
 import ResizeHandle from './components/ResizeHandle'
 import SettingsPage from './components/SettingsPage'
 import TerminalPanel from './components/TerminalPanel'
@@ -14,7 +15,7 @@ import TitleBar from './components/TitleBar'
 import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
-import { isAtOrUnder, joinPath } from './lib/filePath'
+import { basename, isAbsolutePath, isAtOrUnder, joinPath } from './lib/filePath'
 import { cn } from './lib/utils'
 
 /** 左侧文件树面板宽度（px） */
@@ -77,6 +78,8 @@ function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 文件树刷新信号：AI 写工具落盘后递增，文件树据此重读已加载目录
   const [fsRefreshToken, setFsRefreshToken] = useState(0)
+  // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
+  const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
   const { themeId, setThemeId } = useTheme()
 
@@ -147,6 +150,8 @@ function App(): React.JSX.Element {
       setProjectPath(dirPath)
       closeAll()
       setDirtyPaths(new Set())
+      // 附件属于上一个项目，切换项目后不再继续待发送
+      setAiAttachments([])
       // 打开新目录时确保文件树可见（之前可能被拖拽收起）
       setSidebarVisible(true)
       void window.api.recordProjectOpened(dirPath).then(refreshRecent)
@@ -166,6 +171,7 @@ function App(): React.JSX.Element {
     setProjectPath(null)
     closeAll()
     setDirtyPaths(new Set())
+    setAiAttachments([])
     void window.api.clearRestoreProject()
   }, [closeAll])
 
@@ -179,12 +185,73 @@ function App(): React.JSX.Element {
     refreshRecent()
   }, [refreshRecent])
 
-  const handleSelectFile = useCallback(
-    (file: FileNode): void => {
-      open({ path: file.path, name: file.name })
+  /**
+   * 打开文件页签的统一入口：文件树与 AI 附件共用。
+   * 附件历史里是相对工作区根的路径，这里统一补全为绝对路径；已打开时只激活。
+   */
+  const openFileByPath = useCallback(
+    (path: string): void => {
+      let absolute = path
+      if (!isAbsolutePath(path)) {
+        if (projectPath === null) {
+          return
+        }
+        const separator = projectPath.includes('\\') ? '\\' : '/'
+        absolute = joinPath(projectPath, path.split('/').join(separator))
+      }
+      open({ path: absolute, name: basename(absolute) })
     },
-    [open]
+    [open, projectPath]
   )
+
+  /** 把一个上下文加入待发送附件：去重，并确保右侧边栏与会话已就绪 */
+  const attachToAi = useCallback(
+    (attachment: AiAttachment): void => {
+      const target = attachmentKey(attachment)
+      setAiAttachments((prev) => {
+        const index = prev.findIndex((item) => attachmentKey(item) === target)
+        if (index === -1) {
+          return [...prev, attachment]
+        }
+        // 同范围再次添加时用最新选中内容覆盖旧值（文件可能已被编辑）
+        const next = [...prev]
+        next[index] = attachment
+        return next
+      })
+      setAiPanelVisible(true)
+      ensureAiSession()
+    },
+    [ensureAiSession]
+  )
+
+  /** 文件树：文件/目录都只带路径与类型，目录不读取内容 */
+  const handleAttachPathToAi = useCallback(
+    (path: string, isDirectory: boolean): void => {
+      attachToAi({ path, kind: isDirectory ? 'directory' : 'file' })
+    },
+    [attachToAi]
+  )
+
+  /** 编辑器标签：始终是文件 */
+  const handleAttachTabToAi = useCallback(
+    (path: string): void => {
+      attachToAi({ path, kind: 'file' })
+    },
+    [attachToAi]
+  )
+
+  const handleRemoveAiAttachment = useCallback((attachment: AiAttachment): void => {
+    const target = attachmentKey(attachment)
+    setAiAttachments((prev) =>
+      prev.some((item) => attachmentKey(item) === target)
+        ? prev.filter((item) => attachmentKey(item) !== target)
+        : prev
+    )
+  }, [])
+
+  const clearAiAttachments = useCallback((): void => {
+    setAiAttachments([])
+  }, [])
 
   /** 编辑器脏状态变化：维护全应用共享的未保存文件集合（文件树圆点等依赖它） */
   const handleDirtyChange = useCallback((path: string, dirty: boolean): void => {
@@ -231,20 +298,40 @@ function App(): React.JSX.Element {
     await editorRef.current?.saveDirtyUnder(path)
   }, [])
 
-  /** 条目重命名/移动后：丢弃旧路径的模型缓存，并同步所有受影响标签的路径 */
+  /** 条目重命名/移动后：丢弃旧路径的模型缓存，同步受影响标签与待发送附件 */
   const handleEntryMoved = useCallback(
     (oldPath: string, newPath: string): void => {
       editorRef.current?.dropCachedUnder(oldPath)
       remap(oldPath, newPath)
+      setAiAttachments((prev) => {
+        let changed = false
+        const next = prev.map((attachment) => {
+          if (attachment.path === oldPath) {
+            changed = true
+            return { ...attachment, path: newPath }
+          }
+          if (isAtOrUnder(attachment.path, oldPath)) {
+            changed = true
+            return { ...attachment, path: newPath + attachment.path.slice(oldPath.length) }
+          }
+          return attachment
+        })
+        return changed ? next : prev
+      })
     },
     [remap]
   )
 
-  /** 条目删除后：丢弃编辑器模型缓存，关闭其子树下所有标签，清除其子树下的脏标记 */
+  /** 条目删除后：丢弃编辑器模型缓存，关闭其子树下所有标签，清除其子树下的脏标记与待发送附件 */
   const handleEntryDeleted = useCallback(
     (path: string): void => {
       editorRef.current?.dropCachedUnder(path)
       closeUnder(path)
+      setAiAttachments((prev) =>
+        prev.some((attachment) => isAtOrUnder(attachment.path, path))
+          ? prev.filter((attachment) => !isAtOrUnder(attachment.path, path))
+          : prev
+      )
       setDirtyPaths((prev) => {
         let removed = false
         const next = new Set<string>()
@@ -450,10 +537,11 @@ function App(): React.JSX.Element {
                 selectedPath={activePath}
                 dirtyPaths={dirtyPaths}
                 refreshToken={fsRefreshToken}
-                onSelectFile={handleSelectFile}
+                onSelectFile={openFileByPath}
                 onBeforeEntryMove={handleBeforeEntryMove}
                 onEntryMoved={handleEntryMoved}
                 onEntryDeleted={handleEntryDeleted}
+                onSendToAi={handleAttachPathToAi}
               />
             ) : (
               <p className="mx-3 my-4 leading-[1.6] text-dim">
@@ -480,9 +568,15 @@ function App(): React.JSX.Element {
                   onCloseOthers={closeOthers}
                   onCloseToRight={closeToRight}
                   onCloseAll={closeAll}
+                  onSendToAi={handleAttachTabToAi}
                 />
               ) : null}
-              <CodeEditor ref={editorRef} file={activeFile} onDirtyChange={handleDirtyChange} />
+              <CodeEditor
+                ref={editorRef}
+                file={activeFile}
+                onDirtyChange={handleDirtyChange}
+                onSendSelectionToAi={attachToAi}
+              />
             </div>
             <ResizeHandle
               label={terminalVisible ? '调整命令行面板高度' : '向上拖拽展开命令行面板'}
@@ -508,7 +602,15 @@ function App(): React.JSX.Element {
             onResize={handleAiPanelResize}
           />
           {aiPanelVisible ? (
-            <AiSidebar width={aiPanelWidth} sessions={aiSessions} cwd={projectPath} />
+            <AiSidebar
+              width={aiPanelWidth}
+              sessions={aiSessions}
+              cwd={projectPath}
+              attachments={aiAttachments}
+              onRemoveAttachment={handleRemoveAiAttachment}
+              onAttachmentsSent={clearAiAttachments}
+              onOpenFile={openFileByPath}
+            />
           ) : null}
         </div>
         {settingsOpen ? (

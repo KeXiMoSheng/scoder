@@ -5,7 +5,12 @@
  * 没有格式代际迁移、没有 surface 替换操作、没有流式 chunk 时间线。
  * 日志是唯一真相，发给模型的 ChatMessage 由重放得到（见 store.ts）。
  */
-import type { AiTokenUsage, AiTurnEndReason, ToolCardView } from '../../../shared/ai/types'
+import type {
+  AiAttachmentKind,
+  AiTokenUsage,
+  AiTurnEndReason,
+  ToolCardView
+} from '../../../shared/ai/types'
 
 /**
  * 当前日志格式版本。
@@ -25,11 +30,27 @@ export interface SessionLogHeader {
 
 /**
  * 消息内容块。
- * P0 只有文本与工具调用；后续加推理过程或图片时在这里扩一个分支即可，
+ * P0 只有文本、用户附加文件与工具调用；后续加推理过程或图片时在这里扩一个分支即可，
  * 不用改日志外层结构。
  */
 export type SessionBlock =
   | { type: 'text'; text: string }
+  /**
+   * 用户附加的上下文：file/directory 只记录路径与类型，selection 额外记录选中行内容。
+   * 展示层只渲染类型与路径（见 view.ts），重放时会展开给模型。
+   */
+  | {
+      type: 'attachment'
+      /** 相对工作区根的展示路径 */
+      path: string
+      kind: AiAttachmentKind
+      /** kind 为 selection 时的起始行（1 起） */
+      startLine?: number
+      /** kind 为 selection 时的结束行（1 起，含） */
+      endLine?: number
+      /** kind 为 selection 时的选中文本 */
+      text?: string
+    }
   | { type: 'tool-call'; id: string; name: string; arguments: string }
 
 /** 落盘的轮次结束原因：比 UI 的 turn-end 多一个「进程崩溃后补记」 */

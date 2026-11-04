@@ -14,7 +14,15 @@ import type { AiSidebarProps } from './types'
  * 会话列表由 App 持有，面板隐藏再打开时标签与历史记录保持不丢；
  * 对话区按会话 id 重建，切换标签即重新载入对应会话的磁盘历史。
  */
-export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): React.JSX.Element {
+export default function AiSidebar({
+  width,
+  sessions,
+  cwd,
+  attachments,
+  onRemoveAttachment,
+  onAttachmentsSent,
+  onOpenFile
+}: AiSidebarProps): React.JSX.Element {
   const {
     sessions: list,
     history,
@@ -138,6 +146,10 @@ export default function AiSidebar({ width, sessions, cwd }: AiSidebarProps): Rea
         }
         onUserSend={handleUserSend}
         onCreateSession={handleCreate}
+        attachments={attachments}
+        onRemoveAttachment={onRemoveAttachment}
+        onAttachmentsSent={onAttachmentsSent}
+        onOpenFile={onOpenFile}
       />
       {renamingSession ? (
         <PromptDialog

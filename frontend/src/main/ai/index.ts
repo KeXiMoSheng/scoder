@@ -40,6 +40,9 @@ const observations = new ObservationStore()
 /** 正在执行的会话 → 中止控制器 */
 const running = new Map<string, AbortController>()
 
+/** 单轮请求允许附加的文件数量上限：防止渲染进程一次塞入过多内容 */
+const MAX_ATTACHMENTS = 20
+
 /**
  * 注册 AI 相关的 IPC 通道。
  * 需要在数据库初始化之后调用：模型配置（含 API Key）由主进程读库，
@@ -197,6 +200,38 @@ function validateRequest(request: AiSendRequest): void {
   }
   if (typeof request.modelConfigId !== 'number' || !Number.isInteger(request.modelConfigId)) {
     throw new Error('modelConfigId 无效')
+  }
+  if (request.attachments !== undefined) {
+    if (!Array.isArray(request.attachments) || request.attachments.length > MAX_ATTACHMENTS) {
+      throw new Error(`附件数量不能超过 ${MAX_ATTACHMENTS} 个`)
+    }
+    for (const candidate of request.attachments as unknown[]) {
+      if (typeof candidate !== 'object' || candidate === null) {
+        throw new Error('附件参数无效')
+      }
+      const { path, kind, startLine, endLine, text } = candidate as Record<string, unknown>
+      if (typeof path !== 'string' || !isAbsolute(path)) {
+        throw new Error('附件路径必须是绝对路径')
+      }
+      if (kind !== 'file' && kind !== 'directory' && kind !== 'selection') {
+        throw new Error('附件类型无效')
+      }
+      if (kind === 'selection') {
+        if (typeof text !== 'string') {
+          throw new Error('选中行内容无效')
+        }
+        if (
+          typeof startLine !== 'number' ||
+          !Number.isInteger(startLine) ||
+          typeof endLine !== 'number' ||
+          !Number.isInteger(endLine) ||
+          startLine < 1 ||
+          endLine < startLine
+        ) {
+          throw new Error('选中行范围无效')
+        }
+      }
+    }
   }
 }
 

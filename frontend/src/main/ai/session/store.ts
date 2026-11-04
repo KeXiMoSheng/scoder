@@ -28,7 +28,7 @@ import {
   type SessionEventInput,
   type SessionLogContent
 } from './types'
-import { textOf } from './view'
+import { modelTextOf, textOf } from './view'
 
 /** 新建会话的默认标题（首轮由模型润色，用户也可手动改名） */
 export const DEFAULT_TITLE = '新会话'
@@ -359,7 +359,7 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
   for (const event of events) {
     switch (event.type) {
       case 'user/message': {
-        messages.push({ role: 'user', content: textOf(event.data.content) })
+        messages.push({ role: 'user', content: modelTextOf(event.data.content) })
         break
       }
       case 'assistant/message': {

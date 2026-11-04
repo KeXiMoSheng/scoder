@@ -1,4 +1,5 @@
 /** AiChatPanel 组件的对外类型定义 */
+import type { AiAttachment } from '@shared/ai/types'
 
 export interface AiChatPanelProps {
   /** 当前会话 id；null 表示没有可用会话 */
@@ -13,4 +14,12 @@ export interface AiChatPanelProps {
   onUserSend: (text: string) => void
   /** 输入区用量面板里的「新建会话」 */
   onCreateSession: () => void
+  /** 已附加、等待随下一条消息发送的上下文 */
+  attachments: readonly AiAttachment[]
+  /** 移除一个已附加的上下文 */
+  onRemoveAttachment: (attachment: AiAttachment) => void
+  /** 消息发出后清空已附加内容 */
+  onAttachmentsSent: () => void
+  /** 点击附件打开对应文件 */
+  onOpenFile: (path: string) => void
 }
