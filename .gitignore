@@ -24,3 +24,6 @@ coverage/
 # 系统与编辑器
 .DS_Store
 Thumbs.db
+
+# 本地参考资料仓库（内嵌 git 仓库，仅供本地借鉴，不入库）
+deepseek-harness/
