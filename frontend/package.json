@@ -2,7 +2,7 @@
   "name": "scoder-frontend",
   "productName": "scoder",
   "desktopName": "scoder",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "scoder Desktop",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@vscode/ripgrep": "^1.18.0",
     "better-sqlite3": "^13.0.3",
     "diff": "^9.0.0",
     "node-pty": "^1.1.0"

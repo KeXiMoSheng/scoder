@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -35,6 +36,51 @@ const env = {
   ...process.env,
   PATH: `${path.join(rootDir, 'node_modules', '.bin')}${path.delimiter}${process.env.PATH}`
 }
+
+/**
+ * 交叉打包时补上目标平台的 ripgrep 二进制。
+ * @vscode/ripgrep 只会安装构建机平台对应的可选依赖，从 Linux 打 Windows 包时
+ * node_modules 里只有 rg，没有 rg.exe，装出来的应用会搜不了文件。
+ * @param target 目标平台（win | linux | mac）
+ */
+function ensureRipgrepBinary(target) {
+  const platformName = target === 'win' ? 'win32' : target === 'mac' ? 'darwin' : 'linux'
+  const binary = platformName === 'win32' ? 'rg.exe' : 'rg'
+  const packageName = `@vscode/ripgrep-${platformName}-${process.arch}`
+  const packageFallback = path.join(
+    rootDir,
+    'node_modules',
+    '@vscode',
+    `ripgrep-${platformName}-${process.arch}`
+  )
+  if (existsSync(path.join(packageFallback, 'bin', binary))) {
+    return
+  }
+  const ripgrepVersion = JSON.parse(
+    readFileSync(path.join(rootDir, 'node_modules', '@vscode', 'ripgrep', 'package.json'), 'utf8')
+  ).version
+  console.log(`[dist] 补装 ${packageName}@${ripgrepVersion}（目标平台二进制）`)
+  // 隔离到临时目录安装再拷回来：直接 --os 装到工程目录会把宿主平台的可选依赖顶掉
+  const staging = mkdtempSync(path.join(tmpdir(), 'scoder-rg-'))
+  try {
+    execSync(
+      `npm install --prefix "${staging}" --no-save --force --no-audit --no-fund ` +
+        `--os=${platformName} --cpu=${process.arch} ${packageName}@${ripgrepVersion}`,
+      { cwd: rootDir, stdio: 'inherit', env }
+    )
+    cpSync(
+      path.join(staging, 'node_modules', '@vscode', path.basename(packageFallback)),
+      packageFallback,
+      {
+        recursive: true
+      }
+    )
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+}
+
+ensureRipgrepBinary(platform)
 execSync(`electron-builder --${platform} -c.extraMetadata.version=${version}`, {
   cwd: rootDir,
   stdio: 'inherit',

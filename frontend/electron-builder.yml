@@ -15,6 +15,8 @@ asarUnpack:
   - node_modules/node-pty/**
   # better-sqlite3 的 .node 二进制同样需要解包后由主进程加载
   - node_modules/better-sqlite3/**
+  # ripgrep 二进制无法从 asar 内执行：包装包与对应平台包都要解包
+  - node_modules/@vscode/ripgrep*/**
 win:
   executableName: scoder
 nsis:
