@@ -4,13 +4,15 @@ import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/set
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
 import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
-import type { RecentProject } from '../../shared/workspace/types'
+import type { EditorTabsSnapshot, RecentProject } from '../../shared/workspace/types'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
 import {
   clearRestoreProject,
   getLastProjectPath,
+  getOpenTabs,
   listRecentProjects,
-  recordProjectOpened
+  recordProjectOpened,
+  saveOpenTabs
 } from './workspace-projects'
 import {
   createModelConfig,
@@ -63,9 +65,21 @@ function registerWorkspaceHandlers(): void {
     recordProjectOpened(path)
   })
 
-  ipcMain.handle(WORKSPACE_CHANNELS.clearRestore, (): void => {
-    clearRestoreProject()
+  ipcMain.handle(WORKSPACE_CHANNELS.clearRestore, (_event, path: string): void => {
+    clearRestoreProject(path)
   })
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.saveOpenTabs,
+    (_event, path: string, snapshot: EditorTabsSnapshot): void => {
+      saveOpenTabs(path, snapshot)
+    }
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.getOpenTabs,
+    (_event, path: string): EditorTabsSnapshot | null => getOpenTabs(path)
+  )
 
   ipcMain.handle(WORKSPACE_CHANNELS.getLastProject, async (): Promise<string | null> => {
     const path = getLastProjectPath()

@@ -8,7 +8,7 @@ import type { AiRuntimeSettings } from './ai/settings'
 import type { FileEntry, SearchResult } from './files/types'
 import type { ModelConfig, ModelConfigInput } from './model-config/types'
 import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
-import type { RecentProject } from './workspace/types'
+import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
 
 /** 经 preload contextBridge 暴露给渲染进程的能力（白名单方法） */
 export interface ScoderAPI {
@@ -66,10 +66,14 @@ export interface ScoderAPI {
   listRecentProjects: () => Promise<RecentProject[]>
   /** 记录一个刚打开的项目：更新 MRU 并作为下次启动的默认打开项 */
   recordProjectOpened: (path: string) => Promise<void>
-  /** 手动关闭文件夹：清除启动恢复项（MRU 历史保留） */
-  clearRestoreProject: () => Promise<void>
+  /** 手动关闭文件夹：清除该项目启动恢复项与页签快照（MRU 历史保留） */
+  clearRestoreProject: (path: string) => Promise<void>
   /** 上次未手动关闭的项目路径（目录已不存在时返回 null），供启动自动打开 */
   getLastProject: () => Promise<string | null>
+  /** 保存某项目当前未关闭的编辑器页签快照（供重启恢复） */
+  saveOpenTabs: (path: string, snapshot: EditorTabsSnapshot) => Promise<void>
+  /** 读取某项目上次未手动关闭的编辑器页签快照（无记录时返回 null） */
+  getOpenTabs: (path: string) => Promise<EditorTabsSnapshot | null>
   /** AI 助手通道：会话、流式事件与中止 */
   ai: AiAPI
 }

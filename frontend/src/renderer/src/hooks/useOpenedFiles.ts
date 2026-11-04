@@ -36,6 +36,8 @@ export interface OpenedFilesApi {
   remap: (oldPath: string, newPath: string) => void
   /** 关闭指定路径及其子路径下的标签（条目被删除后调用） */
   closeUnder: (path: string) => void
+  /** 启动恢复：用快照重建标签列表与激活项（激活项不在列表时回退首个标签） */
+  restore: (files: OpenedFile[], activePath: string | null) => void
 }
 
 /**
@@ -146,6 +148,16 @@ export function useOpenedFiles(): OpenedFilesApi {
     setState((prev) => removeMatching(prev, (file) => isAtOrUnder(file.path, path)))
   }, [])
 
+  const restore = useCallback((files: OpenedFile[], activePath: string | null): void => {
+    setState(() => {
+      if (files.length === 0) {
+        return { files: [], activePath: null }
+      }
+      const nextActive = files.some((file) => file.path === activePath) ? activePath : files[0].path
+      return { files, activePath: nextActive }
+    })
+  }, [])
+
   return {
     files: state.files,
     activePath: state.activePath,
@@ -157,6 +169,7 @@ export function useOpenedFiles(): OpenedFilesApi {
     closeToRight,
     closeAll,
     remap,
-    closeUnder
+    closeUnder,
+    restore
   }
 }

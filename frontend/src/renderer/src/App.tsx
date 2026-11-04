@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachment } from '@shared/ai/types'
-import type { RecentProject } from '@shared/workspace/types'
+import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
 import type { CodeEditorHandle } from './components/CodeEditor/types'
@@ -59,7 +59,8 @@ function App(): React.JSX.Element {
     closeToRight,
     closeAll,
     remap,
-    closeUnder
+    closeUnder,
+    restore
   } = useOpenedFiles()
   // AI 会话状态（新建/切换/重命名/关闭）：放在 App 里，侧边栏隐藏再打开时不丢会话
   const aiSessions = useAiSessions(projectPath)
@@ -94,6 +95,9 @@ function App(): React.JSX.Element {
   const terminalPanelRef = useRef<TerminalPanelHandle | null>(null)
   // 拖拽开始时的面板尺寸（宽度或高度，任一时刻只会有一个分隔条处于拖拽中）
   const dragStartSizeRef = useRef(0)
+  // 已完成页签装载（恢复或手动打开）的项目路径：只有它等于当前项目时才允许回写页签快照，
+  // 避免启动恢复完成前用空标签列表把上次快照覆盖掉
+  const tabsHydratedProjectRef = useRef<string | null>(null)
 
   /** 工作区可用宽度（拖拽与窗口变化时用于约束面板上限） */
   const getWorkspaceWidth = useCallback((): number => {
@@ -156,6 +160,9 @@ function App(): React.JSX.Element {
       setAiAttachments([])
       // 打开新目录时确保文件树可见（之前可能被拖拽收起）
       setSidebarVisible(true)
+      // 手动打开视为全新开始：立即标记已装载，随后的空标签列表会清掉该项目旧快照，
+      // 后续新开的标签再回写（重启时才走自动恢复）
+      tabsHydratedProjectRef.current = dirPath
       void window.api.recordProjectOpened(dirPath).then(refreshRecent)
     },
     [closeAll, refreshRecent]
@@ -170,22 +177,55 @@ function App(): React.JSX.Element {
 
   /** 关闭当前文件夹：清空项目路径、标签页与脏标记，回到未打开状态；同时取消下次启动的自动打开 */
   const handleCloseProject = useCallback((): void => {
+    // 手动关闭：清除该项目下次启动的恢复项与页签快照（MRU 历史保留）
+    if (projectPath !== null) {
+      void window.api.clearRestoreProject(projectPath)
+      tabsHydratedProjectRef.current = null
+    }
     setProjectPath(null)
     closeAll()
     setDirtyPaths(new Set())
     setAiAttachments([])
-    void window.api.clearRestoreProject()
-  }, [closeAll])
+  }, [closeAll, projectPath])
 
-  // 应用启动：读取上次未手动关闭的目录并自动打开，同时加载最近项目列表
+  // 应用启动：读取上次未手动关闭的目录并自动打开，恢复其未关闭的编辑器页签，同时加载最近项目列表
   useEffect(() => {
-    void window.api.getLastProject().then((last) => {
-      if (last) {
-        setProjectPath(last)
+    let cancelled = false
+    void (async (): Promise<void> => {
+      const last = await window.api.getLastProject()
+      if (cancelled || last === null) {
+        return
       }
-    })
+      setProjectPath(last)
+      const snapshot = await window.api.getOpenTabs(last)
+      if (cancelled) {
+        return
+      }
+      if (snapshot && snapshot.files.length > 0) {
+        restore(snapshot.files, snapshot.activePath)
+      }
+      // 恢复到位后再放行回写，避免用空标签列表覆盖刚读到的快照
+      tabsHydratedProjectRef.current = last
+    })()
     refreshRecent()
-  }, [refreshRecent])
+    return (): void => {
+      cancelled = true
+    }
+  }, [refreshRecent, restore])
+
+  // 标签或激活项变化后防抖回写当前项目的页签快照，供下次启动恢复未手动关闭的标签
+  useEffect(() => {
+    if (projectPath === null || tabsHydratedProjectRef.current !== projectPath) {
+      return
+    }
+    const snapshot: EditorTabsSnapshot = { files, activePath }
+    const timer = setTimeout((): void => {
+      void window.api.saveOpenTabs(projectPath, snapshot)
+    }, 400)
+    return (): void => {
+      clearTimeout(timer)
+    }
+  }, [files, activePath, projectPath])
 
   /**
    * 打开文件页签的统一入口：文件树与 AI 附件共用。

@@ -10,5 +10,9 @@ export const WORKSPACE_CHANNELS = {
   /** 手动关闭文件夹：清除待恢复路径（MRU 历史保留） */
   clearRestore: 'workspace:clearRestore',
   /** 读取上次未手动关闭的项目路径（目录已不存在时返回 null），供启动自动打开 */
-  getLastProject: 'workspace:getLastProject'
+  getLastProject: 'workspace:getLastProject',
+  /** 保存某项目当前未关闭的编辑器页签快照（防抖写入，供重启恢复） */
+  saveOpenTabs: 'workspace:saveOpenTabs',
+  /** 读取某项目上次未手动关闭的编辑器页签快照（无记录时返回 null） */
+  getOpenTabs: 'workspace:getOpenTabs'
 } as const
