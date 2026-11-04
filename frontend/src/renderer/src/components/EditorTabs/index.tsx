@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
+import { isAtOrUnder, relativePathNative } from '../../lib/filePath'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
@@ -15,6 +16,8 @@ export default function EditorTabs({
   onCloseOthers,
   onCloseToRight,
   onCloseAll,
+  projectPath,
+  onReveal,
   onSendToAi
 }: EditorTabsProps): React.JSX.Element {
   const [menu, setMenu] = useState<TabMenuState | null>(null)
@@ -24,28 +27,47 @@ export default function EditorTabs({
 
   /**
    * 构建标签右键菜单条目（数据驱动）。
-   * 发送给 AI 与关闭系列操作以分隔线分组；以 null 作为分隔线。
+   * 定位/发送给 AI、复制路径与关闭系列操作各成一组，以 null 作为分隔线。
    */
-  const buildMenuEntries = (index: number, path: string): ContextMenuEntry[] => [
-    { id: 'send-to-ai', label: '发送给 AI', onSelect: () => onSendToAi(path) },
-    null,
-    { id: 'close', label: '关闭', onSelect: () => onClose(path) },
-    {
-      id: 'close-others',
-      label: '关闭其它',
-      disabled: files.length <= 1,
-      disabledReason: '没有其它已打开的文件',
-      onSelect: () => onCloseOthers(path)
-    },
-    {
-      id: 'close-right',
-      label: '关闭右侧',
-      disabled: index === files.length - 1,
-      disabledReason: '右侧没有已打开的文件',
-      onSelect: () => onCloseToRight(path)
-    },
-    { id: 'close-all', label: '关闭全部', onSelect: onCloseAll }
-  ]
+  const buildMenuEntries = (index: number, path: string): ContextMenuEntry[] => {
+    // 相对路径需归属于当前项目才能计算
+    const canCopyRelative = projectPath !== null && isAtOrUnder(path, projectPath)
+    return [
+      { id: 'reveal', label: '在资源管理器视图中显示', onSelect: () => onReveal(path) },
+      { id: 'send-to-ai', label: '发送给 AI', onSelect: () => onSendToAi(path) },
+      null,
+      {
+        id: 'copy-path',
+        label: '复制路径',
+        onSelect: () => void navigator.clipboard.writeText(path)
+      },
+      {
+        id: 'copy-relative-path',
+        label: '复制相对路径',
+        disabled: !canCopyRelative,
+        disabledReason: projectPath === null ? '未打开文件夹' : '文件不在当前项目内',
+        onSelect: () =>
+          void navigator.clipboard.writeText(relativePathNative(path, projectPath ?? path))
+      },
+      null,
+      { id: 'close', label: '关闭', onSelect: () => onClose(path) },
+      {
+        id: 'close-others',
+        label: '关闭其它',
+        disabled: files.length <= 1,
+        disabledReason: '没有其它已打开的文件',
+        onSelect: () => onCloseOthers(path)
+      },
+      {
+        id: 'close-right',
+        label: '关闭右侧',
+        disabled: index === files.length - 1,
+        disabledReason: '右侧没有已打开的文件',
+        onSelect: () => onCloseToRight(path)
+      },
+      { id: 'close-all', label: '关闭全部', onSelect: onCloseAll }
+    ]
+  }
 
   return (
     <div

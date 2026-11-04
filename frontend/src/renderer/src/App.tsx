@@ -78,6 +78,8 @@ function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 文件树刷新信号：AI 写工具落盘后递增，文件树据此重读已加载目录
   const [fsRefreshToken, setFsRefreshToken] = useState(0)
+  // 编辑器标签请求在文件树中定位的目标（路径 + 递增信号）：递增 nonce 保证同一路径重复请求也能触发
+  const [revealRequest, setRevealRequest] = useState<{ path: string; nonce: number } | null>(null)
   // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
@@ -348,6 +350,17 @@ function App(): React.JSX.Element {
     [closeUnder]
   )
 
+  /** 编辑器标签：在资源管理器视图中显示 —— 确保文件树可见、激活对应标签并下发定位请求 */
+  const handleRevealInTree = useCallback(
+    (path: string): void => {
+      setSidebarVisible(true)
+      // 文件树的选中态受控于当前激活文件：先激活对应标签，展开定位时目标行才会高亮选中
+      activate(path)
+      setRevealRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
+    },
+    [activate]
+  )
+
   const handleSidebarResizeStart = useCallback((): void => {
     // 收起状态下从 0 开始计算，向右拖拽即重新展开
     dragStartSizeRef.current = sidebarVisible ? sidebarWidth : 0
@@ -537,6 +550,7 @@ function App(): React.JSX.Element {
                 selectedPath={activePath}
                 dirtyPaths={dirtyPaths}
                 refreshToken={fsRefreshToken}
+                revealRequest={revealRequest}
                 onSelectFile={openFileByPath}
                 onBeforeEntryMove={handleBeforeEntryMove}
                 onEntryMoved={handleEntryMoved}
@@ -568,6 +582,8 @@ function App(): React.JSX.Element {
                   onCloseOthers={closeOthers}
                   onCloseToRight={closeToRight}
                   onCloseAll={closeAll}
+                  projectPath={projectPath}
+                  onReveal={handleRevealInTree}
                   onSendToAi={handleAttachTabToAi}
                 />
               ) : null}

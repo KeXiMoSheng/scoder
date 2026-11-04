@@ -63,3 +63,14 @@ export function relativePath(path: string, base: string): string {
   }
   return path.slice(prefix.length).split(pathSeparator(path)).join('/')
 }
+
+/**
+ * 把绝对路径转成相对 base 的路径，保留路径自身的分隔符风格（复制到剪贴板用）。
+ * 主进程以 path.join 生成路径，Windows 下即为反斜杠，这里不改成 `/`，
+ * 保证复制到系统里的路径与当前操作系统的路径分隔符一致。不在 base 之下时原样返回。
+ */
+export function relativePathNative(path: string, base: string): string {
+  const separator = pathSeparator(base)
+  const prefix = base.endsWith(separator) ? base : base + separator
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path
+}

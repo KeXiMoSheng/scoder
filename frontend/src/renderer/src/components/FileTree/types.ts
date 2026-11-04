@@ -27,6 +27,11 @@ export interface FileTreeProps {
   onEntryDeleted: (path: string) => void
   /** 把文件或目录作为上下文发送给 AI（添加到右侧输入区）；目录只提供路径与类型 */
   onSendToAi: (path: string, isDirectory: boolean) => void
+  /**
+   * 外部（编辑器标签）请求在文件树中定位某文件：路径 + 递增信号。
+   * 每次 nonce 变化触发一次定位，同一路径重复请求也能生效。
+   */
+  revealRequest?: { path: string; nonce: number } | null
 }
 
 /** react-arborist 处理器为函数类型，取参数对象类型便于解构 */

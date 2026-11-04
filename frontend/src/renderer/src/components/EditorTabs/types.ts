@@ -14,6 +14,10 @@ export interface EditorTabsProps {
   onCloseOthers: (path: string) => void
   onCloseToRight: (path: string) => void
   onCloseAll: () => void
+  /** 当前项目根目录绝对路径（计算相对路径用）；未打开项目时为 null */
+  projectPath: string | null
+  /** 在文件树（资源管理器视图）中定位并高亮该文件 */
+  onReveal: (path: string) => void
   /** 把标签对应的文件作为附件发送给 AI（添加到右侧输入区） */
   onSendToAi: (path: string) => void
 }

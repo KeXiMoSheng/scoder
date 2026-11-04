@@ -4,7 +4,15 @@ import { ChevronRight, ChevronsDownUp, FilePlus, Folder, FolderPlus, RotateCw } 
 import type { FileEntry } from '@shared/files/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
 import { extractErrorMessage } from '../../lib/errorMessage'
-import { basename, dirname, isAtOrUnder, joinPath, pathSeparator } from '../../lib/filePath'
+import {
+  basename,
+  dirname,
+  isAtOrUnder,
+  joinPath,
+  pathSeparator,
+  relativePath,
+  relativePathNative
+} from '../../lib/filePath'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
@@ -124,6 +132,23 @@ function buildSearchTree(rootPath: string, entries: FileEntry[]): FileNode[] {
 
   sortFileNodes(rootChildren)
   return rootChildren
+}
+
+/**
+ * 目标路径是否已存在于（全量）树数据中——沿祖先目录已懒加载完成。
+ * 定位就绪判定必须用这个而不是 tree.get：tree.get 只索引可见节点，
+ * 折叠目录下的子节点不在可见列表中会返回 null，导致折叠时永远无法展开定位。
+ */
+function hasNodeAtPath(nodes: FileNode[], path: string): boolean {
+  for (const node of nodes) {
+    if (node.path === path) {
+      return true
+    }
+    if (node.children && node.children.length > 0 && hasNodeAtPath(node.children, path)) {
+      return true
+    }
+  }
+  return false
 }
 
 interface ToolbarButtonProps {
@@ -262,6 +287,7 @@ export default function FileTree({
   selectedPath,
   dirtyPaths,
   refreshToken,
+  revealRequest,
   onSelectFile,
   onBeforeEntryMove,
   onEntryMoved,
@@ -287,6 +313,9 @@ export default function FileTree({
 
   // 右键菜单：坐标 + 目标节点路径
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+
+  // 待定位的目标路径：外部请求先加载其祖先目录，数据就绪后由 effect 展开并选中
+  const [revealPending, setRevealPending] = useState<string | null>(null)
 
   // 名称搜索：查询词非空时，用主进程递归搜索的结果替换树数据，交由 react-arborist 过滤展示
   const [query, setQuery] = useState('')
@@ -353,6 +382,58 @@ export default function FileTree({
     },
     [rootPath]
   )
+
+  // 外部（编辑器标签）请求定位：自顶向下逐级加载目标的祖先目录，确保 react-arborist 数据里存在目标节点。
+  // 依赖 revealRequest.nonce，同一路径重复点击也能重新触发。
+  useEffect(() => {
+    if (!revealRequest) {
+      return
+    }
+    const target = revealRequest.path
+    // 项目外或根目录本身无法在树中定位
+    if (!isAtOrUnder(target, rootPath) || target === rootPath) {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const segments = relativePath(target, rootPath).split('/')
+      let ancestor = rootPath
+      // 只加载目录层（不含目标自身最后一段）；loadChildren 对已加载目录会短路
+      for (let index = 0; index < segments.length - 1; index++) {
+        if (cancelled) {
+          return
+        }
+        ancestor = joinPath(ancestor, segments[index])
+        await loadChildren(ancestor)
+      }
+      if (!cancelled) {
+        setRevealPending(target)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [revealRequest, rootPath, loadChildren])
+
+  // 树数据/尺寸就绪后：展开祖先、滚动并在目标可见后选中。就绪判定用全量 treeData（不能用 tree.get，见 hasNodeAtPath）。
+  useEffect(() => {
+    if (!revealPending || width <= 0 || height <= 0) {
+      return
+    }
+    const tree = treeRef.current
+    if (!tree || !hasNodeAtPath(treeData, revealPending)) {
+      return
+    }
+    const target = revealPending
+    // openParents 基于完整树逐级展开祖先目录（含折叠态）。
+    tree.openParents(target)
+    // 受控 selection 的 effect 只在 selection 属性变化时跑一次，那一刻折叠未展开、目标不可见→选中被丢弃。
+    // scrollTo 内部会等待目标进入可见列表才 resolve，故在其后补一次 select，确保目标行处于选中态。
+    void tree.scrollTo(target, 'center')?.then(() => {
+      treeRef.current?.select(target, { focus: false, align: 'center' })
+    })
+    setRevealPending(null)
+  }, [revealPending, treeData, width, height])
 
   // react-arborist 的 onToggle 在节点开合时都会触发，仅在首次展开时请求子项；
   // 搜索模式下子树已完整，无需懒加载
@@ -688,6 +769,19 @@ export default function FileTree({
         disabled: opDisabled,
         disabledReason: opDisabledReason,
         onSelect: () => void handleMenuDelete(targetPath)
+      },
+      null,
+      {
+        id: 'copy-path',
+        label: '复制路径',
+        onSelect: () => void navigator.clipboard.writeText(targetPath)
+      },
+      {
+        id: 'copy-relative-path',
+        label: '复制相对路径',
+        disabled: isRootTarget,
+        disabledReason: '当前目录没有相对路径',
+        onSelect: () => void navigator.clipboard.writeText(relativePathNative(targetPath, rootPath))
       }
     ]
   }
