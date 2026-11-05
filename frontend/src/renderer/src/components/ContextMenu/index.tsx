@@ -32,7 +32,8 @@ export default function ContextMenu({
     setPosition((prev) => (prev.x === nextX && prev.y === nextY ? prev : { x: nextX, y: nextY }))
   }, [x, y])
 
-  // 关闭交互：点击菜单外部、按 Esc、任意容器滚动（捕获阶段覆盖文件树等内部滚动容器）
+  // 关闭交互：点击菜单外部、按 Esc、任意容器滚动（捕获阶段覆盖文件树等内部滚动 容器）。
+  // 菜单自身内容可滚动（如标签栏「更多」的文件列表），滚动菜单内部不触发关闭。
   useEffect(() => {
     const handleMouseDown = (event: MouseEvent): void => {
       if (!menuRef.current?.contains(event.target as Node)) {
@@ -44,20 +45,26 @@ export default function ContextMenu({
         onClose()
       }
     }
+    const handleScroll = (event: Event): void => {
+      if (menuRef.current?.contains(event.target as Node)) {
+        return
+      }
+      onClose()
+    }
     window.addEventListener('mousedown', handleMouseDown)
     window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('scroll', handleScroll, true)
     return () => {
       window.removeEventListener('mousedown', handleMouseDown)
       window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('scroll', handleScroll, true)
     }
   }, [onClose])
 
   return (
     <div
       ref={menuRef}
-      className="fixed z-[100] min-w-[128px] rounded-md border border-line bg-elevated p-1 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+      className="fixed z-[100] max-h-[calc(100vh-16px)] min-w-[128px] overflow-y-auto rounded-md border border-line bg-elevated p-1 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
       style={{ left: position.x, top: position.y }}
       role="menu"
     >

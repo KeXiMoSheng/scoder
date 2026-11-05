@@ -2,7 +2,7 @@
   "name": "scoder-frontend",
   "productName": "scoder",
   "desktopName": "scoder",
-  "version": "2.2.0",
+  "version": "2.4.0",
   "description": "scoder Desktop",
   "main": "./out/main/index.js",
   "author": "example.com",

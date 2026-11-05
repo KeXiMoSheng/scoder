@@ -28,3 +28,9 @@ export interface TabMenuState {
   y: number
   path: string
 }
+
+/** 「更多」下拉状态：显示坐标（视口坐标系），列表内容取当前被挤出的标签 */
+export interface TabOverflowMenuState {
+  x: number
+  y: number
+}

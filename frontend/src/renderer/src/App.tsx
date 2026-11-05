@@ -569,10 +569,12 @@ function App(): React.JSX.Element {
         onToggleAiPanel={toggleAiPanel}
         onToggleSettings={toggleSettings}
       />
-      <div className="relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        {/* min-w-0 不可省略：编辑器标签栏内容较宽时，flex 子项的 min-width:auto
+            会取内容的 min-content 宽度，把整行撑出窗口、挤掉右侧 AI 边栏 */}
         <div
           ref={workspaceRef}
-          className={cn('flex min-h-0 flex-1', settingsOpen && 'invisible')}
+          className={cn('flex min-h-0 min-w-0 flex-1', settingsOpen && 'invisible')}
           aria-hidden={settingsOpen}
         >
           {/* 文件树保持挂载：拖拽收起后其展开状态与已加载节点不丢 */}
