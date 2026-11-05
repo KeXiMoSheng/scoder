@@ -3,5 +3,9 @@ export const MODEL_CONFIG_CHANNELS = {
   list: 'modelConfig:list',
   create: 'modelConfig:create',
   update: 'modelConfig:update',
-  delete: 'modelConfig:delete'
+  delete: 'modelConfig:delete',
+  /** 拉取远程模型列表（主进程发请求，返回归一化后的待导入字段） */
+  fetchRemote: 'modelConfig:fetchRemote',
+  /** 批量导入：同一事务内落库，跳过已存在的配置 */
+  importMany: 'modelConfig:importMany'
 } as const

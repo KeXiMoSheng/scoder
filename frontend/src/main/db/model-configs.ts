@@ -6,6 +6,15 @@ import { DbError } from './errors'
 const MODEL_CONFIG_COLUMNS =
   'id, provider_name, base_url, display_name, model_name, api_key, created_at, updated_at'
 
+/** 新增行的语句：单条新建与批量导入共用同一份列顺序 */
+const INSERT_MODEL_CONFIG_SQL = `
+  INSERT INTO model_configs (provider_name, base_url, display_name, model_name, api_key)
+  VALUES (@providerName, @baseUrl, @displayName, @modelName, @apiKey)
+`
+
+/** 单次一键导入允许的最大条数：防止一次塞入过多记录 */
+const MAX_IMPORT_BATCH = 500
+
 /** model_configs 表的原始行（snake_case，仅在本文件出现） */
 interface ModelConfigRow {
   id: number
@@ -97,13 +106,46 @@ export function findModelConfigById(id: number): ModelConfig {
 /** 新建模型配置，返回落库后的完整记录 */
 export function createModelConfig(input: ModelConfigInput): ModelConfig {
   const data = normalizeInput(input)
-  const result = requireDatabase()
-    .prepare(
-      `INSERT INTO model_configs (provider_name, base_url, display_name, model_name, api_key)
-       VALUES (@providerName, @baseUrl, @displayName, @modelName, @apiKey)`
-    )
-    .run(data)
+  const result = requireDatabase().prepare(INSERT_MODEL_CONFIG_SQL).run(data)
   return findModelConfigById(Number(result.lastInsertRowid))
+}
+
+/**
+ * 批量新建模型配置：同一事务内落库，跳过「模型地址 + 模型名称」已存在的记录。
+ * 一键导入用它写入，避免重复点击导入后堆出一模一样的卡片。
+ * @param inputs 待导入的配置（已由远程模型列表归一化）
+ * @returns 本次真正新建的记录，顺序与 inputs 中的成功项一致
+ * @throws DbError 参数非法或条数超出上限
+ */
+export function createModelConfigs(inputs: ModelConfigInput[]): ModelConfig[] {
+  if (!Array.isArray(inputs)) {
+    throw new DbError('参数无效', 'INVALID_ARGUMENT')
+  }
+  if (inputs.length === 0) {
+    return []
+  }
+  if (inputs.length > MAX_IMPORT_BATCH) {
+    throw new DbError(`一次最多导入 ${MAX_IMPORT_BATCH} 个模型`, 'INVALID_ARGUMENT')
+  }
+  const db = requireDatabase()
+  // 手工填写过的地址可能带末尾斜杠，比较时一并去掉
+  const findByKey = db.prepare(
+    "SELECT 1 FROM model_configs WHERE model_name = ? AND RTRIM(base_url, '/') = ? LIMIT 1"
+  )
+  const insert = db.prepare(INSERT_MODEL_CONFIG_SQL)
+  // 事务内逐条校验：任一条非法就整体回滚，不会留下半批记录
+  return db.transaction((items: ModelConfigInput[]): ModelConfig[] => {
+    const created: ModelConfig[] = []
+    for (const item of items) {
+      const data = normalizeInput(item)
+      if (findByKey.get(data.modelName, data.baseUrl.replace(/\/+$/, ''))) {
+        continue
+      }
+      const result = insert.run(data)
+      created.push(findModelConfigById(Number(result.lastInsertRowid)))
+    }
+    return created
+  })(inputs)
 }
 
 /** 更新模型配置，返回更新后的完整记录 */

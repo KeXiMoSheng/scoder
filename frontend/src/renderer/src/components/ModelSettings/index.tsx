@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Download, Plus } from 'lucide-react'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import ModelConfigCard from '../ModelConfigCard'
 import ModelConfigForm from '../ModelConfigForm'
 import { Button } from '../ui/button'
 import { Skeleton } from '../ui/skeleton'
 import type { ModelConfig, ModelConfigInput } from '@shared/model-config/types'
-import type { ModelEditorState } from './types'
+import type { ModelEditorState, ModelSettingsProps } from './types'
 
 /** 列表加载骨架数量：与默认窗口下可见的卡片列数一致 */
 const SKELETON_COUNT = 3
 
 /** 模型设置分区：模型卡片列表 + 新建/编辑表单 */
-export default function ModelSettings(): React.JSX.Element {
+export default function ModelSettings({ onOpenImport }: ModelSettingsProps): React.JSX.Element {
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -104,10 +104,16 @@ export default function ModelSettings(): React.JSX.Element {
             管理 AI 对话使用的模型供应商、模型与 API Key。
           </p>
         </div>
-        <Button type="button" onClick={() => setEditor({ mode: 'create' })}>
-          <Plus />
-          添加模型
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" variant="outline" onClick={onOpenImport}>
+            <Download />
+            一键导入
+          </Button>
+          <Button type="button" onClick={() => setEditor({ mode: 'create' })}>
+            <Plus />
+            添加模型
+          </Button>
+        </div>
       </div>
 
       {error ? (

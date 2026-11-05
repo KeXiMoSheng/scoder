@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import AiSettings from '../AiSettings'
+import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
 import {
@@ -17,11 +18,19 @@ import type { SettingsPageProps } from './types'
 import type { SettingsSectionId } from '../SettingsSidebar/types'
 
 /** 面包屑中展示的分区名：与 SettingsSidebar 的菜单文案保持一致 */
-const SECTION_LABELS: Record<SettingsSectionId, string> = { models: '模型', ai: 'AI 助手' }
+const SECTION_LABELS: Record<SettingsSectionId, string> = {
+  models: '模型',
+  import: '一键导入模型',
+  ai: 'AI 助手'
+}
 
 /** 系统配置页：左侧分区导航 + 右侧设置内容，嵌入在标题栏下方的工作区位置 */
 export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.Element {
   const [section, setSection] = useState<SettingsSectionId>('models')
+
+  // 模型列表与导入页互相跳转：列表页的「导入模型」与导入成功后的「查看模型列表」
+  const openImport = useCallback((): void => setSection('import'), [])
+  const openModels = useCallback((): void => setSection('models'), [])
 
   return (
     <SidebarProvider className="relative min-h-0 flex-1">
@@ -45,7 +54,8 @@ export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.
           </Button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          {section === 'models' ? <ModelSettings /> : null}
+          {section === 'models' ? <ModelSettings onOpenImport={openImport} /> : null}
+          {section === 'import' ? <ModelImport onOpenModels={openModels} /> : null}
           {section === 'ai' ? <AiSettings /> : null}
         </div>
       </SidebarInset>

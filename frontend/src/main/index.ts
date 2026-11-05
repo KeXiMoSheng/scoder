@@ -16,6 +16,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
+import { registerModelImportHandlers } from './model-import'
 import { FILES_CHANNELS } from '../shared/files/events'
 import type { FileEntry, SearchResult } from '../shared/files/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
@@ -464,6 +465,8 @@ app.whenReady().then(() => {
     return
   }
   registerDatabaseHandlers()
+  // 一键导入模型：网络请求 + 批量落库，依赖 initDatabase 打开的库
+  registerModelImportHandlers()
   // AI 通道依赖数据库（按 id 读模型配置），必须在 initDatabase 之后注册
   registerAiHandlers()
 

@@ -33,3 +33,24 @@ export interface ModelConfigInput {
   /** API Key；本地模型等场景允许为空字符串 */
   apiKey: string
 }
+
+/**
+ * 一键导入：拉取远程模型列表的参数。
+ * 请求由主进程发起——渲染进程直连第三方地址会被 CORS 拦住。
+ */
+export interface RemoteModelListRequest {
+  /** 模型请求地址：导入后写入每条配置的 baseUrl */
+  baseUrl: string
+  /** 模型列表地址（完整 URL，通常以 /models 结尾） */
+  modelsUrl: string
+  /** Authorization 头的值，如 Bearer sk-…；API Key 取 Bearer 之后的部分 */
+  authorization: string
+}
+
+/** 一键导入的结果 */
+export interface ModelImportResult {
+  /** 本次新建成功的配置 */
+  created: ModelConfig[]
+  /** 因「模型请求地址 + 模型名称」已存在而跳过的条数 */
+  skipped: number
+}

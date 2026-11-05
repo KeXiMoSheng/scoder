@@ -6,7 +6,12 @@
 import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
 import type { FileEntry, SearchResult } from './files/types'
-import type { ModelConfig, ModelConfigInput } from './model-config/types'
+import type {
+  ModelConfig,
+  ModelConfigInput,
+  ModelImportResult,
+  RemoteModelListRequest
+} from './model-config/types'
 import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
 import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
 
@@ -58,6 +63,13 @@ export interface ScoderAPI {
   updateModelConfig: (id: number, input: ModelConfigInput) => Promise<ModelConfig>
   /** 删除模型配置（主进程弹出确认框）；用户取消时返回 false */
   deleteModelConfig: (id: number) => Promise<boolean>
+  /**
+   * 拉取远程模型列表并归一化为待导入的模型配置：
+   * id → 模型名称，name → 模型显示名称，owned_by → 供应商，Bearer 之后的内容 → API Key。
+   */
+  fetchRemoteModels: (request: RemoteModelListRequest) => Promise<ModelConfigInput[]>
+  /** 批量导入模型配置（单事务，跳过已存在的地址 + 模型名称） */
+  importModelConfigs: (inputs: ModelConfigInput[]) => Promise<ModelImportResult>
   /** 读取 AI 运行参数（步数预算、续接段数、重复调用保护） */
   getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
   /** 保存 AI 运行参数，返回校验并落库后的结果 */
