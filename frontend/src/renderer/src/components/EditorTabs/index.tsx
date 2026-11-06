@@ -122,13 +122,20 @@ export default function EditorTabs({
 
   /**
    * 构建标签右键菜单条目（数据驱动）。
-   * 定位/发送给 AI、复制路径与关闭系列操作各成一组，以 null 作为分隔线。
+   * 定位显示、发送给 AI、复制路径与关闭系列各成一组，以 null 作为分隔线。
    */
   const buildMenuEntries = (index: number, path: string): ContextMenuEntry[] => {
     // 相对路径需归属于当前项目才能计算
     const canCopyRelative = projectPath !== null && isAtOrUnder(path, projectPath)
     return [
       { id: 'reveal', label: '在资源管理器视图中显示', onSelect: () => onReveal(path) },
+      {
+        id: 'reveal-in-system',
+        label: '在文件资源管理器中显示',
+        // 纯只读的外部打开操作，失败（如路径已被删）与其他菜单项一致静默处理，不阻断交互
+        onSelect: () => void window.api.revealEntry(path).catch(() => undefined)
+      },
+      null,
       { id: 'send-to-ai', label: '发送给 AI', onSelect: () => onSendToAi(path) },
       null,
       {

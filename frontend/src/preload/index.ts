@@ -47,6 +47,7 @@ const api: ScoderAPI = {
   moveEntry: (sourcePath: string, targetPath: string) =>
     ipcRenderer.invoke(FILES_CHANNELS.moveEntry, sourcePath, targetPath),
   deleteEntry: (targetPath: string) => ipcRenderer.invoke(FILES_CHANNELS.deleteEntry, targetPath),
+  revealEntry: (targetPath: string) => ipcRenderer.invoke(FILES_CHANNELS.revealEntry, targetPath),
   searchFiles: (rootPath: string, query: string, limit?: number) =>
     ipcRenderer.invoke(FILES_CHANNELS.searchFiles, rootPath, query, limit),
   createTerminal: (cwd: string | null, cols: number, rows: number) =>

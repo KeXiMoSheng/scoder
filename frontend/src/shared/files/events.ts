@@ -8,5 +8,6 @@ export const FILES_CHANNELS = {
   createEntry: 'fs:createEntry',
   moveEntry: 'fs:moveEntry',
   deleteEntry: 'fs:deleteEntry',
+  revealEntry: 'fs:revealEntry',
   searchFiles: 'fs:searchFiles'
 } as const

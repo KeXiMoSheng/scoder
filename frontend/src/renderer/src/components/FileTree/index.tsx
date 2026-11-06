@@ -691,6 +691,15 @@ export default function FileTree({
     [refreshDirectory, onEntryDeleted]
   )
 
+  /** 菜单操作：在系统文件资源管理器中打开所在目录并选中条目（搜索模式与根目录也可用，纯只读不改动磁盘） */
+  const handleMenuReveal = useCallback(async (targetPath: string): Promise<void> => {
+    try {
+      await window.api.revealEntry(targetPath)
+    } catch (reason) {
+      setNotice(`打开文件资源管理器失败：${extractErrorMessage(reason)}`)
+    }
+  }, [])
+
   // 查询词变化：防抖后请求主进程递归搜索，并构造“命中条目 + 祖先目录”的子树
   useEffect(() => {
     if (!searchActive) {
@@ -782,6 +791,12 @@ export default function FileTree({
         disabled: isRootTarget,
         disabledReason: '当前目录没有相对路径',
         onSelect: () => void navigator.clipboard.writeText(relativePathNative(targetPath, rootPath))
+      },
+      null,
+      {
+        id: 'reveal',
+        label: '在文件资源管理器中显示',
+        onSelect: () => void handleMenuReveal(targetPath)
       }
     ]
   }

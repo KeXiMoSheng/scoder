@@ -161,6 +161,15 @@ function registerFileSystemHandlers(): void {
     }
   )
 
+  // 在系统文件资源管理器中打开所在目录并选中条目；路径已不存在时 showItemInFolder 会静默失败，先校验再报错供渲染进程提示
+  ipcMain.handle(FILES_CHANNELS.revealEntry, async (_event, targetPath: string): Promise<void> => {
+    if (typeof targetPath !== 'string' || !targetPath) {
+      throw new Error('路径无效')
+    }
+    await fs.access(targetPath)
+    shell.showItemInFolder(targetPath)
+  })
+
   // 按名称子串递归搜索（目录在前、名称升序的广度优先），跳过噪音目录
   ipcMain.handle(
     FILES_CHANNELS.searchFiles,

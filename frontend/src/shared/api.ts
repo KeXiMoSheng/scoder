@@ -31,6 +31,8 @@ export interface ScoderAPI {
   moveEntry: (sourcePath: string, targetPath: string) => Promise<void>
   /** 删除文件或目录（目录递归删除）；弹出确认框，用户取消时返回 false */
   deleteEntry: (targetPath: string) => Promise<boolean>
+  /** 在系统文件资源管理器中打开所在目录并选中该条目；路径不存在时报错 */
+  revealEntry: (targetPath: string) => Promise<void>
   /** 以 rootPath 为根递归搜索名称包含关键词的条目（跳过噪音目录），最多返回 limit 条 */
   searchFiles: (rootPath: string, query: string, limit?: number) => Promise<SearchResult>
   /** 创建终端会话（在 cwd 中启动系统 shell，cwd 为 null 时用用户主目录），返回会话 id */
