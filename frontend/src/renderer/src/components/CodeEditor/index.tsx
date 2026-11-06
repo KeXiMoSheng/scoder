@@ -12,9 +12,6 @@ import SvgPreview from '../SvgPreview'
 import { Button } from '../ui/button'
 import type { CodeEditorProps, LoadFailure, PreviewViewMode } from './types'
 
-/** Markdown / SVG 共用的视图模式偏好（跨会话保留） */
-const VIEW_MODE_STORAGE_KEY = 'scoder.markdownViewMode'
-
 /**
  * 每个 model 的保存点版本：model 是全局缓存，保存点也跟随 model 而非组件实例，
  * 组件重挂载（热更新）后复用缓存时不会因查不到保存点而误报脏点。
@@ -31,18 +28,6 @@ const VIEW_MODES: readonly { id: PreviewViewMode; label: string }[] = [
   { id: 'split', label: '分栏' },
   { id: 'preview', label: '预览' }
 ]
-
-function readStoredViewMode(): PreviewViewMode {
-  try {
-    const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
-    if (stored === 'edit' || stored === 'split' || stored === 'preview') {
-      return stored
-    }
-  } catch {
-    // localStorage 不可用时按默认处理
-  }
-  return 'edit'
-}
 
 export default function CodeEditor({
   file,
@@ -61,8 +46,9 @@ export default function CodeEditor({
   const saveCurrentRef = useRef<() => void>(() => {})
   // 右键菜单「发送选中行给 AI」的出口：编辑器只创建一次，回调通过 ref 保持最新
   const sendSelectionRef = useRef(onSendSelectionToAi)
-  // 文档视图模式（Markdown / SVG，其余文件不渲染工具栏）
-  const [viewMode, setViewMode] = useState<PreviewViewMode>(readStoredViewMode)
+  // 文档视图模式（Markdown / SVG，其余文件不渲染工具栏）：始终从「编辑」满宽起步，
+  // 不跨会话恢复分栏，避免一打开文件编辑器就被切成半屏
+  const [viewMode, setViewMode] = useState<PreviewViewMode>('edit')
   // 分栏模式下编辑区宽度占比（拖动中间分隔条调整）
   const [splitRatio, setSplitRatio] = useState(0.5)
   const splitStartRatioRef = useRef(0.5)
@@ -154,6 +140,8 @@ export default function CodeEditor({
       minimap: { enabled: false },
       fontSize: 13,
       scrollBeyondLastLine: false,
+      // 关掉概览标尺左边缘的边框线（默认色会在编辑器右缘画出一条分界线），保留标尺本身
+      overviewRulerBorder: false,
       smoothScrolling: true
     })
     editor.addAction({
@@ -280,15 +268,24 @@ export default function CodeEditor({
   const previewVisible = previewable && viewMode !== 'edit'
   const previewText = useModelText(file?.path ?? null, previewVisible)
 
-  /** 切换视图模式并持久化选择 */
+  /** 切换视图模式（仅本次会话生效；打开文件默认回到「编辑」满宽） */
   const changeViewMode = useCallback((mode: PreviewViewMode): void => {
     setViewMode(mode)
-    try {
-      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode)
-    } catch {
-      // 持久化失败不影响本次切换
-    }
   }, [])
+
+  // 分栏/预览只是「当前这份文档」的临时视图，不应跟到下一个文件：
+  // 切换激活文件时把视图模式重置回「编辑」满宽。
+  // （不能用 key 重挂载 CodeEditor，那会重建 Monaco 实例、丢掉模型复用；
+  //  这里用 ref 守卫，只在路径真正变化时重置一次，不会随渲染反复触发。）
+  const lastViewFilePathRef = useRef<string | null>(null)
+  useEffect(() => {
+    const path = file?.path ?? null
+    if (lastViewFilePathRef.current === path) {
+      return
+    }
+    lastViewFilePathRef.current = path
+    setViewMode('edit')
+  }, [file?.path])
 
   const handleSplitResizeStart = useCallback((): void => {
     splitStartRatioRef.current = splitRatio
@@ -395,7 +392,7 @@ export default function CodeEditor({
             'relative min-h-0 min-w-0 flex-1 overflow-hidden',
             editorHidden && 'invisible absolute inset-0'
           )}
-          style={viewMode === 'split' ? { flex: `${splitRatio} 1 0%` } : undefined}
+          style={previewable && viewMode === 'split' ? { flex: `${splitRatio} 1 0%` } : undefined}
           aria-hidden={editorHidden}
         >
           <div ref={containerRef} className="absolute inset-0" />
@@ -421,7 +418,9 @@ export default function CodeEditor({
             ) : null}
             <div
               className="relative flex min-h-0 min-w-0 flex-1"
-              style={viewMode === 'split' ? { flex: `${1 - splitRatio} 1 0%` } : undefined}
+              style={
+                previewable && viewMode === 'split' ? { flex: `${1 - splitRatio} 1 0%` } : undefined
+              }
             >
               {isSvg ? (
                 <SvgPreview content={previewText} className="min-h-0 flex-1" />
