@@ -4,6 +4,7 @@ export const FILES_CHANNELS = {
   openProjectDirectory: 'dialog:openProjectDirectory',
   readDirectory: 'fs:readDirectory',
   readFile: 'fs:readFile',
+  readFileBytes: 'fs:readFileBytes',
   writeFile: 'fs:writeFile',
   createEntry: 'fs:createEntry',
   moveEntry: 'fs:moveEntry',

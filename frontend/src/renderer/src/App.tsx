@@ -6,6 +6,7 @@ import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
 import type { CodeEditorHandle } from './components/CodeEditor/types'
 import EditorTabs from './components/EditorTabs'
+import FilePreview from './components/FilePreview'
 import FileTree from './components/FileTree'
 import ResizeHandle from './components/ResizeHandle'
 import SettingsPage from './components/SettingsPage'
@@ -16,6 +17,7 @@ import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
 import { basename, isAbsolutePath, isAtOrUnder, joinPath } from './lib/filePath'
+import { previewKindOf } from './lib/filePreview'
 import { cn } from './lib/utils'
 
 /** 左侧文件树面板宽度（px） */
@@ -85,6 +87,8 @@ function App(): React.JSX.Element {
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
   const { themeId, setThemeId } = useTheme()
+  // 当前激活文件如果是二进制类型（图片/音视频等）则走预览页签而不是文本编辑器
+  const previewKind = activeFile !== null ? previewKindOf(activeFile.name) : null
 
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   // 编辑器区（含标签栏、编辑器与命令行面板）：面板高度比例都以它为准
@@ -629,12 +633,20 @@ function App(): React.JSX.Element {
                   onSendToAi={handleAttachTabToAi}
                 />
               ) : null}
-              <CodeEditor
-                ref={editorRef}
-                file={activeFile}
-                onDirtyChange={handleDirtyChange}
-                onSendSelectionToAi={attachToAi}
-              />
+              <div className="relative flex min-h-0 min-w-0 flex-1">
+                {/* 二进制预览时编辑器保持挂载（模型缓存与实例不丢），只是隐藏起来让位给预览 */}
+                <div className={previewKind !== null ? 'hidden' : 'flex min-h-0 min-w-0 flex-1'}>
+                  <CodeEditor
+                    ref={editorRef}
+                    file={previewKind === null ? activeFile : null}
+                    onDirtyChange={handleDirtyChange}
+                    onSendSelectionToAi={attachToAi}
+                  />
+                </div>
+                {previewKind !== null && activeFile !== null ? (
+                  <FilePreview key={activeFile.path} file={activeFile} />
+                ) : null}
+              </div>
             </div>
             <ResizeHandle
               label={terminalVisible ? '调整命令行面板高度' : '向上拖拽展开命令行面板'}

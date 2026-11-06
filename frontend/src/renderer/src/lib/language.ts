@@ -16,6 +16,7 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   htm: 'html',
   vue: 'html',
   svelte: 'html',
+  svg: 'xml',
   md: 'markdown',
   markdown: 'markdown',
   py: 'python',
@@ -107,6 +108,11 @@ export function detectLanguage(fileName: string): string {
 /** 是否为 Markdown 文件（决定编辑器是否启用预览视图） */
 export function isMarkdownFile(fileName: string): boolean {
   return detectLanguage(fileName) === 'markdown'
+}
+
+/** 是否为 SVG 文件（文本编辑 + 图片预览） */
+export function isSvgFile(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith('.svg')
 }
 
 /**

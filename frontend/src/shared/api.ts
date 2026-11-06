@@ -23,6 +23,10 @@ export interface ScoderAPI {
   readDirectory: (dirPath: string) => Promise<FileEntry[]>
   /** 读取文本文件内容；二进制或超大文件会抛错 */
   readFile: (filePath: string) => Promise<string>
+  /**
+   * 读取文件原始字节，供图片/音视频等二进制预览；超过体积上限时抛错。
+   */
+  readFileBytes: (filePath: string) => Promise<Uint8Array<ArrayBuffer>>
   /** 将文本写入文件（utf-8 覆盖写入），供编辑器保存 */
   writeFile: (filePath: string, content: string) => Promise<void>
   /** 在 dirPath 下创建空文件（isDirectory 为 false）或空目录，返回新建条目；名称非法或已存在时报错 */

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { monaco } from '../../lib/monaco'
-import { detectLanguage, isMarkdownFile } from '../../lib/language'
+import { detectLanguage, isMarkdownFile, isSvgFile } from '../../lib/language'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { dirname, isAtOrUnder } from '../../lib/filePath'
 import { getActiveThemeId } from '../../lib/theme'
 import { cn } from '../../lib/utils'
-import { useMarkdownModelText } from '../../hooks/useMarkdownModelText'
+import { useModelText } from '../../hooks/useModelText'
 import MarkdownPreview from '../MarkdownPreview'
 import ResizeHandle from '../ResizeHandle'
+import SvgPreview from '../SvgPreview'
 import { Button } from '../ui/button'
-import type { CodeEditorProps, LoadFailure, MarkdownViewMode } from './types'
+import type { CodeEditorProps, LoadFailure, PreviewViewMode } from './types'
 
-/** Markdown 视图模式偏好（跨会话保留） */
+/** Markdown / SVG 共用的视图模式偏好（跨会话保留） */
 const VIEW_MODE_STORAGE_KEY = 'scoder.markdownViewMode'
 
 /**
@@ -25,13 +26,13 @@ const SPLIT_MIN_RATIO = 0.2
 const SPLIT_MAX_RATIO = 0.8
 
 /** 工具栏上的三档视图选项 */
-const VIEW_MODES: readonly { id: MarkdownViewMode; label: string }[] = [
+const VIEW_MODES: readonly { id: PreviewViewMode; label: string }[] = [
   { id: 'edit', label: '编辑' },
   { id: 'split', label: '分栏' },
   { id: 'preview', label: '预览' }
 ]
 
-function readStoredViewMode(): MarkdownViewMode {
+function readStoredViewMode(): PreviewViewMode {
   try {
     const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
     if (stored === 'edit' || stored === 'split' || stored === 'preview') {
@@ -60,8 +61,8 @@ export default function CodeEditor({
   const saveCurrentRef = useRef<() => void>(() => {})
   // 右键菜单「发送选中行给 AI」的出口：编辑器只创建一次，回调通过 ref 保持最新
   const sendSelectionRef = useRef(onSendSelectionToAi)
-  // Markdown 视图模式（仅对 Markdown 文件生效，其他文件不渲染工具栏）
-  const [viewMode, setViewMode] = useState<MarkdownViewMode>(readStoredViewMode)
+  // 文档视图模式（Markdown / SVG，其余文件不渲染工具栏）
+  const [viewMode, setViewMode] = useState<PreviewViewMode>(readStoredViewMode)
   // 分栏模式下编辑区宽度占比（拖动中间分隔条调整）
   const [splitRatio, setSplitRatio] = useState(0.5)
   const splitStartRatioRef = useRef(0.5)
@@ -271,13 +272,16 @@ export default function CodeEditor({
     }
   }, [file, observeModel, syncDirty])
 
-  // Markdown 视图状态：预览文本由 useMarkdownModelText 直接订阅当前激活的 model
+  // 文档预览（Markdown / SVG）：预览文本由 useModelText 直接订阅当前激活的 model
   const isMarkdown = file !== null && isMarkdownFile(file.name)
-  const previewVisible = isMarkdown && viewMode !== 'edit'
-  const markdownText = useMarkdownModelText(file?.path ?? null, previewVisible)
+  const isSvg = file !== null && isSvgFile(file.name)
+  // 只有带预览能力的文档才显示编辑器顶部的「编辑 / 分栏 / 预览」工具条
+  const previewable = isMarkdown || isSvg
+  const previewVisible = previewable && viewMode !== 'edit'
+  const previewText = useModelText(file?.path ?? null, previewVisible)
 
   /** 切换视图模式并持久化选择 */
-  const changeViewMode = useCallback((mode: MarkdownViewMode): void => {
+  const changeViewMode = useCallback((mode: PreviewViewMode): void => {
     setViewMode(mode)
     try {
       window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode)
@@ -362,7 +366,7 @@ export default function CodeEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {isMarkdown ? (
+      {previewable ? (
         <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-line bg-elevated px-1.5">
           {VIEW_MODES.map((item) => (
             <Button
@@ -380,7 +384,9 @@ export default function CodeEditor({
               {item.label}
             </Button>
           ))}
-          <span className="ml-auto pr-1 text-[11px] text-dim">Markdown</span>
+          <span className="ml-auto pr-1 text-[11px] text-dim">
+            {isMarkdown ? 'Markdown' : 'SVG'}
+          </span>
         </div>
       ) : null}
       <div ref={splitAreaRef} className="flex min-h-0 flex-1">
@@ -417,12 +423,16 @@ export default function CodeEditor({
               className="relative flex min-h-0 min-w-0 flex-1"
               style={viewMode === 'split' ? { flex: `${1 - splitRatio} 1 0%` } : undefined}
             >
-              <MarkdownPreview
-                content={markdownText}
-                basePath={file ? dirname(file.path) : undefined}
-                className="min-h-0 flex-1"
-              />
-              {markdownText.trim() === '' ? (
+              {isSvg ? (
+                <SvgPreview content={previewText} className="min-h-0 flex-1" />
+              ) : (
+                <MarkdownPreview
+                  content={previewText}
+                  basePath={file ? dirname(file.path) : undefined}
+                  className="min-h-0 flex-1"
+                />
+              )}
+              {previewText.trim() === '' ? (
                 <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-dim">
                   空文档
                 </p>

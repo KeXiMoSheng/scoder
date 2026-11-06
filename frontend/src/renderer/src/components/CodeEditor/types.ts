@@ -33,5 +33,5 @@ export interface LoadFailure {
   message: string
 }
 
-/** Markdown 文件的三档视图：仅编辑 / 编辑与预览分栏 / 仅预览 */
-export type MarkdownViewMode = 'edit' | 'split' | 'preview'
+/** 带预览能力的文档（Markdown / SVG）的三档视图：仅编辑 / 编辑与预览分栏 / 仅预览 */
+export type PreviewViewMode = 'edit' | 'split' | 'preview'

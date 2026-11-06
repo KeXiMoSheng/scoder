@@ -33,6 +33,9 @@ const IGNORED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', '__pycache__', 
 // 文本预览的体积上限，超过则拒绝读取（避免超大文件卡死渲染进程）
 const MAX_PREVIEW_FILE_SIZE = 5 * 1024 * 1024
 
+// 二进制预览的体积上限：图片/音视频整块复制到渲染进程内存，过大时直拒
+const MAX_BINARY_PREVIEW_SIZE = 50 * 1024 * 1024
+
 // 搜索结果的硬上限（渲染进程传入的 limit 会被裁剪到该范围内）
 const MAX_SEARCH_RESULTS = 500
 
@@ -93,6 +96,28 @@ function registerFileSystemHandlers(): void {
     }
     return buffer.toString('utf-8')
   })
+
+  // 二进制预览：图片/音视频需要完整字节，超过体积上限直接拒绝（避免打爆渲染进程）
+  ipcMain.handle(
+    FILES_CHANNELS.readFileBytes,
+    async (_event, filePath: string): Promise<Uint8Array> => {
+      if (typeof filePath !== 'string') {
+        throw new Error('文件路径无效')
+      }
+      const handle = await fs.open(filePath, 'r')
+      try {
+        const { size } = await handle.stat()
+        if (size > MAX_BINARY_PREVIEW_SIZE) {
+          throw new Error('文件超过 50 MB，暂不支持预览')
+        }
+        const data = new Uint8Array(size)
+        await handle.read(data, 0, size, 0)
+        return data
+      } finally {
+        await handle.close()
+      }
+    }
+  )
 
   ipcMain.handle(
     FILES_CHANNELS.writeFile,

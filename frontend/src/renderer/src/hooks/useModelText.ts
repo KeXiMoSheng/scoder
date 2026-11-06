@@ -56,11 +56,11 @@ function subscribeModel(path: string, onStoreChange: () => void): () => void {
 }
 
 /**
- * 读取并订阅指定路径的 Monaco model 文本，作为预览的外部数据源：
+ * 读取并订阅指定路径的 Monaco model 文本，作为预览（Markdown / SVG）的外部数据源：
  * 编辑内容与激活文件变化都由订阅驱动，无需把全文放进组件 state。
- * enabled 为 false（非 Markdown 文件或编辑模式）时不订阅并返回空文本。
+ * enabled 为 false（当前文件不可预览或处于纯编辑模式）时不订阅并返回空文本。
  */
-export function useMarkdownModelText(path: string | null, enabled: boolean): string {
+export function useModelText(path: string | null, enabled: boolean): string {
   const subscribe = useCallback(
     (onStoreChange: () => void): (() => void) =>
       path !== null && enabled ? subscribeModel(path, onStoreChange) : () => {},

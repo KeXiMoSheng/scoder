@@ -40,6 +40,7 @@ const api: ScoderAPI = {
   openProjectDirectory: () => ipcRenderer.invoke(FILES_CHANNELS.openProjectDirectory),
   readDirectory: (dirPath: string) => ipcRenderer.invoke(FILES_CHANNELS.readDirectory, dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFile, filePath),
+  readFileBytes: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFileBytes, filePath),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke(FILES_CHANNELS.writeFile, filePath, content),
   createEntry: (dirPath: string, name: string, isDirectory: boolean) =>
