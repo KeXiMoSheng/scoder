@@ -18,6 +18,35 @@ function buildTerminalTheme(): ITheme {
   }
 }
 
+/** ESC 控制符：用字符码构造，避免正则字面量里的控制字符触发 no-control-regex */
+const ESC = String.fromCharCode(27)
+
+/**
+ * 匹配 CSI 的 SGR 序列（颜色与字体样式，如 ESC[31m、ESC[1;32m）
+ * 终端面板不展示彩色输出，统一剥离后再交给 xterm
+ */
+const SGR_SEQUENCE = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
+/** 匹配结尾被截断的 CSI 序列：pty 输出可能把一条转义序列拆到多个数据块 */
+const TRUNCATED_CSI = new RegExp(`${ESC}(?:\\[[0-9;?]*)?$`)
+
+/**
+ * 创建无色输出过滤器：去掉 SGR 着色序列，仅保留光标移动、清屏等控制序列。
+ * 末尾不完整的序列先缓冲，与下一个数据块拼接后再处理，避免出现乱码
+ */
+function createColorStripper(): (chunk: string) => string {
+  let pending = ''
+  return (chunk) => {
+    let data = pending + chunk
+    pending = ''
+    const truncated = TRUNCATED_CSI.exec(data)
+    if (truncated) {
+      pending = truncated[0]
+      data = data.slice(0, truncated.index)
+    }
+    return data.replace(SGR_SEQUENCE, '')
+  }
+}
+
 /** 按运行平台返回终端标签名：Windows 用 powershell，其余（Linux/macOS）用 bash */
 function resolveTerminalTitle(): string {
   return window.electron.process.platform === 'win32' ? 'powershell' : 'bash'
@@ -33,6 +62,8 @@ interface TerminalSessionView {
   container: HTMLDivElement
   /** pty 会话 id；创建回执前与进程退出后为 null */
   ptyId: number | null
+  /** 剥离 SGR 着色的输出过滤器（跨数据块的截断序列在其中缓冲） */
+  stripColors: (chunk: string) => string
 }
 
 /** 标签栏渲染所需的轻量元数据（xterm 实例无法放入 state，保存在 ref 中） */
@@ -124,7 +155,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
   /** pty 进程退出：清除会话 id 并写出提示（标签保留，供用户查看最终输出） */
   const handlePtyExit = useCallback((session: TerminalSessionView, exitCode: number): void => {
     session.ptyId = null
-    session.term.write(`\r\n\x1b[90m[进程已退出（退出码 ${exitCode}）]\x1b[0m\r\n`)
+    session.term.write(`\r\n[进程已退出（退出码 ${exitCode}）]\r\n`)
   }, [])
 
   /** 激活会话：仅切换显示层（其余会话保持存活），并重新适配尺寸、聚焦 */
@@ -168,7 +199,8 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
       term,
       fitAddon,
       container,
-      ptyId: null
+      ptyId: null,
+      stripColors: createColorStripper()
     }
     nextUidRef.current += 1
     const title = resolveTerminalTitle()
@@ -219,7 +251,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
         const buffered = pendingDataByPtyIdRef.current.get(id)
         if (buffered) {
           pendingDataByPtyIdRef.current.delete(id)
-          term.write(buffered.join(''))
+          term.write(session.stripColors(buffered.join('')))
         }
         // 启动即退出的极罕见场景：退出事件先于回执到达
         const exitCode = pendingExitByPtyIdRef.current.get(id)
@@ -229,7 +261,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
         }
       })
       .catch((reason: unknown) => {
-        term.write(`\x1b[31m终端启动失败：${extractErrorMessage(reason)}\x1b[0m\r\n`)
+        term.write(`终端启动失败：${extractErrorMessage(reason)}\r\n`)
       })
   }, [activateSession, handlePtyExit])
 
@@ -278,7 +310,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
     const unsubscribeData = window.api.onTerminalData(({ id, data }) => {
       const session = sessionsRef.current.find((item) => item.ptyId === id)
       if (session) {
-        session.term.write(data)
+        session.term.write(session.stripColors(data))
         return
       }
       // 会话的 createTerminal 尚未返回：先按 pty id 缓存，认领后回放
