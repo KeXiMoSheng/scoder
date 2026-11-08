@@ -104,35 +104,6 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         { type: 'step/start', data: { turn, step } }
       ])
 
-      const pending = new Map<number, PendingCall>()
-      let text = ''
-      /** 本步模型调用返回的真实用量；供应商未返回时保持 undefined */
-      let stepUsage: StreamDelta['usage']
-      for await (const delta of streamChat(model, messages, tools, signal)) {
-        text += appendDelta(delta, pending, emit)
-        if (delta.usage) {
-          stepUsage = delta.usage
-        }
-      }
-      const toolCalls = finishCalls(pending)
-
-      // 只推真实用量：拿到 usage 后立刻更新面板，没拿到就保持上一次的值
-      if (stepUsage) {
-        emit({ type: 'context-usage', usage: toContextUsage(stepUsage) })
-      }
-
-      // 有文本或工具调用才写 assistant 消息；空响应直接结束本轮
-      if (text.length > 0 || toolCalls.length > 0) {
-        messages.push({
-          role: 'assistant',
-          content: text.length > 0 ? text : null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
-        })
-        await sessions.record(request.cwd, request.sessionId, [
-          { type: 'assistant/message', data: { turn, step, content: toBlocks(text, toolCalls) } }
-        ])
-      }
-
       const callContext: CallContext = {
         fs,
         observation,
@@ -146,36 +117,100 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         guard
       }
 
-      // 工具执行属于本步，step/end 要等它们全部回报之后再写
-      let stoppedByGuard = false
-      for (const [index, call] of toolCalls.entries()) {
-        signal.throwIfAborted()
-        const stop = await executeCall(call, messages, callContext)
-        if (!stop) {
-          continue
-        }
-        // 判定原地打转：本步剩下的调用不再执行，但必须补结果，
-        // 否则历史里这条 assistant 消息的 tool_calls 会有去无回
-        for (const rest of toolCalls.slice(index + 1)) {
-          await recordSkippedCall(rest, messages, callContext)
-        }
-        stoppedByGuard = true
-        break
-      }
-      await sessions.record(request.cwd, request.sessionId, [
-        {
-          type: 'step/end',
-          // usage 随日志保存：重开会话时直接展示最后一次真实计数
-          data: { turn, step, ...(stepUsage ? { usage: stepUsage } : {}) }
-        }
-      ])
+      const pending = new Map<number, PendingCall>()
+      /** 本步已经流出的文本：中止时要作为「中断前缀」落盘 */
+      let text = ''
+      /** assistant 消息是否已经落盘（中止结算据此决定要不要补记前缀） */
+      let messageRecorded = false
+      /** 本步模型请求的工具调用；只有流正常读完后才有值 */
+      let toolCalls: ChatToolCall[] = []
+      /** 已经写好结果的 callId：中止时用来补齐剩下的调用 */
+      const answered = new Set<string>()
+      /** 已经发过挂起卡片的 callId：中止时补结果才不会重复建卡片 */
+      const cardShown = new Set<string>()
+      /** 本步模型调用返回的真实用量；供应商未返回时保持 undefined */
+      let stepUsage: StreamDelta['usage']
 
-      if (stoppedByGuard) {
-        reason = 'error'
-        break
-      }
-      if (toolCalls.length === 0) {
-        break
+      try {
+        for await (const delta of streamChat(model, messages, tools, signal)) {
+          // 每个 chunk 都自己判一次中止：不依赖适配器有没有把 signal 真正传到连接上，
+          // 用户点停止后最多再丢这一帧，不会继续把内容推到界面上
+          signal.throwIfAborted()
+          text += appendDelta(delta, pending, emit)
+          if (delta.usage) {
+            stepUsage = delta.usage
+          }
+        }
+        signal.throwIfAborted()
+        toolCalls = finishCalls(pending)
+
+        // 只推真实用量：拿到 usage 后立刻更新面板，没拿到就保持上一次的值
+        if (stepUsage) {
+          emit({ type: 'context-usage', usage: toContextUsage(stepUsage) })
+        }
+
+        // 有文本或工具调用才写 assistant 消息；空响应直接结束本轮
+        if (text.length > 0 || toolCalls.length > 0) {
+          messages.push({
+            role: 'assistant',
+            content: text.length > 0 ? text : null,
+            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
+          })
+          await sessions.record(request.cwd, request.sessionId, [
+            { type: 'assistant/message', data: { turn, step, content: toBlocks(text, toolCalls) } }
+          ])
+          messageRecorded = true
+        }
+
+        // 工具执行属于本步，step/end 要等它们全部回报之后再写
+        let stoppedByGuard = false
+        for (const [index, call] of toolCalls.entries()) {
+          signal.throwIfAborted()
+          cardShown.add(call.id)
+          const stop = await executeCall(call, messages, callContext)
+          answered.add(call.id)
+          if (!stop) {
+            continue
+          }
+          // 判定原地打转：本步剩下的调用不再执行，但必须补结果，
+          // 否则历史里这条 assistant 消息的 tool_calls 会有去无回
+          for (const rest of toolCalls.slice(index + 1)) {
+            await recordSkippedCall(rest, messages, callContext)
+          }
+          stoppedByGuard = true
+          break
+        }
+        await sessions.record(request.cwd, request.sessionId, [
+          {
+            type: 'step/end',
+            // usage 随日志保存：重开会话时直接展示最后一次真实计数
+            data: { turn, step, ...(stepUsage ? { usage: stepUsage } : {}) }
+          }
+        ])
+
+        if (stoppedByGuard) {
+          reason = 'error'
+          break
+        }
+        if (toolCalls.length === 0) {
+          break
+        }
+      } catch (error) {
+        if (!signal.aborted) {
+          throw error
+        }
+        // 用户中止：先把这一步结算成日志自洽的状态，再把中止继续向外传播
+        await settleAbortedStep({
+          text,
+          messageRecorded,
+          stepUsage,
+          toolCalls,
+          answered,
+          cardShown,
+          messages,
+          context: callContext
+        })
+        throw error
       }
     }
   } catch (error) {
@@ -349,6 +384,65 @@ async function recordSkippedCall(
     messages,
     context
   )
+}
+
+/** 被用户中止打断的调用，用这条结果收尾（工具本身没有跑完，不能报成功） */
+const CANCELED_CALL_TEXT = '用户中止了这一轮对话，本次调用未完成'
+
+/**
+ * 中止结算：把被中止打断的那一步补成日志自洽、界面也解释得通的状态。
+ *
+ * 规则与 deepseek-harness 保持一致：
+ * - 已经流出的文本保留，记成一条 interrupted 的助手消息——用户屏幕上看到的就是它；
+ * - 流没读完就中断时，这一帧里还没发出去的工具调用一律丢弃：
+ *   中断发生在派发之前，保留一个 tool_call 就必须附带一条伪造的结果；
+ * - 已经落盘的调用用「已取消」收尾，否则历史里会留下有去无回的 tool_calls，
+ *   下一次请求会因为工具结果缺失而直接失败；
+ * - step/end 一定要写，不能留下只有 step/start 的悬空步骤。
+ * @param options 中止那一刻这一步的全部状态
+ */
+async function settleAbortedStep(options: {
+  text: string
+  messageRecorded: boolean
+  stepUsage: StreamDelta['usage']
+  toolCalls: readonly ChatToolCall[]
+  answered: ReadonlySet<string>
+  cardShown: ReadonlySet<string>
+  messages: ChatMessage[]
+  context: CallContext
+}): Promise<void> {
+  const { text, messageRecorded, stepUsage, toolCalls, answered, cardShown, messages, context } =
+    options
+  const { request, sessions, turn, step, emit } = context
+  try {
+    if (text.length > 0 && !messageRecorded) {
+      await sessions.record(request.cwd, request.sessionId, [
+        {
+          type: 'assistant/message',
+          data: { turn, step, content: [{ type: 'text', text }], interrupted: true }
+        }
+      ])
+    }
+    for (const call of messageRecorded ? toolCalls : []) {
+      if (answered.has(call.id)) {
+        continue
+      }
+      // 还没轮到执行的调用在界面上没有卡片，先补一张再收尾
+      if (!cardShown.has(call.id)) {
+        emitToolCall(call, context)
+      }
+      await writeToolResult(call, { ok: false, text: CANCELED_CALL_TEXT }, messages, context)
+    }
+    await sessions.record(request.cwd, request.sessionId, [
+      {
+        type: 'step/end',
+        data: { turn, step, ...(stepUsage ? { usage: stepUsage } : {}) }
+      }
+    ])
+  } catch (error) {
+    // 结算失败不能吞掉中止本身：先让界面看到错误，再继续向外传播
+    emit({ type: 'error', message: errorMessage(error) })
+  }
 }
 
 /** 把一次调用的结果推给界面、写入日志并回灌模型 */

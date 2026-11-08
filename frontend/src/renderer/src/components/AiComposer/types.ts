@@ -20,4 +20,6 @@ export interface AiComposerProps {
   onOpenFile: (path: string) => void
   /** 发送一条消息（已去除首尾空白且非空）、选中的模型主键与随行附件 */
   onSend: (text: string, modelConfigId: number, attachments: readonly AiAttachment[]) => void
+  /** 中止当前正在执行的一轮对话；缺省时 running 状态下不提供停止入口 */
+  onAbort?: () => void
 }

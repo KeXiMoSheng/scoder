@@ -23,7 +23,7 @@ export default function AiChatPanel({
   onAttachmentsSent,
   onOpenFile
 }: AiChatPanelProps): React.JSX.Element {
-  const { messages, running, error, usage, send } = useAiChat(sessionId, cwd)
+  const { messages, running, error, usage, send, abort } = useAiChat(sessionId, cwd)
 
   const handleSend = useCallback(
     (text: string, modelConfigId: number, attachments: readonly AiAttachment[]): void => {
@@ -53,6 +53,7 @@ export default function AiChatPanel({
         onRemoveAttachment={onRemoveAttachment}
         onOpenFile={onOpenFile}
         onSend={handleSend}
+        onAbort={abort}
       />
     </>
   )

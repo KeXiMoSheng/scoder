@@ -34,6 +34,19 @@ function appendText(previous: AiMessageView[], text: string): AiMessageView[] {
   return [...previous, { kind: 'assistant', id: nextLiveId('assistant'), time: Date.now(), text }]
 }
 
+/**
+ * 给被打断的那段回复打上「已停止」标记。
+ * 只有列表末尾正好是一段助手文本时才标记：中止如果发生在工具执行中，
+ * 末尾是工具卡片，此时没有“半截回答”需要说明。
+ */
+function markLastAssistantInterrupted(previous: AiMessageView[]): AiMessageView[] {
+  const last = previous[previous.length - 1]
+  if (last?.kind !== 'assistant') {
+    return previous
+  }
+  return [...previous.slice(0, -1), { ...last, interrupted: true }]
+}
+
 /** 更新/插入"进行中"的改动清单：位置保持在它第一次出现的地方 */
 function upsertPendingChanges(previous: AiMessageView[], files: ToolFileChange[]): AiMessageView[] {
   const entry: AiMessageView = {
@@ -263,10 +276,12 @@ function applyEvent(
         const rest = previous.filter(
           (view) => !(view.kind === 'changes' && view.id === PENDING_CHANGES_ID)
         )
-        if (files.length === 0) {
-          return rest
-        }
-        return [...rest, { kind: 'changes', id: nextLiveId('changes'), time: Date.now(), files }]
+        const settled: AiMessageView[] =
+          files.length === 0
+            ? rest
+            : [...rest, { kind: 'changes', id: nextLiveId('changes'), time: Date.now(), files }]
+        // 用户中止：给被打断的那段回复打上标记，与磁盘上的 interrupted 语义一致
+        return event.reason === 'aborted' ? markLastAssistantInterrupted(settled) : settled
       })
       break
     }

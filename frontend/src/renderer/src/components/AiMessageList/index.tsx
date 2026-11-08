@@ -88,7 +88,13 @@ export default function AiMessageList({
               />
             )
           case 'assistant':
-            return <AssistantMessage key={message.id} text={message.text} />
+            return (
+              <AssistantMessage
+                key={message.id}
+                text={message.text}
+                interrupted={message.interrupted}
+              />
+            )
           case 'tool':
             return <ToolCard key={message.id} message={message} />
           case 'changes':
@@ -179,11 +185,25 @@ function UserBubble({
   )
 }
 
-/** 助手回复：直接复用文件预览的 Markdown 渲染（message 变体，紧凑排版） */
-function AssistantMessage({ text }: { text: string }): React.JSX.Element {
+/**
+ * 助手回复：直接复用文件预览的 Markdown 渲染（message 变体，紧凑排版）。
+ * 被用户中止打断的那段在末尾补一行说明，避免读者把半截回答当成结论。
+ */
+function AssistantMessage({
+  text,
+  interrupted
+}: {
+  text: string
+  interrupted?: boolean
+}): React.JSX.Element {
   return (
     <div className="mb-3">
       <MarkdownPreview content={text} variant="message" />
+      {interrupted ? (
+        <p className="mt-1 mb-0 text-[11px] leading-[1.5] text-dim">
+          已停止生成，以上是中断前的内容
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -66,8 +66,17 @@ export interface SessionEventMap {
   'user/message': { content: SessionBlock[] }
   /** 一次模型调用开始 */
   'step/start': { turn: number; step: number }
-  /** 模型这一步的输出：文本片段与它请求的工具调用 */
-  'assistant/message': { turn: number; step: number; content: SessionBlock[] }
+  /**
+   * 模型这一步的输出：文本片段与它请求的工具调用。
+   * interrupted 表示这条消息是被用户中止打断后补记的：内容只是中断前已流出的前缀，
+   * 其中的工具调用一律不保留（中断发生在派发之前，保留就必须伪造结果）。
+   */
+  'assistant/message': {
+    turn: number
+    step: number
+    content: SessionBlock[]
+    interrupted?: true
+  }
   /** 一次工具执行的结果，callId 与 assistant 消息里的 tool-call 块对应 */
   'tool/result': {
     turn: number

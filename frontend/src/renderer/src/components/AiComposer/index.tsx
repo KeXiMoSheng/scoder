@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, Folder, X } from 'lucide-react'
+import { ArrowRight, Folder, Square, X } from 'lucide-react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { ModelConfig } from '@shared/model-config/types'
 import AiContextUsage from '../AiContextUsage'
@@ -18,8 +18,16 @@ const SEND_BUTTON_CLASS =
   'inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-[#3fb950] p-0 text-[#0b0f14] transition-[filter] hover:brightness-110 disabled:cursor-default disabled:opacity-40'
 
 /**
+ * 停止按钮：生成中用同一位置、同一尺寸替换发送键，避免光标与视线跳动。
+ * 用中性色而不是红色——停止是正常操作，不是危险动作。
+ */
+const STOP_BUTTON_CLASS =
+  'inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-line bg-elevated p-0 text-fg transition-colors hover:bg-hover'
+
+/**
  * AI 输入区：多行输入框 + 底部状态栏（左模型选择器、右发送按钮）。
  * Enter 发送、Shift+Enter 换行；输入法组合输入期间的 Enter 不触发发送。
+ * 生成中发送键变成停止键，Esc 等价于点击停止（焦点在输入框时）。
  */
 export default function AiComposer({
   disabled = false,
@@ -30,7 +38,8 @@ export default function AiComposer({
   attachments,
   onRemoveAttachment,
   onOpenFile,
-  onSend
+  onSend,
+  onAbort
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
   const [models, setModels] = useState<ModelConfig[]>([])
@@ -131,13 +140,19 @@ export default function AiComposer({
           disabled
             ? '先新建一个会话'
             : running
-              ? '正在生成，可先输入下一条…'
+              ? '正在生成，可点右侧停止'
               : '输入消息，Enter 发送，Shift+Enter 换行'
         }
         value={value}
         disabled={disabled}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
+          // 停在心里觉得不对的时候手不用离开键盘：Esc 等价于点停止键
+          if (event.key === 'Escape' && running && onAbort) {
+            event.preventDefault()
+            onAbort()
+            return
+          }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
             submit()
@@ -178,16 +193,28 @@ export default function AiComposer({
             canCreate={canCreateSession}
             onCreateSession={onCreateSession}
           />
-          <button
-            type="button"
-            className={SEND_BUTTON_CLASS}
-            aria-label="发送消息"
-            title="发送（Enter）"
-            disabled={!canSend}
-            onClick={submit}
-          >
-            <ArrowRight className="size-4" strokeWidth={2.5} />
-          </button>
+          {running && onAbort ? (
+            <button
+              type="button"
+              className={STOP_BUTTON_CLASS}
+              aria-label="停止生成"
+              title="停止生成（Esc）"
+              onClick={onAbort}
+            >
+              <Square className="size-3 fill-current" strokeWidth={0} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={SEND_BUTTON_CLASS}
+              aria-label="发送消息"
+              title="发送（Enter）"
+              disabled={!canSend}
+              onClick={submit}
+            >
+              <ArrowRight className="size-4" strokeWidth={2.5} />
+            </button>
+          )}
         </div>
       </div>
     </div>

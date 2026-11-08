@@ -352,11 +352,17 @@ function findOpenTurn(events: readonly SessionEvent[]): number | null {
 /**
  * 把事件序列重放成 ChatMessage 数组。
  * 只认消息类事件，边界事件（turn/step）与标题事件不进入上下文。
+ *
+ * 工具调用与结果必须成对出现在历史里：用户中止或被强杀可能在两者之间留下缺口，
+ * 把缺口原样喂给模型会得到 “tool_calls must be followed by tool messages” 的 400，
+ * 整个会话从此发不出消息。因此这里以 assistant 消息为组，消费它后面的工具结果，
+ * 没有结果的调用、没有调用的结果都丢弃——历史因此永远是可发送的形状。
  * @param events 按 seq 排好的事件
  */
 function replay(events: readonly SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
-  for (const event of events) {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
     switch (event.type) {
       case 'user/message': {
         messages.push({ role: 'user', content: modelTextOf(event.data.content) })
@@ -364,27 +370,43 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
       }
       case 'assistant/message': {
         const text = textOf(event.data.content)
-        const toolCalls = toolCallsOf(event.data.content)
-        if (text.length === 0 && toolCalls.length === 0) {
+        const calls = toolCallsOf(event.data.content)
+        // 这条消息之后、下一条消息之前的工具结果；中间允许夹着 step/turn 与标题事件
+        const results = new Map<string, string>()
+        let next = index + 1
+        while (
+          next < events.length &&
+          events[next].type !== 'user/message' &&
+          events[next].type !== 'assistant/message'
+        ) {
+          const candidate = events[next]
+          if (candidate.type === 'tool/result') {
+            results.set(candidate.data.callId, candidate.data.text)
+          }
+          next += 1
+        }
+        index = next - 1
+        const answered = calls.filter((call) => results.has(call.id))
+        if (text.length === 0 && answered.length === 0) {
           // 空响应（模型这一轮什么也没说）不进上下文
           break
         }
         messages.push({
           role: 'assistant',
           content: text.length > 0 ? text : null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
+          ...(answered.length > 0 ? { tool_calls: answered } : {})
         })
-        break
-      }
-      case 'tool/result': {
-        messages.push({
-          role: 'tool',
-          tool_call_id: event.data.callId,
-          content: event.data.text
-        })
+        for (const call of answered) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: results.get(call.id) ?? ''
+          })
+        }
         break
       }
       default:
+        // 工具结果已在上面随其 assistant 消息成组消费；没有前导调用的孤立结果直接丢弃
         break
     }
   }

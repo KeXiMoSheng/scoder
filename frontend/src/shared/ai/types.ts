@@ -203,7 +203,17 @@ export type AiMessageView =
       /** 本轮附加的上下文（文件/目录/选中行）；没有附件时缺省 */
       attachments?: AiAttachmentView[]
     }
-  | { kind: 'assistant'; id: string; time: number; text: string }
+  | {
+      kind: 'assistant'
+      id: string
+      time: number
+      text: string
+      /**
+       * 这段回复是被用户中止打断的：文本只保留中断前已流出的前缀。
+       * 来自日志里的 interrupted 标记（历史）或 turn-end 的 aborted（实时）。
+       */
+      interrupted?: boolean
+    }
   | {
       kind: 'tool'
       id: string

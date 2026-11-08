@@ -56,7 +56,14 @@ export function toMessageViews(
       case 'assistant/message': {
         const text = textOf(event.data.content)
         if (text.length > 0) {
-          views.push({ kind: 'assistant', id: `assistant-${event.seq}`, time: event.time, text })
+          views.push({
+            kind: 'assistant',
+            id: `assistant-${event.seq}`,
+            time: event.time,
+            text,
+            // 被用户中止打断的消息：内容只是中断前已流出的前缀
+            ...(event.data.interrupted ? { interrupted: true } : {})
+          })
         }
         for (const block of event.data.content) {
           if (block.type !== 'tool-call') {
