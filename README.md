@@ -52,3 +52,13 @@ make dev-desktop # 启动桌面端开发模式
 
 - `GET /api/v1/health`：健康检查
 - `GET /api/v1/ping`：连通性测试
+
+# 1. 工作区必须干净（npm version 会检查），提交你的功能改动
+git add -A && git commit -m "支持xxx"
+
+# 2. 发版：自动改 package.json + package-lock.json，并 commit + tag
+make release BUMP=patch     # 或 minor / major
+
+# 3. 推 tag 与会话记录，然后打包（产物名自动变成 scoder-2.5.2-setup.exe）
+git push --follow-tags
+make dist-linux CHANNEL=release

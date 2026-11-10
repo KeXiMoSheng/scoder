@@ -10,6 +10,11 @@
   "scripts": {
     "generate:file-icons": "node scripts/generate-file-icons.mjs",
     "check:file-icon": "node scripts/check-file-icon.mjs",
+    "version:check": "node scripts/check-version.mjs",
+    "release:patch": "npm version patch -m \"版本%s\" --tag-version-prefix=\"\"",
+    "release:minor": "npm version minor -m \"版本%s\" --tag-version-prefix=\"\"",
+    "release:major": "npm version major -m \"版本%s\" --tag-version-prefix=\"\"",
+    "preversion": "npm run typecheck",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

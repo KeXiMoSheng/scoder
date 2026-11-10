@@ -1,4 +1,4 @@
-.PHONY: install dev-api dev-desktop build dist-win dist-linux dist-mac dist-win-dev dist-linux-dev dist-mac-dev test lint
+.PHONY: install dev-api dev-desktop build dist-win dist-linux dist-mac dist-win-dev dist-linux-dev dist-mac-dev release test lint
 
 # 打包通道：release=正式版（版本号取 package.json 的 version）；dev=开发版（版本号追加 -dev.<时间戳>）
 # 用法：make dist-win（正式版）或 make dist-win-dev / make dist-win CHANNEL=dev（开发版）
@@ -41,9 +41,16 @@ dist-linux-dev: dist-linux
 dist-mac-dev: CHANNEL=dev
 dist-mac-dev: dist-mac
 
+# 发版：make release BUMP=patch | minor | major（默认 patch）
+# 由 npm version 同时改写 package.json 与 package-lock.json，然后自动提交并打 tag（不带 v 前缀）
+BUMP ?= patch
+release:
+	cd frontend && npm run release:$(BUMP)
+
 test:
 	cd backend && uv run pytest
 
 lint:
 	cd backend && uv run ruff check .
+	cd frontend && npm run version:check
 	cd frontend && npm run lint
