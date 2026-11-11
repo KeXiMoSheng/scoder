@@ -10,6 +10,7 @@ export function buildSystemPrompt(cwd: string): string {
     roleSection(cwd),
     planSection(),
     discoverySection(),
+    commandSection(),
     writeSection(),
     failureSection(),
     styleSection()
@@ -43,6 +44,17 @@ function discoverySection(): string {
     '3. read 返回带行号的窗口。文件很长时用 offset/limit 续读，不要一次要求返回全文。',
     '4. glob/grep 结果里写了“仅显示/共 N 条”时，说明结果被截断：不要据此断言文件不存在，用 path 或更精确的模式缩小范围。',
     '5. 路径必须落在工作区内。工具报“超出工作区”时不要尝试绕过，直接告诉用户。'
+  ].join('\n')
+}
+
+/** 执行命令：只在需要真实进程时用，文件操作仍走专用工具 */
+function commandSection(): string {
+  return [
+    '执行命令的规则：',
+    '1. 需要构建、测试、安装依赖、查看 git 状态或验证网络连通性（ping/curl）时用 bash；读、找、改文件仍用文件工具，不要用 cat/ls/sed 代替。',
+    '2. 每次执行都看退出码：非 0 时先读 stderr，再决定重试、换方法还是把关键输出告诉用户。',
+    '3. 命令默认在工作区根执行；需要子目录时用 workdir 参数，不要用 cd。',
+    '4. 不执行破坏性命令（rm -rf、强制推送、批量覆盖），除非用户明确要求。'
   ].join('\n')
 }
 

@@ -134,6 +134,44 @@
   }
 }
 
+/* ---------- 工具调用行的运行态流光 ----------
+   与 deepseek-harness 的 TextShimmer 同义：「准备中 / 运行中」的行文字
+   有一道沿文字移动的高光，表示模型或工具仍在工作。
+   只作用于文字本身（图标与分隔点不包进这个类），颜色取自主题变量。 */
+@keyframes tool-row-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.tool-row-running-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-dim) 0%,
+    var(--text-dim) 35%,
+    var(--text) 50%,
+    var(--text-dim) 65%,
+    var(--text-dim) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: tool-row-shimmer 1.8s linear infinite;
+}
+
+/* 减少动态效果：保留可读的前景色，只停掉位移动画 */
+@media (prefers-reduced-motion: reduce) {
+  .tool-row-running-text {
+    animation: none;
+    background: none;
+    color: var(--text);
+  }
+}
+
 /* 拖拽期间全局保持对应方向光标并禁止选中文本（覆盖 Monaco 等内部元素）。
    这两个类由 ResizeHandle 通过 document.body.classList 命令式增删，
    作用于 body 及其全部后代，无法表达为元素上的工具类，故保留为全局规则。 */

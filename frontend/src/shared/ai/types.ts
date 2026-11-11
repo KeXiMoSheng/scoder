@@ -58,6 +58,13 @@ export type ToolFileChange = {
   status: 'A' | 'M'
 }
 
+/**
+ * 工具调用行的生命周期状态（对齐 deepseek-harness 的 ToolRowState）：
+ * 参数流式生成中 → 执行中 → 成功 / 失败 / 被用户中止。
+ * 状态只影响行的视觉与无障碍文案，不改变工具结果本身。
+ */
+export type ToolRowState = 'preparing' | 'running' | 'ok' | 'error' | 'stopped'
+
 /** 任务清单条目的三态生命周期 */
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 
@@ -165,8 +172,21 @@ export type AiEvent =
   | { type: 'turn-start'; sessionId: string }
   | { type: 'step-start'; step: number }
   | { type: 'text-delta'; text: string }
+  /**
+   * 工具调用行先以「准备中」出现：模型仍在流式生成参数时，界面就能看到
+   * 即将执行哪个工具。callId 与随后的 tool-call 一致，后者把同一行升级为执行中。
+   */
+  | { type: 'tool-preparing'; callId: string; name: string }
   | { type: 'tool-call'; callId: string; name: string; args: unknown; card?: ToolCardView }
-  | { type: 'tool-result'; callId: string; ok: boolean; text: string; card?: ToolCardView }
+  | {
+      type: 'tool-result'
+      callId: string
+      ok: boolean
+      text: string
+      /** 用户中止本轮对话导致这次调用没有完成：行状态展示为「已停止」 */
+      stopped?: true
+      card?: ToolCardView
+    }
   /** 写工具落盘后的通知：渲染进程据此刷新文件树与已打开的编辑器 */
   | { type: 'file-changed'; paths: string[] }
   /** 自动标题润色完成：标签栏与历史列表据此更新标题 */
@@ -220,12 +240,11 @@ export type AiMessageView =
       time: number
       callId: string
       name: string
-      /** 模型给出的原始参数 JSON 字符串 */
+      /** 模型给出的原始参数 JSON 字符串；参数尚未生成完时为空串 */
       arguments: string
-      status: 'pending' | 'done'
-      /** 执行是否成功（status 为 done 时才有意义） */
-      ok?: boolean
-      /** 工具结果文本（展示用，可能较长） */
+      /** 行状态：准备中 → 执行中 → 成功 / 失败 / 被中止 */
+      status: ToolRowState
+      /** 工具结果文本（展示用，可能较长）；执行结束后才有 */
       resultText?: string
       /** 卡片展示意图：主进程按工具定义推导并随日志保存，历史与实时一致 */
       card?: ToolCardView

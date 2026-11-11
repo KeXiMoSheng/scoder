@@ -85,6 +85,8 @@ export interface SessionEventMap {
     name: string
     ok: boolean
     text: string
+    /** 用户中止本轮对话导致这次调用没有完成：重放时展示为「已停止」而不是失败 */
+    stopped?: true
     /**
      * 执行后推导的展示卡片（工具私有载荷，核心不解释它）。
      * 存进日志才能保证历史重放与实时看到的卡片一致。

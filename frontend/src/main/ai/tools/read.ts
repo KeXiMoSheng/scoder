@@ -1,6 +1,6 @@
 import type { ReadWindow } from '../fs/service'
 import type { ToolDefinition } from './registry'
-import { optionalInteger, requireString } from './registry'
+import { optionalInteger, requireString, sectionText } from './registry'
 
 /** 一次读取的默认行数与上限（与 deepseek-harness 的 readLimit 默认值对齐） */
 const DEFAULT_LIMIT = 800
@@ -85,7 +85,8 @@ export function createReadTool(): ToolDefinition {
         kind: 'read',
         title: `读取 ${filePath ?? '文件'}`,
         ...(filePath ? { path: filePath } : {}),
-        body: outcome.text
+        // 行卡片只展示带行号的内容窗口；`<path>`/`<type>` 包裹是给模型定位用的
+        body: sectionText(outcome.text, 'content')
       }
     }
   }

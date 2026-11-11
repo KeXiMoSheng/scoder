@@ -11,6 +11,8 @@ export interface AiMessageListProps {
   error: string | null
   /** 没有任何消息时显示的提示文案 */
   emptyHint: string
-  /** 点击消息里的附件打开对应文件 */
+  /** 当前工作区根：工具调用行里的绝对路径转成相对路径展示 */
+  cwd: string | null
+  /** 点击消息里的附件或工具路径打开对应文件 */
   onOpenFile: (path: string) => void
 }

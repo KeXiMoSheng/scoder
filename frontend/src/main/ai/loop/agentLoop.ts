@@ -118,6 +118,8 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
       }
 
       const pending = new Map<number, PendingCall>()
+      /** 已经发过「准备中」行的调用（按流式 index）：只发一次，不随参数分片重复 */
+      const prepared = new Set<number>()
       /** 本步已经流出的文本：中止时要作为「中断前缀」落盘 */
       let text = ''
       /** assistant 消息是否已经落盘（中止结算据此决定要不要补记前缀） */
@@ -136,7 +138,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
           // 每个 chunk 都自己判一次中止：不依赖适配器有没有把 signal 真正传到连接上，
           // 用户点停止后最多再丢这一帧，不会继续把内容推到界面上
           signal.throwIfAborted()
-          text += appendDelta(delta, pending, emit)
+          text += appendDelta(delta, pending, prepared, emit)
           if (delta.usage) {
             stepUsage = delta.usage
           }
@@ -272,11 +274,15 @@ function toBlocks(text: string, toolCalls: readonly ChatToolCall[]): SessionBloc
 
 /**
  * 处理一帧流式增量：文本转成事件，工具调用片段按 index 累积。
+ * 一旦某个调用已经知道 id 与名字，就先推一条「准备中」事件：
+ * 参数往往要流好一会儿（write 的整份文件内容），界面能提前看到即将执行哪个工具。
+ * 真正的 tool-call 事件在流读完后发出，按同一 callId 把这个行升级为执行中。
  * @returns 本帧新增的文本（无文本时为空串）
  */
 function appendDelta(
   delta: StreamDelta,
   pending: Map<number, PendingCall>,
+  prepared: Set<number>,
   emit: (event: AiEvent) => void
 ): string {
   if (delta.text) {
@@ -288,6 +294,11 @@ function appendDelta(
     if (part.name) current.name = part.name
     if (part.argumentsDelta) current.arguments += part.argumentsDelta
     pending.set(part.index, current)
+    // id 与名字可能不同帧到达：两条都齐了再发，且每个 index 只发一次
+    if (!prepared.has(part.index) && current.id.length > 0 && current.name.length > 0) {
+      prepared.add(part.index)
+      emit({ type: 'tool-preparing', callId: current.id, name: current.name })
+    }
   }
   return delta.text ?? ''
 }
@@ -431,7 +442,7 @@ async function settleAbortedStep(options: {
       if (!cardShown.has(call.id)) {
         emitToolCall(call, context)
       }
-      await writeToolResult(call, { ok: false, text: CANCELED_CALL_TEXT }, messages, context)
+      await writeToolResult(call, { ok: false, text: CANCELED_CALL_TEXT }, messages, context, true)
     }
     await sessions.record(request.cwd, request.sessionId, [
       {
@@ -445,12 +456,16 @@ async function settleAbortedStep(options: {
   }
 }
 
-/** 把一次调用的结果推给界面、写入日志并回灌模型 */
+/**
+ * 把一次调用的结果推给界面、写入日志并回灌模型。
+ * @param stopped 用户中止导致的收尾结果：界面展示为「已停止」而不是失败
+ */
 async function writeToolResult(
   call: ChatToolCall,
   result: ToolExecutionResult,
   messages: ChatMessage[],
-  context: CallContext
+  context: CallContext,
+  stopped = false
 ): Promise<void> {
   const { request, sessions, turn, step, emit } = context
   emit({
@@ -458,6 +473,7 @@ async function writeToolResult(
     callId: call.id,
     ok: result.ok,
     text: result.text,
+    ...(stopped ? { stopped: true as const } : {}),
     ...(result.card ? { card: result.card } : {})
   })
   // 写工具落盘后通知界面：文件树与已打开的编辑器需要跟着变
@@ -474,6 +490,7 @@ async function writeToolResult(
         name: call.function.name,
         ok: result.ok,
         text: result.text,
+        ...(stopped ? { stopped: true as const } : {}),
         // 卡片随日志保存，历史重放才能与实时看到的一致
         ...(result.card ? { card: result.card } : {})
       }

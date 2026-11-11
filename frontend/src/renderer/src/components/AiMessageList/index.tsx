@@ -1,26 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  CircleDot,
-  FileDiff,
-  Folder,
-  ListChecks,
-  Loader2,
-  Wrench
-} from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { FileDiff, Folder, Loader2 } from 'lucide-react'
 import { attachmentKey } from '@shared/ai/attachments'
-import type {
-  AiAttachmentView,
-  AiMessageView,
-  TodoItem,
-  ToolFileChange,
-  ToolHunk
-} from '@shared/ai/types'
+import type { AiAttachmentView, ToolFileChange } from '@shared/ai/types'
 import FileRow from '../FileRow'
 import MarkdownPreview from '../MarkdownPreview'
+import ToolCallRow from '../ToolCallRow'
 import { attachmentLineLabel } from '../../lib/aiAttachment'
 import { basename } from '../../lib/filePath'
 import { cn } from '../../lib/utils'
@@ -31,13 +15,14 @@ const PIN_THRESHOLD = 48
 
 /**
  * 对话消息列表：用户消息右对齐气泡，助手回复走 MarkdownPreview，
- * 工具调用显示为卡片（标题 + 可选正文），结果按 callId 回填。
+ * 工具调用显示为一行式调用行（状态 + 单行摘要，点击展开），结果按 callId 回填。
  */
 export default function AiMessageList({
   messages,
   running,
   error,
   emptyHint,
+  cwd,
   onOpenFile
 }: AiMessageListProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -96,7 +81,9 @@ export default function AiMessageList({
               />
             )
           case 'tool':
-            return <ToolCard key={message.id} message={message} />
+            return (
+              <ToolCallRow key={message.id} message={message} cwd={cwd} onOpenFile={onOpenFile} />
+            )
           case 'changes':
             return <ChangesSummary key={message.id} files={message.files} />
         }
@@ -209,120 +196,6 @@ function AssistantMessage({
 }
 
 /**
- * 工具卡片：默认收起，只显示工具名与状态。
- * 点击标题行（左侧工具图标或右侧箭头都可以）展开正文：
- * read 看带行号窗口，write/edit 看 diff，失败时看原因。
- */
-function ToolCard({
-  message
-}: {
-  message: Extract<AiMessageView, { kind: 'tool' }>
-}): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  const title = message.card?.title ?? message.name
-  // 任务清单卡片用结构化行渲染；diff 卡片用结构化行渲染；其他工具才走 pre
-  const todos = message.card?.kind === 'todo' ? (message.card.todos ?? []) : []
-  const hunks = message.card?.kind === 'diff' ? (message.card.hunks ?? []) : []
-  // 卡片优先；卡片没有正文（失败、旧日志或 diff 为空）时退回结果文本，保证总能展开
-  const body = message.card?.body ?? message.resultText
-  const hasTodos = todos.length > 0
-  const hasHunks = hunks.length > 0
-  const hasBody = hasTodos || hasHunks || (typeof body === 'string' && body.length > 0)
-  const statusLabel =
-    message.status === 'pending' ? '执行中' : message.ok === false ? '失败' : '完成'
-  const Chevron = expanded ? ChevronDown : ChevronRight
-
-  return (
-    <div className="mb-3 overflow-hidden rounded-md border border-line bg-elevated">
-      <button
-        type="button"
-        className={cn(
-          'flex w-full items-center gap-1.5 px-2 py-1.5 text-left',
-          hasBody ? 'cursor-pointer hover:bg-hover' : 'cursor-default',
-          expanded && 'border-b border-line'
-        )}
-        title={hasBody ? (expanded ? '收起工具输出' : '展开工具输出') : title}
-        aria-expanded={hasBody ? expanded : undefined}
-        onClick={() => {
-          if (hasBody) {
-            setExpanded((previous) => !previous)
-          }
-        }}
-      >
-        {hasTodos ? (
-          <ListChecks className="size-3.5 shrink-0 text-dim" />
-        ) : (
-          <Wrench className="size-3.5 shrink-0 text-dim" />
-        )}
-        <span
-          className="min-w-0 flex-1 truncate text-[12px] text-fg"
-          title={message.card?.path ?? title}
-        >
-          {title}
-        </span>
-        <span
-          className={cn(
-            'shrink-0 text-[11px]',
-            message.status === 'pending' && 'text-dim',
-            message.status === 'done' && message.ok !== false && 'text-dim',
-            message.status === 'done' && message.ok === false && 'text-danger'
-          )}
-        >
-          {statusLabel}
-        </span>
-        {hasBody ? <Chevron className="size-3.5 shrink-0 text-dim" /> : null}
-      </button>
-      {expanded && hasBody ? (
-        hasTodos ? (
-          <TodoBody todos={todos} />
-        ) : hasHunks ? (
-          <DiffBody hunks={hunks} />
-        ) : (
-          <pre className="m-0 max-h-64 overflow-auto px-2 py-1.5 text-[11px] leading-[1.5] break-all whitespace-pre-wrap text-dim">
-            {body}
-          </pre>
-        )
-      ) : null}
-    </div>
-  )
-}
-
-/**
- * 任务清单正文：三态图标 + 一行任务。
- * 进行中加重、已完成置灰划线，收起状态下由卡片标题里的进度补足信息。
- */
-function TodoBody({ todos }: { todos: readonly TodoItem[] }): React.JSX.Element {
-  return (
-    <ul className="m-0 list-none px-2 py-1.5">
-      {todos.map((todo) => (
-        <li
-          key={todo.content}
-          className="flex items-start gap-1.5 py-0.5 text-[12px] leading-[1.5]"
-        >
-          {todo.status === 'completed' ? (
-            <CheckCircle2 className="mt-[2px] size-3.5 shrink-0 text-link" />
-          ) : todo.status === 'in_progress' ? (
-            <CircleDot className="mt-[2px] size-3.5 shrink-0 text-fg" />
-          ) : (
-            <Circle className="mt-[2px] size-3.5 shrink-0 text-dim" />
-          )}
-          <span
-            className={cn(
-              'min-w-0 flex-1 break-words',
-              todo.status === 'completed' && 'text-dim line-through',
-              todo.status === 'in_progress' && 'text-fg',
-              todo.status === 'pending' && 'text-dim'
-            )}
-          >
-            {todo.content}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/**
  * 本轮改动清单：一轮对话结束后附着在消息末尾。
  * 复用文件树的 FileRow（图标 + 文件名 + 行尾插槽），保证与左侧列表同一套视觉。
  */
@@ -358,34 +231,6 @@ function ChangesSummary({ files }: { files: readonly ToolFileChange[] }): React.
           </li>
         ))}
       </ul>
-    </div>
-  )
-}
-
-/** diff 正文：删除行红底、新增行蓝底，上下文行保持低调 */
-function DiffBody({ hunks }: { hunks: readonly ToolHunk[] }): React.JSX.Element {
-  return (
-    <div className="max-h-64 overflow-auto px-2 py-1.5 text-[11px] leading-[1.5]">
-      {hunks.map((hunk, hunkIndex) => (
-        <div
-          key={hunkIndex}
-          className={hunkIndex > 0 ? 'mt-1.5 border-t border-line pt-1.5' : undefined}
-        >
-          {hunk.lines.map((line, lineIndex) => (
-            <pre
-              key={lineIndex}
-              className={cn(
-                'm-0 whitespace-pre-wrap break-all',
-                line.kind === 'del' && 'bg-danger/10 text-danger',
-                line.kind === 'add' && 'bg-link/10 text-link',
-                line.kind === 'context' && 'text-dim'
-              )}
-            >
-              {`${line.kind === 'del' ? '-' : line.kind === 'add' ? '+' : ' '} ${line.text}`}
-            </pre>
-          ))}
-        </div>
-      ))}
     </div>
   )
 }

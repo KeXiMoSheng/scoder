@@ -78,7 +78,8 @@ export function toMessageViews(
             callId: block.id,
             name: block.name,
             arguments: block.arguments,
-            status: 'pending',
+            // 日志里只有「已发起」的调用；结果事件到达前一律按执行中重放
+            status: 'running',
             ...(card ? { card } : {})
           })
         }
@@ -97,8 +98,8 @@ export function toMessageViews(
         const card = resultCard(event.data.card ?? current.card, event.data.name, event.data.text)
         views[index] = {
           ...current,
-          status: 'done',
-          ok: event.data.ok,
+          // 中止（用户点停止）是「已停止」，不是工具失败：两者在行上颜色与文案不同
+          status: event.data.stopped ? 'stopped' : event.data.ok ? 'ok' : 'error',
           resultText: event.data.text,
           ...(card ? { card } : {})
         }

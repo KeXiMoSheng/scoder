@@ -66,6 +66,20 @@ function upsertPendingChanges(previous: AiMessageView[], files: ToolFileChange[]
   return next
 }
 
+/**
+ * 清掉不该留在列表里的临时行：
+ * - 进行中的改动清单（结束时会换成正式条目，异常中断时直接丢弃）；
+ * - 停在「准备中」的工具行——中止发生在派发之前，这条调用没有落盘，
+ *   界面也不该留下一个永远不会前进的行。
+ * 没有可清理项时返回原数组，避免无意义的重渲染。
+ */
+function dropTransientRows(previous: AiMessageView[]): AiMessageView[] {
+  const stale = (view: AiMessageView): boolean =>
+    (view.kind === 'changes' && view.id === PENDING_CHANGES_ID) ||
+    (view.kind === 'tool' && view.status === 'preparing')
+  return previous.some(stale) ? previous.filter((view) => !stale(view)) : previous
+}
+
 /** 把工具调用参数转回原文：事件里已是对象，卡片展示需要字符串 */
 function stringifyArguments(args: unknown): string {
   try {
@@ -210,16 +224,32 @@ function applyEvent(
       setError(null)
       // 新一轮开始：上一轮的改动清单已经落成条目，这里清空累积器
       turnChanges.clear()
-      // 上一轮若异常中断，可能残留进行中的清单条目
-      setMessages((previous) =>
-        previous.some((view) => view.kind === 'changes' && view.id === PENDING_CHANGES_ID)
-          ? previous.filter((view) => !(view.kind === 'changes' && view.id === PENDING_CHANGES_ID))
-          : previous
-      )
+      // 上一轮若异常中断，可能残留进行中的清单条目与没派发出去的调用行
+      setMessages(dropTransientRows)
       break
     }
     case 'text-delta': {
       setMessages((previous) => appendText(previous, event.text))
+      break
+    }
+    case 'tool-preparing': {
+      // 参数还在流式生成：先摆一行「准备中」，让用户提前看到即将执行哪个工具
+      setMessages((previous) =>
+        previous.some((view) => view.kind === 'tool' && view.callId === event.callId)
+          ? previous
+          : [
+              ...previous,
+              {
+                kind: 'tool',
+                id: nextLiveId('tool'),
+                time: Date.now(),
+                callId: event.callId,
+                name: event.name,
+                arguments: '',
+                status: 'preparing'
+              }
+            ]
+      )
       break
     }
     case 'tool-call': {
@@ -230,10 +260,22 @@ function applyEvent(
         callId: event.callId,
         name: event.name,
         arguments: stringifyArguments(event.args),
-        status: 'pending',
+        status: 'running',
         ...(event.card ? { card: event.card } : {})
       }
-      setMessages((previous) => [...previous, message])
+      setMessages((previous) => {
+        // 同一调用可能已经有一张「准备中」的行：就地升级，不新增一条
+        const index = previous.findIndex(
+          (view) => view.kind === 'tool' && view.callId === event.callId
+        )
+        if (index === -1) {
+          return [...previous, message]
+        }
+        const next = [...previous]
+        const current = next[index]
+        next[index] = current.kind === 'tool' ? { ...message, id: current.id } : message
+        return next
+      })
       break
     }
     case 'tool-result': {
@@ -242,8 +284,7 @@ function applyEvent(
           message.kind === 'tool' && message.callId === event.callId
             ? {
                 ...message,
-                status: 'done',
-                ok: event.ok,
+                status: event.stopped ? 'stopped' : event.ok ? 'ok' : 'error',
                 resultText: event.text,
                 ...(event.card ? { card: event.card } : {})
               }
@@ -273,9 +314,8 @@ function applyEvent(
       const files = [...turnChanges.values()]
       turnChanges.clear()
       setMessages((previous) => {
-        const rest = previous.filter(
-          (view) => !(view.kind === 'changes' && view.id === PENDING_CHANGES_ID)
-        )
+        // 中止时停在「准备中」的行尚未派发、日志里不存在，随本轮一起清掉
+        const rest = dropTransientRows(previous)
         const settled: AiMessageView[] =
           files.length === 0
             ? rest

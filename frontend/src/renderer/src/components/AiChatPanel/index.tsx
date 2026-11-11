@@ -41,6 +41,7 @@ export default function AiChatPanel({
         running={running}
         error={error}
         emptyHint={emptyHint}
+        cwd={cwd}
         onOpenFile={onOpenFile}
       />
       <AiComposer
