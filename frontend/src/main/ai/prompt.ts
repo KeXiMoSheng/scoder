@@ -4,10 +4,15 @@
  * 与工具实现分离，每节只讲一类规则（对应 deepseek-harness 的 systemPrompt.section），
  * 以后增删工具时追加或去掉一节即可，不必回头改已有段落。
  * @param cwd 工作区根目录（用于告诉模型路径基准）
+ * @param platform 当前系统：决定 shell 语法提示，默认取运行时值
  */
-export function buildSystemPrompt(cwd: string): string {
+export function buildSystemPrompt(
+  cwd: string,
+  platform: NodeJS.Platform = process.platform
+): string {
   return [
     roleSection(cwd),
+    environmentSection(platform),
     planSection(),
     discoverySection(),
     commandSection(),
@@ -23,6 +28,24 @@ function roleSection(cwd: string): string {
     '你是 scoder 桌面编辑器里的编程助手，帮助用户理解和修改当前项目。',
     `当前工作区：${cwd}。所有工具路径都相对于该目录，展示给用户的路径也使用相对路径。`
   ].join('\n')
+}
+
+/**
+ * 运行环境：模型默认按 Linux 的 bash 语法写命令，这里只讲清系统与真正执行的 shell，
+ * 具体命令怎么写交给模型自己适配，不在这里罗列命令清单。
+ */
+function environmentSection(platform: NodeJS.Platform): string {
+  if (platform === 'win32') {
+    return (
+      '运行环境：Windows，bash 工具由 PowerShell（powershell.exe 5.1）执行，命令按 PowerShell 语法书写：' +
+      '串联用 ;（不支持 &&），丢弃错误输出用 2>$null，环境变量用 $env:NAME，路径用反斜杠；' +
+      'curl 需写 curl.exe（5.1 里 curl 是 Invoke-WebRequest 的别名）。'
+    )
+  }
+  return (
+    `运行环境：${platform === 'darwin' ? 'macOS' : 'Linux'}，` +
+    'bash 工具由 /bin/bash 执行，命令按 bash 语法书写，路径用正斜杠。'
+  )
 }
 
 /** 多步任务的规划：开工前先列清单，进度对用户可见 */

@@ -7,6 +7,20 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_TIMEOUT_MS = 600_000
 /** 单条流保留的最大字符数：超出时只保留末尾（报错通常收在这一段） */
 const MAX_STREAM_CHARS = 20_000
+/** 命令执行器随系统而变：Windows 是 PowerShell，其余是 bash */
+const IS_WINDOWS = process.platform === 'win32'
+
+/** 工具描述：必须讲清真实 shell，否则模型会照着 bash 语法发命令 */
+const DESCRIPTION = IS_WINDOWS
+  ? '在工作区内执行一条命令（Windows 下由 PowerShell 执行），返回 stdout、stderr 与退出码。' +
+    '命令按 PowerShell 语法书写：串联用 ;，丢弃错误输出用 2>$null。' +
+    '适合运行构建、测试、git 状态、ping/curl 等需要真实进程的操作；' +
+    '读写文件请优先用 read/write/edit，不要用 Get-Content/Get-ChildItem 代替。' +
+    '每次调用都是全新的 shell，不保留 cd 与环境变量；换目录用 workdir。长输出只保留末尾。'
+  : '在工作区内执行一条 shell 命令（新开一个 bash），返回 stdout、stderr 与退出码。' +
+    '适合运行构建、测试、git 状态、ping/curl 等需要真实进程的操作；' +
+    '读写文件请优先用 read/write/edit，不要用 cat/ls/sed 代替。' +
+    '每次调用都是全新的 shell，不保留 cd 与环境变量；换目录用 workdir。长输出只保留末尾。'
 
 /** 一次命令执行的结果（stdout/stderr 已按上限截断） */
 interface ShellRun {
@@ -30,17 +44,15 @@ interface ShellRun {
 export function createBashTool(): ToolDefinition {
   return {
     name: 'bash',
-    description:
-      '在工作区内执行一条 shell 命令（新开一个 bash），返回 stdout、stderr 与退出码。' +
-      '适合运行构建、测试、git 状态、ping/curl 等需要真实进程的操作；' +
-      '读写文件请优先用 read/write/edit，不要用 cat/ls/sed 代替。' +
-      '每次调用都是全新的 shell，不保留 cd 与环境变量；换目录用 workdir。长输出只保留末尾。',
+    description: DESCRIPTION,
     parameters: {
       type: 'object',
       properties: {
         command: {
           type: 'string',
-          description: '要执行的命令，例如 ping -c 4 baidu.com 或 npm run typecheck。'
+          description: IS_WINDOWS
+            ? '要执行的命令（PowerShell 语法），例如 ping -n 4 baidu.com 或 npm run typecheck。'
+            : '要执行的命令（bash 语法），例如 ping -c 4 baidu.com 或 npm run typecheck。'
         },
         description: {
           type: 'string',
@@ -105,8 +117,8 @@ export function createBashTool(): ToolDefinition {
 
 /**
  * 执行命令并收集输出。
- * 超时或用户中止都会杀掉整个进程组：bash 拉起的子进程不能留在后台。
- * @param command 交给 bash 的命令原文
+ * 超时或用户中止都会杀掉整个进程组：shell 拉起的子进程不能留在后台。
+ * @param command 交给 shell 的命令原文
  * @param cwd 工作目录（已解析到工作区内）
  * @param timeoutMs 超时毫秒数
  * @param signal 用户中止信号：工具必须转发，否则停止按钮会等到命令自己结束
@@ -123,10 +135,7 @@ function runCommand(
       return
     }
 
-    const shell =
-      process.platform === 'win32'
-        ? { file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', command] }
-        : { file: '/bin/bash', args: ['-c', command] }
+    const shell = resolveShell(command)
     const child = spawn(shell.file, shell.args, {
       cwd,
       env: {
@@ -209,6 +218,36 @@ function runCommand(
       resolve({ code, signal: childSignal, stdout, stderr, truncated, timedOut })
     })
   })
+}
+
+/**
+ * 按平台拼出执行器与参数。
+ * Windows 下用 PowerShell 的 -EncodedCommand：脚本按 UTF-16LE 转 Base64 传入，
+ * 绕开 Windows 命令行与 PowerShell 两层的引号解析，命令里的引号、空格、换行都原样保留。
+ * 脚本头部把输出编码改成 UTF-8（stdout 是管道，这里是重定向场景，不会碰控制台代码页），
+ * Node 才能正确解码中文；末尾把原生命令的退出码带出来，否则 PowerShell 默认一律返回 0。
+ * @param command 模型给出的命令原文
+ */
+function resolveShell(command: string): { file: string; args: string[] } {
+  if (!IS_WINDOWS) {
+    return { file: '/bin/bash', args: ['-c', command] }
+  }
+  const script = [
+    '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+    '$global:LASTEXITCODE = 0',
+    command,
+    'exit $global:LASTEXITCODE'
+  ].join('\n')
+  return {
+    file: 'powershell.exe',
+    args: [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64')
+    ]
+  }
 }
 
 /** 追加一段输出：超出上限时丢掉开头，只保留末尾 */
