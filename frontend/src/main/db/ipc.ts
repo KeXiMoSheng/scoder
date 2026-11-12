@@ -16,6 +16,7 @@ import {
 } from './workspace-projects'
 import {
   createModelConfig,
+  deleteAllModelConfigs,
   deleteModelConfig,
   findModelConfigById,
   listModelConfigs,
@@ -42,6 +43,11 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle(MODEL_CONFIG_CHANNELS.delete, async (event, id: number): Promise<boolean> => {
     const window = BrowserWindow.fromWebContents(event.sender)
     return confirmAndDelete(window, id)
+  })
+
+  ipcMain.handle(MODEL_CONFIG_CHANNELS.deleteAll, async (event): Promise<boolean> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return confirmAndDeleteAll(window)
   })
 
   // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
@@ -116,5 +122,30 @@ async function confirmAndDelete(window: BrowserWindow | null, id: number): Promi
     return false
   }
   deleteModelConfig(id)
+  return true
+}
+
+/** 删除全部前弹系统对话框确认（带上总条数），用户取消时返回 false */
+async function confirmAndDeleteAll(window: BrowserWindow | null): Promise<boolean> {
+  const total = listModelConfigs().length
+  if (total === 0) {
+    return true
+  }
+  const options: MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['取消', '全部删除'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '删除确认',
+    message: `确定要删除全部 ${total} 个模型配置吗？`,
+    detail: '删除后无法恢复，与之相关的本地数据不会一并删除。'
+  }
+  const result = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options)
+  if (result.response !== 1) {
+    return false
+  }
+  deleteAllModelConfigs()
   return true
 }

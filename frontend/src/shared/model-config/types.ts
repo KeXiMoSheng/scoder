@@ -49,8 +49,8 @@ export interface RemoteModelListRequest {
 
 /** 一键导入的结果 */
 export interface ModelImportResult {
-  /** 本次新建成功的配置 */
+  /** 本次新建的配置 */
   created: ModelConfig[]
-  /** 因「模型请求地址 + 模型名称」已存在而跳过的条数 */
-  skipped: number
+  /** 因「供应商名 + 模型地址 + 模型名称」一致而被覆盖的配置 */
+  updated: ModelConfig[]
 }

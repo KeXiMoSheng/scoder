@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download, Plus } from 'lucide-react'
+import { Download, Plus, Trash2 } from 'lucide-react'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import ModelConfigCard from '../ModelConfigCard'
 import ModelConfigForm from '../ModelConfigForm'
@@ -17,6 +17,7 @@ export default function ModelSettings({ onOpenImport }: ModelSettingsProps): Rea
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editor, setEditor] = useState<ModelEditorState>(null)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   /** 首屏加载：在异步回调中更新状态，避免 effect 内同步触发级联渲染 */
   useEffect(() => {
@@ -84,6 +85,24 @@ export default function ModelSettings({ onOpenImport }: ModelSettingsProps): Rea
     }
   }, [])
 
+  /** 一键删除全部模型：确认框由主进程弹出，取消时保留当前列表 */
+  const handleDeleteAll = useCallback(async (): Promise<void> => {
+    if (deletingAll) {
+      return
+    }
+    setError(null)
+    setDeletingAll(true)
+    try {
+      if (await window.api.deleteAllModelConfigs()) {
+        setConfigs([])
+      }
+    } catch (reason) {
+      setError(extractErrorMessage(reason))
+    } finally {
+      setDeletingAll(false)
+    }
+  }, [deletingAll])
+
   if (editor) {
     return (
       <ModelConfigForm
@@ -105,6 +124,18 @@ export default function ModelSettings({ onOpenImport }: ModelSettingsProps): Rea
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {configs.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="text-danger hover:bg-danger hover:text-accent-fg"
+              onClick={() => void handleDeleteAll()}
+              disabled={deletingAll}
+            >
+              <Trash2 />
+              {deletingAll ? '删除中…' : '删除全部'}
+            </Button>
+          ) : null}
           <Button type="button" variant="outline" onClick={onOpenImport}>
             <Download />
             一键导入

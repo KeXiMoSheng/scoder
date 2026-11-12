@@ -1,4 +1,8 @@
-import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
+import type {
+  ModelConfig,
+  ModelConfigInput,
+  ModelImportResult
+} from '../../shared/model-config/types'
 import { requireDatabase } from './connection'
 import { DbError } from './errors'
 
@@ -10,6 +14,18 @@ const MODEL_CONFIG_COLUMNS =
 const INSERT_MODEL_CONFIG_SQL = `
   INSERT INTO model_configs (provider_name, base_url, display_name, model_name, api_key)
   VALUES (@providerName, @baseUrl, @displayName, @modelName, @apiKey)
+`
+
+/** 覆盖已有行的语句：单条更新与批量导入共用同一份列顺序 */
+const UPDATE_MODEL_CONFIG_SQL = `
+  UPDATE model_configs
+  SET provider_name = @providerName,
+      base_url = @baseUrl,
+      display_name = @displayName,
+      model_name = @modelName,
+      api_key = @apiKey,
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE id = @id
 `
 
 /** 单次一键导入允许的最大条数：防止一次塞入过多记录 */
@@ -111,18 +127,19 @@ export function createModelConfig(input: ModelConfigInput): ModelConfig {
 }
 
 /**
- * 批量新建模型配置：同一事务内落库，跳过「模型地址 + 模型名称」已存在的记录。
- * 一键导入用它写入，避免重复点击导入后堆出一模一样的卡片。
+ * 批量写入一键导入的模型配置：同一事务内完成。
+ * 按「供应商名 + 模型地址 + 模型名称」判断：已存在则覆盖该条配置，否则新增。
+ * 重复导入同一批模型不会堆出一模一样的卡片。
  * @param inputs 待导入的配置（已由远程模型列表归一化）
- * @returns 本次真正新建的记录，顺序与 inputs 中的成功项一致
+ * @returns 本次新建与覆盖的记录
  * @throws DbError 参数非法或条数超出上限
  */
-export function createModelConfigs(inputs: ModelConfigInput[]): ModelConfig[] {
+export function createModelConfigs(inputs: ModelConfigInput[]): ModelImportResult {
   if (!Array.isArray(inputs)) {
     throw new DbError('参数无效', 'INVALID_ARGUMENT')
   }
   if (inputs.length === 0) {
-    return []
+    return { created: [], updated: [] }
   }
   if (inputs.length > MAX_IMPORT_BATCH) {
     throw new DbError(`一次最多导入 ${MAX_IMPORT_BATCH} 个模型`, 'INVALID_ARGUMENT')
@@ -130,21 +147,30 @@ export function createModelConfigs(inputs: ModelConfigInput[]): ModelConfig[] {
   const db = requireDatabase()
   // 手工填写过的地址可能带末尾斜杠，比较时一并去掉
   const findByKey = db.prepare(
-    "SELECT 1 FROM model_configs WHERE model_name = ? AND RTRIM(base_url, '/') = ? LIMIT 1"
+    "SELECT id FROM model_configs WHERE provider_name = ? AND RTRIM(base_url, '/') = ? AND model_name = ? LIMIT 1"
   )
   const insert = db.prepare(INSERT_MODEL_CONFIG_SQL)
+  const update = db.prepare(UPDATE_MODEL_CONFIG_SQL)
   // 事务内逐条校验：任一条非法就整体回滚，不会留下半批记录
-  return db.transaction((items: ModelConfigInput[]): ModelConfig[] => {
+  return db.transaction((items: ModelConfigInput[]): ModelImportResult => {
     const created: ModelConfig[] = []
+    const updated: ModelConfig[] = []
     for (const item of items) {
       const data = normalizeInput(item)
-      if (findByKey.get(data.modelName, data.baseUrl.replace(/\/+$/, ''))) {
+      const existing = findByKey.get(
+        data.providerName,
+        data.baseUrl.replace(/\/+$/, ''),
+        data.modelName
+      ) as { id: number } | undefined
+      if (existing) {
+        update.run({ ...data, id: existing.id })
+        updated.push(findModelConfigById(existing.id))
         continue
       }
       const result = insert.run(data)
       created.push(findModelConfigById(Number(result.lastInsertRowid)))
     }
-    return created
+    return { created, updated }
   })(inputs)
 }
 
@@ -153,16 +179,7 @@ export function updateModelConfig(id: number, input: ModelConfigInput): ModelCon
   assertId(id)
   const data = normalizeInput(input)
   const result = requireDatabase()
-    .prepare(
-      `UPDATE model_configs
-       SET provider_name = @providerName,
-           base_url = @baseUrl,
-           display_name = @displayName,
-           model_name = @modelName,
-           api_key = @apiKey,
-           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = @id`
-    )
+    .prepare(UPDATE_MODEL_CONFIG_SQL)
     .run({ ...data, id })
   if (result.changes === 0) {
     throw new DbError('模型配置不存在', 'MODEL_CONFIG_NOT_FOUND')
@@ -177,4 +194,9 @@ export function deleteModelConfig(id: number): void {
   if (result.changes === 0) {
     throw new DbError('模型配置不存在', 'MODEL_CONFIG_NOT_FOUND')
   }
+}
+
+/** 删除全部模型配置；确认交互同样属于 IPC 层，返回实际删除的条数 */
+export function deleteAllModelConfigs(): number {
+  return requireDatabase().prepare('DELETE FROM model_configs').run().changes
 }

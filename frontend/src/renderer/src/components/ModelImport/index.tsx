@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Download, Eye, EyeOff } from 'lucide-react'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { Button } from '../ui/button'
@@ -26,6 +26,24 @@ export default function ModelImport({ onOpenModels }: ModelImportProps): React.J
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [imported, setImported] = useState<ModelImportResult | null>(null)
+
+  // 打开导入页时回填上次成功导入的连接信息；读取失败不打扰用户
+  useEffect(() => {
+    let active = true
+    window.api
+      .getModelImportForm()
+      .then((saved) => {
+        if (active && saved) {
+          setForm(saved)
+        }
+      })
+      .catch((reason) => {
+        console.warn('读取一键导入的连接信息失败', reason)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const updateField = useCallback(
     (field: keyof RemoteModelListRequest) =>
@@ -69,12 +87,18 @@ export default function ModelImport({ onOpenModels }: ModelImportProps): React.J
     try {
       setImported(await window.api.importModelConfigs(candidates))
       setCandidates([])
+      // 记住本次填写的连接信息，下次打开自动回填；保存失败不影响导入结果
+      try {
+        await window.api.saveModelImportForm(form)
+      } catch (reason) {
+        console.warn('保存一键导入的连接信息失败', reason)
+      }
     } catch (reason) {
       setError(extractErrorMessage(reason))
     } finally {
       setImporting(false)
     }
-  }, [candidates, importing])
+  }, [candidates, form, importing])
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
@@ -83,6 +107,7 @@ export default function ModelImport({ onOpenModels }: ModelImportProps): React.J
         <p className="mt-1 leading-[1.6] text-dim">
           填写模型服务地址与列表地址，拉取后自动生成模型配置：模型名称取 id、显示名称取
           name、供应商取 owned_by，API Key 取 Authorization 中 Bearer 之后的部分。
+          成功导入后会记住本次填写的信息，下次自动回填。
         </p>
       </div>
 
@@ -95,8 +120,8 @@ export default function ModelImport({ onOpenModels }: ModelImportProps): React.J
       {imported ? (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-selection/40 px-3 py-2 leading-[1.6]">
           <span className="min-w-0 flex-1">
-            已导入 {imported.created.length} 个模型
-            {imported.skipped > 0 ? `，跳过 ${imported.skipped} 个已存在的配置` : ''}。
+            已导入 {imported.created.length} 个新模型
+            {imported.updated.length > 0 ? `，覆盖 ${imported.updated.length} 个已有配置` : ''}。
           </span>
           <Button type="button" variant="outline" size="sm" onClick={onOpenModels}>
             查看模型列表
@@ -187,7 +212,7 @@ export default function ModelImport({ onOpenModels }: ModelImportProps): React.J
           <CardHeader>
             <CardTitle className="text-sm">可导入的模型（{candidates.length}）</CardTitle>
             <CardDescription className="text-[12px]">
-              模型地址与模型名称都相同的配置会自动跳过，重复导入不会产生重复卡片。
+              供应商名、模型地址与模型名称都相同的配置会被覆盖，其余会新增。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">

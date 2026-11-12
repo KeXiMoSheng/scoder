@@ -87,11 +87,16 @@ const api: ScoderAPI = {
   updateModelConfig: (id: number, input: ModelConfigInput) =>
     ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.update, id, input),
   deleteModelConfig: (id: number) => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.delete, id),
+  deleteAllModelConfigs: () => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.deleteAll),
   // 一键导入：拉取远程模型列表、批量落库都由主进程完成
   fetchRemoteModels: (request: RemoteModelListRequest) =>
     ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.fetchRemote, request),
   importModelConfigs: (inputs: ModelConfigInput[]) =>
     ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.importMany, inputs),
+  // 记住上次成功导入的连接信息，下次打开导入页时回填
+  getModelImportForm: () => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.getImportForm),
+  saveModelImportForm: (form: RemoteModelListRequest) =>
+    ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.saveImportForm, form),
   // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
   getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
   saveAiRuntimeSettings: (input: AiRuntimeSettings) =>

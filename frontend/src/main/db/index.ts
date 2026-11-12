@@ -4,6 +4,7 @@
  * - connection：打开、关闭、取连接
  * - schema：版本与迁移
  * - model-configs：模型配置仓储
+ * - model-import-settings：一键导入的连接信息
  * - app-settings：应用设置仓储
  * - ipc：渲染进程通道
  */
@@ -12,4 +13,5 @@ export { DbError } from './errors'
 export type { DbErrorCode } from './errors'
 export { registerDatabaseHandlers } from './ipc'
 export { findModelConfigById, createModelConfigs } from './model-configs'
+export { getModelImportForm, saveModelImportForm } from './model-import-settings'
 export { getAiRuntimeSettings } from './app-settings'

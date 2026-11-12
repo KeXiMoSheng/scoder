@@ -80,7 +80,43 @@ function ensureRipgrepBinary(target) {
   }
 }
 
+/**
+ * 交叉打包时补上目标平台的 better-sqlite3 预编译二进制。
+ * better-sqlite3 的 npm 包自带各平台 N-API 预编译文件（prebuilds/<platform>-<arch>.node），
+ * 本机安装目录里的文件可能不齐（如从 Linux 打 Windows 包时缺 win32-x64.node），
+ * 应用启动会报 "Cannot find module ...better_sqlite3.node"。
+ * 缺文件时从 npm tarball 里提取目标平台的预编译文件补齐。
+ * @param target 目标平台（win | linux | mac）
+ */
+function ensureBetterSqlite3Prebuild(target) {
+  const platformName = target === 'win' ? 'win32' : target === 'mac' ? 'darwin' : 'linux'
+  const prebuildName = `${platformName}-${process.arch}.node`
+  const packageDir = path.join(rootDir, 'node_modules', 'better-sqlite3')
+  const prebuildDir = path.join(packageDir, 'prebuilds')
+  if (existsSync(path.join(prebuildDir, prebuildName))) {
+    return
+  }
+  const sqliteVersion = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8')).version
+  console.log(`[dist] 补齐 better-sqlite3 ${prebuildName}（${sqliteVersion}）`)
+  const staging = mkdtempSync(path.join(tmpdir(), 'scoder-sqlite-'))
+  try {
+    execSync(
+      `npm pack better-sqlite3@${sqliteVersion} --pack-destination "${staging}" --silent`,
+      { cwd: rootDir, stdio: 'inherit', env }
+    )
+    // tar 在 Linux/macOS 与 Windows 10+ 均可用；剥离 package/prebuilds/ 前缀后直接落到 prebuilds 目录
+    execSync(
+      `tar -xzf "${path.join(staging, `better-sqlite3-${sqliteVersion}.tgz`)}" -C "${prebuildDir}" ` +
+        `--strip-components=2 "package/prebuilds/${prebuildName}"`,
+      { cwd: rootDir, stdio: 'inherit', env }
+    )
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+}
+
 ensureRipgrepBinary(platform)
+ensureBetterSqlite3Prebuild(platform)
 execSync(`electron-builder --${platform} -c.extraMetadata.version=${version}`, {
   cwd: rootDir,
   stdio: 'inherit',
