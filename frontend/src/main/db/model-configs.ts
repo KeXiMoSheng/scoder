@@ -1,22 +1,31 @@
-import type {
-  ModelConfig,
-  ModelConfigInput,
-  ModelImportResult
+import {
+  DEFAULT_MODEL_CONTEXT_WINDOW,
+  DEFAULT_MODEL_REASONING_EFFORT,
+  MODEL_CONTEXT_WINDOW_OPTIONS,
+  MODEL_REASONING_EFFORT_OPTIONS,
+  type ModelConfig,
+  type ModelConfigInput,
+  type ModelContextWindow,
+  type ModelImportResult,
+  type ModelReasoningEffort
 } from '../../shared/model-config/types'
 import { requireDatabase } from './connection'
 import { DbError } from './errors'
 
 /** 查询列固定列出，避免 SELECT * 在加字段后把多余列带进映射 */
 const MODEL_CONFIG_COLUMNS =
-  'id, provider_name, base_url, display_name, model_name, api_key, created_at, updated_at'
+  'id, provider_name, base_url, display_name, model_name, api_key, context_window, reasoning_effort, created_at, updated_at'
 
 /** 新增行的语句：单条新建与批量导入共用同一份列顺序 */
 const INSERT_MODEL_CONFIG_SQL = `
-  INSERT INTO model_configs (provider_name, base_url, display_name, model_name, api_key)
-  VALUES (@providerName, @baseUrl, @displayName, @modelName, @apiKey)
+  INSERT INTO model_configs (provider_name, base_url, display_name, model_name, api_key, context_window, reasoning_effort)
+  VALUES (@providerName, @baseUrl, @displayName, @modelName, @apiKey, @contextWindow, @reasoningEffort)
 `
 
-/** 覆盖已有行的语句：单条更新与批量导入共用同一份列顺序 */
+/**
+ * 覆盖已有行的语句：单条更新与批量导入共用同一份列顺序。
+ * 窗口与思考深度用 COALESCE：调用方没传（如一键导入）时保留用户已经调过的值。
+ */
 const UPDATE_MODEL_CONFIG_SQL = `
   UPDATE model_configs
   SET provider_name = @providerName,
@@ -24,6 +33,8 @@ const UPDATE_MODEL_CONFIG_SQL = `
       display_name = @displayName,
       model_name = @modelName,
       api_key = @apiKey,
+      context_window = COALESCE(@contextWindow, context_window),
+      reasoning_effort = COALESCE(@reasoningEffort, reasoning_effort),
       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE id = @id
 `
@@ -39,6 +50,8 @@ interface ModelConfigRow {
   display_name: string
   model_name: string
   api_key: string
+  context_window: number
+  reasoning_effort: string
   created_at: string
   updated_at: string
 }
@@ -52,9 +65,53 @@ function toModelConfig(row: ModelConfigRow): ModelConfig {
     displayName: row.display_name,
     modelName: row.model_name,
     apiKey: row.api_key,
+    contextWindow: readContextWindow(row.context_window),
+    reasoningEffort: readReasoningEffort(row.reasoning_effort),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+}
+
+/** 读库时的兜底：手工改库出现未知值时不让整张列表失败 */
+function readContextWindow(value: number): ModelContextWindow {
+  return (MODEL_CONTEXT_WINDOW_OPTIONS as readonly number[]).includes(value)
+    ? (value as ModelContextWindow)
+    : DEFAULT_MODEL_CONTEXT_WINDOW
+}
+
+/** 读库时的兜底：未知思考深度退回默认值 */
+function readReasoningEffort(value: string): ModelReasoningEffort {
+  return (MODEL_REASONING_EFFORT_OPTIONS as readonly string[]).includes(value)
+    ? (value as ModelReasoningEffort)
+    : DEFAULT_MODEL_REASONING_EFFORT
+}
+
+/** 写入时的校验：只接受固定档位，缺省（undefined/null）表示沿用原值 */
+function normalizeContextWindow(value: unknown): ModelContextWindow | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (
+    typeof value !== 'number' ||
+    !(MODEL_CONTEXT_WINDOW_OPTIONS as readonly number[]).includes(value)
+  ) {
+    throw new DbError('上下文窗口大小无效', 'INVALID_ARGUMENT')
+  }
+  return value as ModelContextWindow
+}
+
+/** 写入时的思考深度校验，规则与上下文窗口一致 */
+function normalizeReasoningEffort(value: unknown): ModelReasoningEffort | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (
+    typeof value !== 'string' ||
+    !(MODEL_REASONING_EFFORT_OPTIONS as readonly string[]).includes(value)
+  ) {
+    throw new DbError('思考深度无效', 'INVALID_ARGUMENT')
+  }
+  return value as ModelReasoningEffort
 }
 
 /**
@@ -66,12 +123,16 @@ function normalizeInput(input: ModelConfigInput): ModelConfigInput {
     throw new DbError('参数无效', 'INVALID_ARGUMENT')
   }
   const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  const contextWindow = normalizeContextWindow(input.contextWindow)
+  const reasoningEffort = normalizeReasoningEffort(input.reasoningEffort)
   const normalized: ModelConfigInput = {
     providerName: text(input.providerName),
     baseUrl: text(input.baseUrl),
     displayName: text(input.displayName),
     modelName: text(input.modelName),
-    apiKey: text(input.apiKey)
+    apiKey: text(input.apiKey),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {})
   }
   if (!normalized.providerName) {
     throw new DbError('供应商名不能为空', 'INVALID_ARGUMENT')
@@ -119,10 +180,29 @@ export function findModelConfigById(id: number): ModelConfig {
   return toModelConfig(row)
 }
 
+/** 新建/导入插入时的参数：未指定窗口与思考深度时落默认档位 */
+function insertValues(input: ModelConfigInput): Record<string, unknown> {
+  return {
+    ...input,
+    contextWindow: input.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW,
+    reasoningEffort: input.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT
+  }
+}
+
+/** 更新参数：未指定的字段显式传 null，SQL 里的 COALESCE 会保留原值 */
+function updateValues(input: ModelConfigInput, id: number): Record<string, unknown> {
+  return {
+    ...input,
+    id,
+    contextWindow: input.contextWindow ?? null,
+    reasoningEffort: input.reasoningEffort ?? null
+  }
+}
+
 /** 新建模型配置，返回落库后的完整记录 */
 export function createModelConfig(input: ModelConfigInput): ModelConfig {
   const data = normalizeInput(input)
-  const result = requireDatabase().prepare(INSERT_MODEL_CONFIG_SQL).run(data)
+  const result = requireDatabase().prepare(INSERT_MODEL_CONFIG_SQL).run(insertValues(data))
   return findModelConfigById(Number(result.lastInsertRowid))
 }
 
@@ -163,11 +243,11 @@ export function createModelConfigs(inputs: ModelConfigInput[]): ModelImportResul
         data.modelName
       ) as { id: number } | undefined
       if (existing) {
-        update.run({ ...data, id: existing.id })
+        update.run(updateValues(data, existing.id))
         updated.push(findModelConfigById(existing.id))
         continue
       }
-      const result = insert.run(data)
+      const result = insert.run(insertValues(data))
       created.push(findModelConfigById(Number(result.lastInsertRowid)))
     }
     return { created, updated }
@@ -178,9 +258,7 @@ export function createModelConfigs(inputs: ModelConfigInput[]): ModelImportResul
 export function updateModelConfig(id: number, input: ModelConfigInput): ModelConfig {
   assertId(id)
   const data = normalizeInput(input)
-  const result = requireDatabase()
-    .prepare(UPDATE_MODEL_CONFIG_SQL)
-    .run({ ...data, id })
+  const result = requireDatabase().prepare(UPDATE_MODEL_CONFIG_SQL).run(updateValues(data, id))
   if (result.changes === 0) {
     throw new DbError('模型配置不存在', 'MODEL_CONFIG_NOT_FOUND')
   }

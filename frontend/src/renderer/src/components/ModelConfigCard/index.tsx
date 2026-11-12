@@ -1,4 +1,5 @@
 import { Pencil, Trash2 } from 'lucide-react'
+import { formatContextWindow } from '@shared/ai/context'
 import { Button } from '../ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import type { ModelConfigCardProps } from './types'
@@ -53,6 +54,12 @@ export default function ModelConfigCard({
           <span className="shrink-0 text-dim">模型地址</span>
           <span className="truncate text-fg" title={config.baseUrl}>
             {config.baseUrl}
+          </span>
+        </div>
+        <div className="flex min-w-0 gap-2">
+          <span className="shrink-0 text-dim">上下文窗口</span>
+          <span className="truncate text-fg">
+            {formatContextWindow(config.contextWindow)} · 思考深度 {config.reasoningEffort}
           </span>
         </div>
       </CardContent>

@@ -1,10 +1,20 @@
 import { useCallback, useState } from 'react'
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
+import { formatContextWindow } from '@shared/ai/context'
+import {
+  DEFAULT_MODEL_CONTEXT_WINDOW,
+  DEFAULT_MODEL_REASONING_EFFORT,
+  MODEL_CONTEXT_WINDOW_OPTIONS,
+  MODEL_REASONING_EFFORT_OPTIONS,
+  type ModelContextWindow,
+  type ModelReasoningEffort
+} from '@shared/model-config/types'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../ui/field'
 import { Input } from '../ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import type { ChangeEvent, FormEvent } from 'react'
 import type { ModelConfigInput } from '@shared/model-config/types'
 import type { ModelConfigFormProps } from './types'
@@ -20,7 +30,9 @@ export default function ModelConfigForm({
     baseUrl: initial?.baseUrl ?? '',
     displayName: initial?.displayName ?? '',
     modelName: initial?.modelName ?? '',
-    apiKey: initial?.apiKey ?? ''
+    apiKey: initial?.apiKey ?? '',
+    contextWindow: initial?.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW,
+    reasoningEffort: initial?.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT
   }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -28,13 +40,22 @@ export default function ModelConfigForm({
   const [apiKeyVisible, setApiKeyVisible] = useState(false)
 
   const updateField = useCallback(
-    (field: keyof ModelConfigInput) =>
+    (field: 'providerName' | 'baseUrl' | 'displayName' | 'modelName' | 'apiKey') =>
       (event: ChangeEvent<HTMLInputElement>): void => {
         const { value } = event.target
         setForm((prev) => ({ ...prev, [field]: value }))
       },
     []
   )
+
+  // 两个下拉的值都来自固定档位，直接按选项类型收窄
+  const updateContextWindow = useCallback((value: string): void => {
+    setForm((prev) => ({ ...prev, contextWindow: Number(value) as ModelContextWindow }))
+  }, [])
+
+  const updateReasoningEffort = useCallback((value: string): void => {
+    setForm((prev) => ({ ...prev, reasoningEffort: value as ModelReasoningEffort }))
+  }, [])
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -147,6 +168,48 @@ export default function ModelConfigForm({
                 </div>
                 <FieldDescription>
                   仅保存在本机数据库中；本地模型不需要鉴权时可留空。
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="model-context-window">上下文窗口大小</FieldLabel>
+                <Select
+                  value={String(form.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW)}
+                  onValueChange={updateContextWindow}
+                >
+                  <SelectTrigger id="model-context-window" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_CONTEXT_WINDOW_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={String(option)}>
+                        {formatContextWindow(option)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  用于对话页的上下文用量统计，不会改变服务商真实的窗口限制。
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="model-reasoning-effort">思考深度</FieldLabel>
+                <Select
+                  value={form.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT}
+                  onValueChange={updateReasoningEffort}
+                >
+                  <SelectTrigger id="model-reasoning-effort" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_REASONING_EFFORT_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  作为 reasoning_effort 随 OpenAI 兼容请求发送；不支持的供应商会自动省略该参数。
                 </FieldDescription>
               </Field>
               {error ? <FieldError>{error}</FieldError> : null}

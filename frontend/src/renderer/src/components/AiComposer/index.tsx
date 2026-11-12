@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowRight, Folder, Square, X } from 'lucide-react'
+import { DEFAULT_CONTEXT_WINDOW } from '@shared/ai/context'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { ModelConfig } from '@shared/model-config/types'
 import AiContextUsage from '../AiContextUsage'
 import FileRow from '../FileRow'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import ModelSelector from '../ModelSelector'
 import { Textarea } from '../ui/textarea'
 import { attachmentLabel, attachmentLineLabel } from '../../lib/aiAttachment'
 import { basename } from '../../lib/filePath'
+import type { ModelCallSettingsValue } from '../ModelCallSettings/types'
 import type { AiComposerProps } from './types'
 
 /**
@@ -72,14 +74,40 @@ export default function AiComposer({
   }, [])
 
   // 用户切换模型时立即记住选择，下次打开对话框直接恢复
-  const handleModelChange = useCallback((value: string): void => {
-    const id = Number(value)
-    if (!Number.isInteger(id) || id <= 0) {
-      return
-    }
+  const handleModelChange = useCallback((id: number): void => {
     setSelectedModelId(id)
     window.api.saveSelectedModelConfigId(id).catch(() => undefined)
   }, [])
+
+  // 保存单个模型的窗口与思考深度：落库后同步本地列表，切回该模型立即生效
+  const handleSaveCallSettings = useCallback(
+    async (id: number, settings: ModelCallSettingsValue): Promise<void> => {
+      const model = models.find((item) => item.id === id)
+      if (!model) {
+        return
+      }
+      const saved = await window.api.updateModelConfig(id, {
+        providerName: model.providerName,
+        baseUrl: model.baseUrl,
+        displayName: model.displayName,
+        modelName: model.modelName,
+        apiKey: model.apiKey,
+        contextWindow: settings.contextWindow,
+        reasoningEffort: settings.reasoningEffort
+      })
+      setModels((previous) => previous.map((item) => (item.id === saved.id ? saved : item)))
+    },
+    [models]
+  )
+
+  const selectedModel = models.find((model) => model.id === selectedModelId) ?? null
+  // 用量百分比跟随当前模型配置的窗口：切换模型后不必等下一次调用就能看到新口径
+  const displayUsage = usage
+    ? {
+        usedTokens: usage.usedTokens,
+        limitTokens: selectedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
+      }
+    : null
 
   // 没有可用模型时也无法发送：主进程按 modelConfigId 读密钥
   const canSend = value.trim().length > 0 && !disabled && !running && selectedModelId !== null
@@ -175,35 +203,16 @@ export default function AiComposer({
       />
       {/* 状态栏：左侧模型选择器，右侧上下文用量与发送键 */}
       <div className="mt-2 flex items-center gap-2">
-        {/* 用主题化的 Select 而非原生 select：原生下拉弹层的高亮色由系统决定，不随主题变化 */}
-        <Select
-          value={selectedModelId === null ? undefined : String(selectedModelId)}
-          onValueChange={handleModelChange}
-          disabled={models.length === 0}
-        >
-          <SelectTrigger
-            size="sm"
-            className="min-w-0 max-w-full px-2 text-xs"
-            aria-label="选择模型"
-            title={
-              selectedModelId === null
-                ? '尚未配置模型，请到「设置 → 模型」中添加'
-                : models.find((model) => model.id === selectedModelId)?.displayName
-            }
-          >
-            <SelectValue placeholder="未配置模型" />
-          </SelectTrigger>
-          <SelectContent className="max-w-[280px]">
-            {models.map((model) => (
-              <SelectItem key={model.id} value={String(model.id)}>
-                {model.displayName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* 模型选择器：列表单选，行内铅笔按钮在列表左侧展开调用设置浮层 */}
+        <ModelSelector
+          models={models}
+          selectedModelId={selectedModelId}
+          onSelect={handleModelChange}
+          onUpdateModel={handleSaveCallSettings}
+        />
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <AiContextUsage
-            usage={usage}
+            usage={displayUsage}
             canCreate={canCreateSession}
             onCreateSession={onCreateSession}
           />

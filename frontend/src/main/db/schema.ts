@@ -12,7 +12,7 @@ export const APPLICATION_ID = 0x53434f44
  * 当前库结构版本。
  * 加表/加字段时：递增此常量，并在 MIGRATIONS 末尾追加一步；不要修改已发布的历史步骤。
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 5
 
 /** 一次结构升级：只在库的 user_version 小于该步版本时执行一次 */
 interface Migration {
@@ -63,6 +63,30 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 2,
     description: '应用设置表',
     up: (db) => db.exec(CREATE_APP_SETTINGS_SQL)
+  },
+  {
+    version: 3,
+    description: '模型上下文窗口与思考深度',
+    // 旧库里的已有行直接拿到默认值：窗口 1M（与原用量口径一致）、思考深度 high
+    up: (db) =>
+      db.exec(`
+        ALTER TABLE model_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 1000000;
+        ALTER TABLE model_configs ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'high';
+      `)
+  },
+  {
+    version: 4,
+    description: '模型思考模式开关',
+    // 该开关的界面已移除；列保留不删，避免已升级的库把 user_version 降回去
+    up: (db) =>
+      db.exec('ALTER TABLE model_configs ADD COLUMN reasoning_enabled INTEGER NOT NULL DEFAULT 1;')
+  },
+  {
+    version: 5,
+    description: '上下文窗口缺省值改为 200k',
+    // 早期迁移把未设置的存量行统一补成了 1M；按新的缺省口径归位，避免界面全部显示 1M
+    up: (db) =>
+      db.exec('UPDATE model_configs SET context_window = 200000 WHERE context_window = 1000000;')
   }
 ]
 

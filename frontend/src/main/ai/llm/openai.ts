@@ -1,4 +1,5 @@
 import type { AiTokenUsage, JsonSchemaObject } from '../../../shared/ai/types'
+import type { ModelReasoningEffort } from '../../../shared/model-config/types'
 import type { ToolDefinition } from '../tools/registry'
 
 /** 一次模型调用的连接配置（来自本地 SQLite 的 model_configs 行） */
@@ -6,6 +7,10 @@ export interface OpenAiConfig {
   baseUrl: string
   apiKey: string
   modelName: string
+  /** 上下文窗口大小（token）：只用于本地用量统计，不进入请求体 */
+  contextWindow: number
+  /** 思考深度：作为 reasoning_effort 随请求发送 */
+  reasoningEffort: ModelReasoningEffort
 }
 
 /** 发回模型的工具调用（assistant 消息里的 tool_calls 项） */
@@ -161,7 +166,8 @@ async function openStream(
 /**
  * 调用 OpenAI 兼容的 chat/completions 流式接口。
  * 负责 SSE → 增量、透传取消信号、建立连接失败时重试，
- * 并通过 stream_options.include_usage 请求服务商的真实 token 用量。
+ * 并通过 stream_options.include_usage 请求服务商的真实 token 用量，
+ * 同时把模型配置里的思考深度作为 reasoning_effort 发送。
  * @param config 连接配置
  * @param messages 完整会话历史
  * @param tools 工具声明，空数组表示不带工具
@@ -173,17 +179,7 @@ export async function* streamChat(
   tools: OpenAiToolSpec[],
   signal: AbortSignal
 ): AsyncGenerator<StreamDelta> {
-  let response: Response
-  try {
-    response = await openStream(config, requestBody(config, messages, tools, true), signal)
-  } catch (error) {
-    // 个别兼容实现会拒绝 stream_options；退回普通流式请求，聊天不中断，只是拿不到 usage
-    if (!rejectsStreamOptions(error)) {
-      throw error
-    }
-    console.warn('供应商不支持 stream_options.include_usage，本次不返回真实用量')
-    response = await openStream(config, requestBody(config, messages, tools, false), signal)
-  }
+  const response = await openStreamWithFallbacks(config, messages, tools, signal)
   if (!response.body) {
     throw new Error('模型响应没有可读流')
   }
@@ -213,18 +209,57 @@ export async function* streamChat(
   }
 }
 
-/** 构造流式请求体；includeUsage 为 false 时用于不支持 stream_options 的供应商 */
+/**
+ * 建立连接；供应商不认识的参数逐个降级重试。
+ * usage 与 reasoning_effort 互不影响：只去掉错误里明确指出的那一个，各自最多降级一次。
+ */
+async function openStreamWithFallbacks(
+  config: OpenAiConfig,
+  messages: ChatMessage[],
+  tools: OpenAiToolSpec[],
+  signal: AbortSignal
+): Promise<Response> {
+  let includeUsage = true
+  let includeReasoning = true
+  while (true) {
+    try {
+      return await openStream(
+        config,
+        requestBody(config, messages, tools, includeUsage, includeReasoning),
+        signal
+      )
+    } catch (error) {
+      // 个别兼容实现会拒绝 stream_options；退回普通流式请求，聊天不中断，只是拿不到 usage
+      if (includeUsage && rejectsStreamOptions(error)) {
+        console.warn('供应商不支持 stream_options.include_usage，本次不返回真实用量')
+        includeUsage = false
+        continue
+      }
+      // 不支持思考深度的模型同样退回：聊天照常，只是这次不携带 reasoning_effort
+      if (includeReasoning && rejectsReasoningEffort(error)) {
+        console.warn('供应商不支持 reasoning_effort，本次调用不发送思考深度')
+        includeReasoning = false
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+/** 构造流式请求体；includeUsage/includeReasoning 为 false 时用于不支持的供应商 */
 function requestBody(
   config: OpenAiConfig,
   messages: ChatMessage[],
   tools: OpenAiToolSpec[],
-  includeUsage: boolean
+  includeUsage: boolean,
+  includeReasoning: boolean
 ): string {
   return JSON.stringify({
     model: config.modelName,
     messages,
     stream: true,
     ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+    ...(includeReasoning ? { reasoning_effort: config.reasoningEffort } : {}),
     ...(tools.length > 0 ? { tools } : {})
   })
 }
@@ -238,6 +273,17 @@ function rejectsStreamOptions(error: unknown): boolean {
     return false
   }
   return /HTTP (400|422)/.test(error.message) && /stream_options|include_usage/i.test(error.message)
+}
+
+/**
+ * 判断失败是否因为供应商不认识 reasoning_effort。
+ * 同样只在 400/422 且错误详情点名该字段时降级。
+ */
+function rejectsReasoningEffort(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return /HTTP (400|422)/.test(error.message) && /reasoning(?:_effort)?/i.test(error.message)
 }
 
 /**

@@ -4,6 +4,24 @@
  * 只在主进程 db/model-configs.ts 内发生。
  */
 
+/** 上下文窗口的可选档位（token） */
+export const MODEL_CONTEXT_WINDOW_OPTIONS = [200_000, 400_000, 1_000_000] as const
+
+/** 上下文窗口档位 */
+export type ModelContextWindow = (typeof MODEL_CONTEXT_WINDOW_OPTIONS)[number]
+
+/** 缺省上下文窗口：新建模型与未配置时的用量口径 */
+export const DEFAULT_MODEL_CONTEXT_WINDOW: ModelContextWindow = 200_000
+
+/** 思考深度的可选档位：原样作为 OpenAI 兼容接口的 reasoning_effort 发送 */
+export const MODEL_REASONING_EFFORT_OPTIONS = ['low', 'high', 'max'] as const
+
+/** 思考深度 */
+export type ModelReasoningEffort = (typeof MODEL_REASONING_EFFORT_OPTIONS)[number]
+
+/** 缺省思考深度：兼顾速度与质量 */
+export const DEFAULT_MODEL_REASONING_EFFORT: ModelReasoningEffort = 'high'
+
 /** 已保存的模型配置（对应数据库 model_configs 表的一行） */
 export interface ModelConfig {
   /** 自增主键 */
@@ -18,6 +36,10 @@ export interface ModelConfig {
   modelName: string
   /** API Key（本地明文存储；主进程调用模型时读取，渲染进程只在设置页回填使用） */
   apiKey: string
+  /** 上下文窗口大小（token）：用于对话页的上下文用量口径，不是请求参数 */
+  contextWindow: ModelContextWindow
+  /** 思考深度：作为 reasoning_effort 随请求发送 */
+  reasoningEffort: ModelReasoningEffort
   /** 创建时间（UTC，ISO 字符串） */
   createdAt: string
   /** 最后更新时间（UTC，ISO 字符串） */
@@ -32,6 +54,13 @@ export interface ModelConfigInput {
   modelName: string
   /** API Key；本地模型等场景允许为空字符串 */
   apiKey: string
+  /**
+   * 上下文窗口大小。缺省时：新建用默认档位，更新保留库里原值。
+   * 一键导入不带这个字段，因此重复导入不会覆盖用户手动调过的设置。
+   */
+  contextWindow?: ModelContextWindow
+  /** 思考深度；缺省语义与上下文窗口相同 */
+  reasoningEffort?: ModelReasoningEffort
 }
 
 /**

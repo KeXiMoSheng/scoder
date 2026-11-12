@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { isAbsolute, join } from 'path'
+import { DEFAULT_CONTEXT_WINDOW } from '../../shared/ai/context'
 import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
   AiEvent,
@@ -13,9 +14,11 @@ import { findModelConfigById, getAiRuntimeSettings } from '../db'
 import { lastContextUsage } from './context'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
+import type { OpenAiConfig } from './llm/openai'
 import { runTurn } from './loop/agentLoop'
 import { SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
+import type { SessionEvent } from './session/types'
 import { toMessageViews } from './session/view'
 import { createToolRegistry } from './tools'
 import { errorMessage } from './tools/registry'
@@ -68,7 +71,13 @@ export function registerAiHandlers(): void {
     // 立即返回：本轮进展通过事件推送，不让 invoke 挂到整轮结束
     void startTurn(
       request,
-      { baseUrl: model.baseUrl, apiKey: model.apiKey, modelName: model.modelName },
+      {
+        baseUrl: model.baseUrl,
+        apiKey: model.apiKey,
+        modelName: model.modelName,
+        contextWindow: model.contextWindow,
+        reasoningEffort: model.reasoningEffort
+      },
       controller.signal,
       emit
     ).finally(() => {
@@ -148,7 +157,7 @@ export function registerAiHandlers(): void {
         // 切回一个仍在执行的会话时，界面要能重新显示“正在生成”
         running: running.has(id),
         // 只展示服务商真实返回的用量；从未调用过模型或未返回 usage 时为 0
-        usage: lastContextUsage(events)
+        usage: lastContextUsage(events, sessionContextWindow(events))
       }
     }
   )
@@ -160,7 +169,7 @@ export function registerAiHandlers(): void {
 /** 执行一轮对话；工作区文件系统在每轮开始时按 cwd 创建 */
 async function startTurn(
   request: AiSendRequest,
-  model: { baseUrl: string; apiKey: string; modelName: string },
+  model: OpenAiConfig,
   signal: AbortSignal,
   emit: (event: AiEvent) => void
 ): Promise<void> {
@@ -182,6 +191,25 @@ async function startTurn(
     emit({ type: 'error', message: errorMessage(error) })
     emit({ type: 'turn-end', reason: 'error' })
   }
+}
+
+/**
+ * 会话最近一次请求所用模型的上下文窗口。
+ * 重开会话时用量面板要按同一口径展示；模型被删除或读取失败时退回默认值。
+ */
+function sessionContextWindow(events: readonly SessionEvent[]): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.type !== 'turn/start') {
+      continue
+    }
+    try {
+      return findModelConfigById(event.data.modelConfigId).contextWindow
+    } catch {
+      return DEFAULT_CONTEXT_WINDOW
+    }
+  }
+  return DEFAULT_CONTEXT_WINDOW
 }
 
 /** 校验渲染进程传来的请求 */

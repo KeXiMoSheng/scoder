@@ -148,7 +148,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
 
         // 只推真实用量：拿到 usage 后立刻更新面板，没拿到就保持上一次的值
         if (stepUsage) {
-          emit({ type: 'context-usage', usage: toContextUsage(stepUsage) })
+          emit({ type: 'context-usage', usage: toContextUsage(stepUsage, model.contextWindow) })
         }
 
         // 有文本或工具调用才写 assistant 消息；空响应直接结束本轮
