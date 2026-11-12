@@ -16,6 +16,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
+import { registerAppHandlers } from './app'
 import { registerModelImportHandlers } from './model-import'
 import { FILES_CHANNELS } from '../shared/files/events'
 import type { FileEntry, SearchResult } from '../shared/files/types'
@@ -489,6 +490,8 @@ app.whenReady().then(() => {
   registerFileSystemHandlers()
   registerTerminalHandlers()
   registerWindowHandlers()
+  // 应用信息（版本号 / 仓库跳转）不依赖数据库，窗口创建前注册即可
+  registerAppHandlers()
   // 本地库在窗口创建前初始化：设置页首帧即可读取已保存的模型配置
   // 打开/迁移失败时给出可见错误并退出：继续运行只会让设置页与 AI 都报“尚未就绪”
   try {

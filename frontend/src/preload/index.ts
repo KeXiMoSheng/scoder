@@ -4,6 +4,7 @@ import { AI_CHANNELS } from '../shared/ai/events'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../shared/ai/settings'
 import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
+import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
 import type { ModelConfigInput, RemoteModelListRequest } from '../shared/model-config/types'
@@ -105,6 +106,9 @@ const api: ScoderAPI = {
   getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
   saveAiRuntimeSettings: (input: AiRuntimeSettings) =>
     ipcRenderer.invoke(AI_RUNTIME_CHANNELS.save, input),
+  // 应用信息与官方仓库跳转：关于页展示版本号，点击地址交给系统浏览器
+  getAppInfo: () => ipcRenderer.invoke(APP_CHANNELS.getInfo),
+  openRepository: () => ipcRenderer.invoke(APP_CHANNELS.openRepository),
   // 工作区最近项目 / 启动恢复：均走 invoke 拿主进程落库结果
   listRecentProjects: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.listRecent),
   recordProjectOpened: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.recordOpened, path),

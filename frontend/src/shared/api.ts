@@ -5,6 +5,7 @@
  */
 import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
+import type { AppInfo } from './app/types'
 import type { FileEntry, SearchResult } from './files/types'
 import type {
   ModelConfig,
@@ -90,6 +91,10 @@ export interface ScoderAPI {
   getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
   /** 保存 AI 运行参数，返回校验并落库后的结果 */
   saveAiRuntimeSettings: (input: AiRuntimeSettings) => Promise<AiRuntimeSettings>
+  /** 读取应用基础信息（版本号与官方仓库地址），供设置页「关于」展示 */
+  getAppInfo: () => Promise<AppInfo>
+  /** 在系统浏览器中打开官方 GitHub 仓库 */
+  openRepository: () => Promise<void>
   /** 最近项目列表（MRU，最多 5 个），供「文件」菜单展示 */
   listRecentProjects: () => Promise<RecentProject[]>
   /** 记录一个刚打开的项目：更新 MRU 并作为下次启动的默认打开项 */
