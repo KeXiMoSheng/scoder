@@ -13,5 +13,9 @@ export const MODEL_CONFIG_CHANNELS = {
   /** 读取上次成功导入时填写的连接信息 */
   getImportForm: 'modelConfig:getImportForm',
   /** 保存本次成功导入时填写的连接信息 */
-  saveImportForm: 'modelConfig:saveImportForm'
+  saveImportForm: 'modelConfig:saveImportForm',
+  /** 读取对话框上次选中的模型主键 */
+  getSelected: 'modelConfig:getSelected',
+  /** 记录对话框当前选中的模型主键 */
+  saveSelected: 'modelConfig:saveSelected'
 } as const

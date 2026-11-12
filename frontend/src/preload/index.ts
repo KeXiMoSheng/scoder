@@ -97,6 +97,10 @@ const api: ScoderAPI = {
   getModelImportForm: () => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.getImportForm),
   saveModelImportForm: (form: RemoteModelListRequest) =>
     ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.saveImportForm, form),
+  // 对话框选中的模型：与最近项目一样落库，下次打开时恢复
+  getSelectedModelConfigId: () => ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.getSelected),
+  saveSelectedModelConfigId: (id: number) =>
+    ipcRenderer.invoke(MODEL_CONFIG_CHANNELS.saveSelected, id),
   // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
   getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
   saveAiRuntimeSettings: (input: AiRuntimeSettings) =>

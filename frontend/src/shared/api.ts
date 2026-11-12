@@ -82,6 +82,10 @@ export interface ScoderAPI {
   getModelImportForm: () => Promise<RemoteModelListRequest | null>
   /** 保存本次成功导入时填写的连接信息，返回清洗后的结果 */
   saveModelImportForm: (form: RemoteModelListRequest) => Promise<RemoteModelListRequest>
+  /** 读取对话框上次选中的模型主键；没有记录时返回 null */
+  getSelectedModelConfigId: () => Promise<number | null>
+  /** 记录对话框当前选中的模型主键，返回落库后的值 */
+  saveSelectedModelConfigId: (id: number) => Promise<number>
   /** 读取 AI 运行参数（步数预算、续接段数、重复调用保护） */
   getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
   /** 保存 AI 运行参数，返回校验并落库后的结果 */

@@ -22,6 +22,7 @@ import {
   listModelConfigs,
   updateModelConfig
 } from './model-configs'
+import { getSelectedModelConfigId, saveSelectedModelConfigId } from './model-selection'
 
 /**
  * 向渲染进程提供模型配置与应用设置的读写（白名单 IPC）。
@@ -49,6 +50,12 @@ export function registerDatabaseHandlers(): void {
     const window = BrowserWindow.fromWebContents(event.sender)
     return confirmAndDeleteAll(window)
   })
+
+  // 对话框选中的模型：全局偏好，与最近项目一样落在 app_settings
+  ipcMain.handle(MODEL_CONFIG_CHANNELS.getSelected, (): number | null => getSelectedModelConfigId())
+  ipcMain.handle(MODEL_CONFIG_CHANNELS.saveSelected, (_event, id: number): number =>
+    saveSelectedModelConfigId(id)
+  )
 
   // AI 运行参数：设置页读写，主进程在每轮对话开始时重新读取
   ipcMain.handle(AI_RUNTIME_CHANNELS.get, (): AiRuntimeSettings => getAiRuntimeSettings())

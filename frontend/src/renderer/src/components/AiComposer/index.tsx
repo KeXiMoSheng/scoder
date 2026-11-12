@@ -43,16 +43,26 @@ export default function AiComposer({
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
   const [models, setModels] = useState<ModelConfig[]>([])
-  const [modelId, setModelId] = useState<number | null>(null)
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
 
-  // 模型列表来自本地数据库；读取失败时按「未配置模型」展示，不阻塞输入
+  // 模型列表与上次选中的模型都来自本地数据库；任一读取失败都不阻塞输入。
+  // 记录的模型已被删除时回落到列表第一个，并把回落结果写回数据库。
   useEffect(() => {
     let active = true
-    window.api
-      .listModelConfigs()
-      .then((list) => {
-        if (active) {
-          setModels(list)
+    Promise.all([
+      window.api.listModelConfigs(),
+      window.api.getSelectedModelConfigId().catch(() => null)
+    ])
+      .then(([list, saved]) => {
+        if (!active) {
+          return
+        }
+        setModels(list)
+        const storedValid = saved !== null && list.some((model) => model.id === saved)
+        const resolved = storedValid ? saved : (list[0]?.id ?? null)
+        setSelectedModelId(resolved)
+        if (resolved !== null && resolved !== saved) {
+          window.api.saveSelectedModelConfigId(resolved).catch(() => undefined)
         }
       })
       .catch(() => undefined)
@@ -61,11 +71,15 @@ export default function AiComposer({
     }
   }, [])
 
-  // 选中的模型被删除后回落到列表第一个
-  const selectedModelId =
-    modelId !== null && models.some((model) => model.id === modelId)
-      ? modelId
-      : (models[0]?.id ?? null)
+  // 用户切换模型时立即记住选择，下次打开对话框直接恢复
+  const handleModelChange = useCallback((value: string): void => {
+    const id = Number(value)
+    if (!Number.isInteger(id) || id <= 0) {
+      return
+    }
+    setSelectedModelId(id)
+    window.api.saveSelectedModelConfigId(id).catch(() => undefined)
+  }, [])
 
   // 没有可用模型时也无法发送：主进程按 modelConfigId 读密钥
   const canSend = value.trim().length > 0 && !disabled && !running && selectedModelId !== null
@@ -164,7 +178,7 @@ export default function AiComposer({
         {/* 用主题化的 Select 而非原生 select：原生下拉弹层的高亮色由系统决定，不随主题变化 */}
         <Select
           value={selectedModelId === null ? undefined : String(selectedModelId)}
-          onValueChange={(value) => setModelId(Number(value))}
+          onValueChange={handleModelChange}
           disabled={models.length === 0}
         >
           <SelectTrigger
