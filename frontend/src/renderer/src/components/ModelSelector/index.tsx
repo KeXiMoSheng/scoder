@@ -159,6 +159,9 @@ export default function ModelSelector({
                   align="start"
                   sideOffset={settingsOffset}
                   className="w-48"
+                  // modal={false} 的菜单不拦焦点外移：鼠标划过模型列表时列表项会抢走焦点，
+                  // 这里兜住，浮层只由点击外部或再点铅笔来关闭
+                  onFocusOutside={(event) => event.preventDefault()}
                 >
                   <CallSettingsFields key={model.id} model={model} onSave={onUpdateModel} />
                 </DropdownMenuContent>
