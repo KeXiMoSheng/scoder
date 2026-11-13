@@ -3,10 +3,15 @@ import { History, Plus } from 'lucide-react'
 import AiChatPanel from '../AiChatPanel'
 import AiSessionHistory from '../AiSessionHistory'
 import AiSessionTabs from '../AiSessionTabs'
+import MessageDialog from '../MessageDialog'
 import PromptDialog from '../PromptDialog'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 import type { AiSidebarProps } from './types'
+
+/** 导出会话后的提示：null 表示没有待展示的对话框 */
+type ExportNotice =
+  { kind: 'empty' } | { kind: 'error'; message: string } | { kind: 'exported'; path: string }
 
 /**
  * 右侧 AI 边栏：
@@ -34,11 +39,14 @@ export default function AiSidebar({
     refreshHistory,
     rename,
     remove,
+    exportSession,
     close,
     closeOthers,
     touch
   } = sessions
   const [historyOpen, setHistoryOpen] = useState(false)
+  // 导出结果提示：用应用内对话框展示，原生弹窗不跟随应用主题
+  const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null)
   // 正在重命名的会话 id；null 表示未打开重命名对话框
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const renamingSession = renamingId
@@ -74,6 +82,42 @@ export default function AiSidebar({
     },
     [open]
   )
+
+  const closeExportNotice = useCallback((): void => setExportNotice(null), [])
+
+  /**
+   * 导出会话：目录选择由主进程弹出，结果用应用内对话框提示。
+   * 用户取消目录选择时不打扰；复制失败在对话框里展示原因。
+   */
+  const handleExport = useCallback(
+    (id: string): void => {
+      void exportSession(id)
+        .then((result) => {
+          if (result.status === 'exported') {
+            setExportNotice({ kind: 'exported', path: result.path })
+          } else if (result.status === 'empty') {
+            setExportNotice({ kind: 'empty' })
+          }
+        })
+        .catch((error: unknown) => {
+          setExportNotice({
+            kind: 'error',
+            message: error instanceof Error ? error.message : String(error)
+          })
+        })
+    },
+    [exportSession]
+  )
+
+  /** 在系统文件管理器中定位导出文件；失败时就地改为错误提示 */
+  const revealExported = useCallback((path: string): void => {
+    void window.api.revealEntry(path).catch((error: unknown) => {
+      setExportNotice({
+        kind: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }, [])
 
   return (
     <aside className="flex shrink-0 flex-col border-l border-line bg-elevated" style={{ width }}>
@@ -128,6 +172,7 @@ export default function AiSidebar({
             activeId={activeId}
             onSelect={handleSelectHistory}
             onDelete={remove}
+            onExport={handleExport}
             onClose={() => setHistoryOpen(false)}
           />
         ) : null}
@@ -162,6 +207,41 @@ export default function AiSidebar({
             setRenamingId(null)
           }}
           onCancel={() => setRenamingId(null)}
+        />
+      ) : null}
+      {exportNotice ? (
+        <MessageDialog
+          title="导出会话"
+          tone={exportNotice.kind === 'error' ? 'error' : 'info'}
+          message={
+            exportNotice.kind === 'exported'
+              ? '会话文件已导出'
+              : exportNotice.kind === 'empty'
+                ? '该会话还没有可导出的内容'
+                : '导出会话失败'
+          }
+          detail={
+            exportNotice.kind === 'exported'
+              ? exportNotice.path
+              : exportNotice.kind === 'empty'
+                ? '发送第一条消息后，会话才会写入磁盘日志。'
+                : exportNotice.message
+          }
+          actions={
+            exportNotice.kind === 'exported'
+              ? [
+                  { label: '完成', primary: true, onClick: closeExportNotice },
+                  {
+                    label: '打开所在文件夹',
+                    onClick: () => {
+                      revealExported(exportNotice.path)
+                      closeExportNotice()
+                    }
+                  }
+                ]
+              : [{ label: '好', primary: true, onClick: closeExportNotice }]
+          }
+          onClose={closeExportNotice}
         />
       ) : null}
     </aside>

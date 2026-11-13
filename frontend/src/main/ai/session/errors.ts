@@ -10,6 +10,8 @@ export type SessionLogErrorCode =
   | 'SESSION_LOG_CORRUPT'
   /** 磁盘上的日志版本高于当前程序，继续读取可能丢掉新字段 */
   | 'SESSION_LOG_VERSION_UNSUPPORTED'
+  /** 会话日志尚不存在（新建后还没发过消息），没有可导出的内容 */
+  | 'SESSION_LOG_NOT_FOUND'
   /** 追加写入磁盘失败 */
   | 'SESSION_LOG_WRITE_FAILED'
 

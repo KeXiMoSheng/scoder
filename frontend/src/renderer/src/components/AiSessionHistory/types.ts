@@ -11,6 +11,8 @@ export interface AiSessionHistoryProps {
   onSelect: (id: string) => void
   /** 删除某个会话（磁盘日志一并删除，主进程会先弹确认框） */
   onDelete: (id: string) => void
+  /** 导出某个会话的 jsonl 日志（主进程弹出目录选择框并复制文件） */
+  onExport: (id: string) => void
   /** 请求关闭弹层（点击外部或按 Esc） */
   onClose: () => void
 }

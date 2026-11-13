@@ -4,7 +4,17 @@
  * 只做“文件里有什么、怎么安全写进去”，不关心对话语义；
  * 事件的含义与重放都在 store.ts。
  */
-import { appendFile, mkdir, readFile, readdir, rm, truncate, writeFile } from 'fs/promises'
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  truncate,
+  writeFile
+} from 'fs/promises'
 import { createHash } from 'crypto'
 import { dirname, join } from 'path'
 import { SessionLogError } from './errors'
@@ -241,6 +251,45 @@ export async function appendSessionLog(
     await appendFile(path, chunk, 'utf8')
   } catch (error) {
     throw new SessionLogError(`写入会话日志失败：${path}`, 'SESSION_LOG_WRITE_FAILED', {
+      cause: error
+    })
+  }
+}
+
+/**
+ * 会话日志是否已落盘。
+ * 新建后还没发过消息的会话只存在于内存，没有可导出的文件。
+ * @param path 日志文件绝对路径
+ */
+export async function sessionLogExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (isMissingFile(error)) {
+      return false
+    }
+    throw error
+  }
+}
+
+/**
+ * 把会话日志复制到导出目录。
+ * 同名文件会被覆盖：同一会话重复导出到同一目录时，用户拿到的始终是最新内容。
+ * @param path 源日志绝对路径
+ * @param targetPath 目标文件绝对路径
+ * @throws SessionLogError 源文件不存在或复制失败
+ */
+export async function exportSessionLog(path: string, targetPath: string): Promise<void> {
+  try {
+    await copyFile(path, targetPath)
+  } catch (error) {
+    if (isMissingFile(error)) {
+      throw new SessionLogError(`会话日志不存在：${path}`, 'SESSION_LOG_NOT_FOUND', {
+        cause: error
+      })
+    }
+    throw new SessionLogError(`导出会话日志失败：${targetPath}`, 'SESSION_LOG_WRITE_FAILED', {
       cause: error
     })
   }

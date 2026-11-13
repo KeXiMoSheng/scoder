@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Download, Trash2 } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { AiSessionHistoryProps } from './types'
@@ -18,14 +18,15 @@ function formatFullTime(timestamp: number): string {
 }
 
 /**
- * 对话历史弹层：以表格展示会话标题（左）、最后活动时间与删除入口（右）。
- * 点击任意行打开该会话；删除按钮单独点击、不会触发行切换。
+ * 对话历史弹层：以表格展示会话标题（左）、最后活动时间与导出/删除入口（右）。
+ * 点击任意行打开该会话；导出与删除按钮单独点击、不会触发行切换。
  */
 export default function AiSessionHistory({
   sessions,
   activeId,
   onSelect,
   onDelete,
+  onExport,
   onClose
 }: AiSessionHistoryProps): React.JSX.Element {
   // 最近活动的会话排在最前
@@ -62,7 +63,7 @@ export default function AiSessionHistory({
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="h-7 px-2 text-[11px]">标题</TableHead>
                   <TableHead className="h-7 w-[80px] px-2 text-right text-[11px]">时间</TableHead>
-                  <TableHead className="h-7 w-8 px-1" />
+                  <TableHead className="h-7 w-[58px] px-1" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -83,22 +84,40 @@ export default function AiSessionHistory({
                       {formatSessionTime(session.updatedAt)}
                     </TableCell>
                     <TableCell className="px-1 py-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        // 默认隐藏，悬停才浮现：列表安静，需要时随手可删
-                        className="text-dim opacity-0 group-hover:opacity-100 hover:text-danger focus-visible:opacity-100"
-                        title="删除会话"
-                        aria-label={`删除会话 ${session.title}`}
-                        onClick={(event) => {
-                          // 别让删除冒泡成“选中这一行”
-                          event.stopPropagation()
-                          onDelete(session.id)
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          // 默认隐藏，悬停才浮现：列表安静，需要时随手可导出
+                          className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg focus-visible:opacity-100"
+                          title="导出会话文件"
+                          aria-label={`导出会话 ${session.title}`}
+                          onClick={(event) => {
+                            // 别让导出冒泡成“选中这一行”
+                            event.stopPropagation()
+                            onExport(session.id)
+                          }}
+                        >
+                          <Download className="size-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          // 默认隐藏，悬停才浮现：列表安静，需要时随手可删
+                          className="text-dim opacity-0 group-hover:opacity-100 hover:text-danger focus-visible:opacity-100"
+                          title="删除会话"
+                          aria-label={`删除会话 ${session.title}`}
+                          onClick={(event) => {
+                            // 别让删除冒泡成“选中这一行”
+                            event.stopPropagation()
+                            onDelete(session.id)
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

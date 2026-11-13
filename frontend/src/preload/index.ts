@@ -32,7 +32,8 @@ const ai: AiAPI = {
   deleteSession: (cwd: string, id: string) =>
     ipcRenderer.invoke(AI_CHANNELS.deleteSession, cwd, id),
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) =>
-    ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, cwd, id, title, autoTitle)
+    ipcRenderer.invoke(AI_CHANNELS.updateSessionTitle, cwd, id, title, autoTitle),
+  exportSession: (cwd: string, id: string) => ipcRenderer.invoke(AI_CHANNELS.exportSession, cwd, id)
 }
 
 // Custom APIs for renderer

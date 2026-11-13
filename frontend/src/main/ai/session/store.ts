@@ -10,14 +10,17 @@
  * 与 harness 刻意不同的部分：没有格式代际迁移、没有跨进程写锁、
  * 没有流式 chunk 时间线——本项目单进程、单写者，这些留到需要时再加。
  */
+import { join } from 'path'
 import type { AiSessionSummary } from '../../../shared/ai/types'
 import type { ChatMessage, ChatToolCall } from '../llm/openai'
 import {
   appendSessionLog,
   createSessionLog,
+  exportSessionLog,
   listProjectLogs,
   readSessionLog,
   removeSessionLog,
+  sessionLogExists,
   sessionLogPath,
   truncateTornTail
 } from './jsonl'
@@ -260,6 +263,34 @@ export class SessionStore {
       // 会话已经不存在，写入链也一并清掉
       this.chains.delete(key)
     }
+  }
+
+  /**
+   * 会话日志是否已落盘。
+   * 新建后还没发过消息的会话只存在于内存，没有可导出的文件。
+   * @param cwd 会话所属项目根目录
+   * @param id 会话 id
+   */
+  async exists(cwd: string, id: string): Promise<boolean> {
+    const key = refKey(cwd, id)
+    return this.enqueue(key, () => sessionLogExists(sessionLogPath(this.resolveRoot(), cwd, id)))
+  }
+
+  /**
+   * 导出会话日志到指定目录。
+   * 排到该会话写入链末尾：先让进行中的追加落盘，复制到的一定是完整文件。
+   * @param cwd 会话所属项目根目录
+   * @param id 会话 id
+   * @param targetDir 导出目录（由系统目录选择框返回的绝对路径）
+   * @returns 导出后的文件绝对路径
+   */
+  async exportTo(cwd: string, id: string, targetDir: string): Promise<string> {
+    const key = refKey(cwd, id)
+    return this.enqueue(key, async () => {
+      const target = join(targetDir, `${id}.jsonl`)
+      await exportSessionLog(sessionLogPath(this.resolveRoot(), cwd, id), target)
+      return target
+    })
   }
 
   /** 读取日志；损坏或缺失时返回 null（列表场景下不因单个文件失败） */

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import type { MessageBoxOptions } from 'electron'
+import type { MessageBoxOptions, OpenDialogOptions } from 'electron'
 import { isAbsolute, join } from 'path'
 import { DEFAULT_CONTEXT_WINDOW } from '../../shared/ai/context'
 import { AI_CHANNELS } from '../../shared/ai/events'
@@ -7,6 +7,7 @@ import type {
   AiEvent,
   AiLoadedSession,
   AiSendRequest,
+  AiSessionExportResult,
   AiSessionSummary,
   ToolCardView
 } from '../../shared/ai/types'
@@ -140,6 +141,37 @@ export function registerAiHandlers(): void {
         throw new Error('会话标题参数无效')
       }
       await sessions.updateTitle(project, id, title, autoTitle)
+    }
+  )
+
+  // 导出会话日志：先选目录，再把该会话的 jsonl 复制过去（同名覆盖）。
+  // 结果提示由渲染进程用应用内对话框完成，原生弹窗不跟随应用主题。
+  ipcMain.handle(
+    AI_CHANNELS.exportSession,
+    async (event, cwd: string, id: string): Promise<AiSessionExportResult> => {
+      const project = requireProjectPath(cwd)
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      // 新建后还没发过消息的会话只存在于内存，没有文件可复制：先告知，别让用户白选目录
+      if (!(await sessions.exists(project, id))) {
+        return { status: 'empty' }
+      }
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const options: OpenDialogOptions = {
+        title: '选择导出目录',
+        buttonLabel: '导出到此处',
+        properties: ['openDirectory', 'createDirectory']
+      }
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options)
+      const targetDir = result.filePaths[0]
+      if (result.canceled || !targetDir) {
+        return { status: 'canceled' }
+      }
+      const path = await sessions.exportTo(project, id, targetDir)
+      return { status: 'exported', path }
     }
   )
 

@@ -279,6 +279,16 @@ export interface AiSessionSummary {
   updatedAt: number
 }
 
+/**
+ * 导出会话日志的结果：
+ * - exported：已复制到 path；
+ * - canceled：用户在目录选择框里取消；
+ * - empty：会话还没有落盘内容（新建后没发过消息）。
+ * 失败原因（无权限、磁盘错误等）通过异常抛出，由渲染进程弹应用内对话框。
+ */
+export type AiSessionExportResult =
+  { status: 'exported'; path: string } | { status: 'canceled' } | { status: 'empty' }
+
 /** 经 preload 暴露给渲染进程的 AI 能力（白名单方法） */
 export interface AiAPI {
   /** 启动一轮对话；立即返回，后续进展通过 onEvent 推送 */
@@ -297,4 +307,9 @@ export interface AiAPI {
   deleteSession: (cwd: string, id: string) => Promise<boolean>
   /** 保存会话标题；autoTitle 为 true 表示仍是自动生成的标题 */
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) => Promise<void>
+  /**
+   * 导出会话日志：主进程弹出目录选择框，把该会话的 jsonl 复制过去。
+   * 取消与空会话以结果状态返回，不抛异常。
+   */
+  exportSession: (cwd: string, id: string) => Promise<AiSessionExportResult>
 }
