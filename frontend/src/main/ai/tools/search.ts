@@ -14,10 +14,10 @@ const GREP_MAX_LINE_LENGTH = 300
 const RAW_OUTPUT_MAX_BYTES = 20 * 1024 * 1024
 /** 单次搜索的协作式时限：注册表到点中止信号，信号再转成杀掉 rg 子进程 */
 const SEARCH_TIMEOUT_MS = 30000
-/** 版本库元数据目录：任何搜索都不进入 */
+/** 版本库元数据目录：glob 不进入（grep 走 ripgrep 默认语义，本来就跳过隐藏目录） */
 const VCS_DIRECTORY_NAMES = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl']
 /**
- * 默认剪掉的噪音目录：依赖缓存与编译产物。
+ * glob 默认剪掉的噪音目录：依赖缓存与编译产物。
  * 省略 path 时按目录名剪枝；显式传 path 视为调用方自己缩小了范围，这时不再剪枝。
  */
 const NOISE_DIRECTORY_NAMES = [
@@ -157,13 +157,15 @@ function runRipgrep(ctx: ToolContext, args: string[]): Promise<RipgrepRun> {
 }
 
 /**
- * 构造两个搜索工具共用的参数：不读 ignore 文件、包含隐藏文件、排除版本库元数据。
- * glob 与 grep 必须看到同一套文件，否则会出现“glob 找得到、grep 搜不到”的假象，
- * 因此两边共用这里；噪音目录只在未指定 path 时剪枝。
+ * 构造 glob 专用的参数：不读 ignore 文件、包含隐藏文件、排除版本库元数据。
+ * grep 不共用这一层：它与上游 tool-fs-search 的 grep 一致，走 ripgrep 默认的
+ * ignore/hidden 语义，否则连 .gradle 这类被构建进程独占锁定的缓存目录也会去读，
+ * 单个文件读不了就让整次搜索以退出码 2 失败。代价是 grep 看不到隐藏文件与被
+ * ignore 的文件，glob 仍能看到——两者范围不同是有意为之。
  * @param pruneNoise 是否按目录名剪掉依赖缓存与编译产物
  * @returns 附加参数列表
  */
-function buildCommonArgs(pruneNoise: boolean): string[] {
+function buildGlobArgs(pruneNoise: boolean): string[] {
   const args = ['--no-ignore', '--hidden']
   for (const name of VCS_DIRECTORY_NAMES) {
     args.push(`--glob=!**/${name}`, `--glob=!**/${name}/**`)
@@ -299,7 +301,7 @@ export function createGlobTool(): ToolDefinition {
         '--files',
         `--glob=${pattern}`,
         '--sort=modified',
-        ...buildCommonArgs(shouldPruneNoise(start)),
+        ...buildGlobArgs(shouldPruneNoise(start)),
         '--',
         target.key
       ])
@@ -345,21 +347,29 @@ export function createGlobTool(): ToolDefinition {
 /**
  * grep 工具：按 ripgrep 正则查找匹配行。
  * 只返回 路径:行号:内容，不带上下文行；path 是文件时只搜该文件。
+ * 参数与上游 harness 的 grep 对齐：只带 --json、pattern 与调用方给的过滤，
+ * 其余交给 ripgrep 默认语义（遵守 .gitignore/.ignore，跳过隐藏文件与目录）。
+ * 显式打开 --no-ignore/--hidden 会把 .gradle 之类被构建进程独占锁定的缓存
+ * 也纳入搜索，单个文件读取失败就让整次搜索以退出码 2 失败。
  */
 export function createGrepTool(): ToolDefinition {
   return {
     name: 'grep',
     description:
-      '在工作区文本文件里按正则查找匹配行（ripgrep 语义，含隐藏文件），返回 路径:行号:内容。' +
-      'path 可以是单个文件（只搜它）或目录；可配合 glob 参数缩小范围；' +
-      '省略 path 时默认跳过 node_modules、bin、target、out 等目录。',
+      '在工作区文本文件里按正则查找匹配行（ripgrep 语义），返回 路径:行号:内容。' +
+      '遵守 .gitignore/.ignore，默认不搜索隐藏文件与目录；' +
+      '需要搜隐藏文件或目录（如 .github、.agents）时，把 path 指向该文件或目录——' +
+      '显式给出的路径不受 ignore/hidden 过滤。' +
+      'path 可以是单个文件（只搜它）或目录；可配合 glob 参数缩小范围。',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'ripgrep 正则表达式，例如 afterBindData\\(' },
         path: {
           type: 'string',
-          description: '搜索起点：文件或目录，相对于工作区根；省略时为工作区根。'
+          description:
+            '搜索起点：文件或目录，相对于工作区根；省略时为工作区根。' +
+            '显式给出时会搜索该路径，即使它是隐藏或被 ignore 的文件/目录。'
         },
         glob: { type: 'string', description: '只搜索匹配该 glob 的文件，例如 **/*.ts。' }
       },
@@ -383,7 +393,6 @@ export function createGrepTool(): ToolDefinition {
         '--json',
         `--regexp=${pattern}`,
         ...(globFilter === undefined ? [] : [`--glob=${globFilter}`]),
-        ...buildCommonArgs(shouldPruneNoise(start)),
         '--',
         target.key
       ])
