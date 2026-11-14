@@ -289,6 +289,18 @@ export interface AiSessionSummary {
 export type AiSessionExportResult =
   { status: 'exported'; path: string } | { status: 'canceled' } | { status: 'empty' }
 
+/**
+ * 批量导出会话日志的结果：
+ * - exported：目录已选定，paths 为复制出的文件；missing 为没有落盘内容的会话 id（跳过，不算失败）；
+ * - canceled：用户在目录选择框里取消；
+ * - empty：选中的会话都还没有落盘内容，未弹出目录选择框。
+ * 失败原因（无权限、磁盘错误等）通过异常抛出，由渲染进程弹应用内对话框。
+ */
+export type AiSessionsExportResult =
+  | { status: 'exported'; dir: string; paths: string[]; missing: string[] }
+  | { status: 'canceled' }
+  | { status: 'empty' }
+
 /** 经 preload 暴露给渲染进程的 AI 能力（白名单方法） */
 export interface AiAPI {
   /** 启动一轮对话；立即返回，后续进展通过 onEvent 推送 */
@@ -312,4 +324,9 @@ export interface AiAPI {
    * 取消与空会话以结果状态返回，不抛异常。
    */
   exportSession: (cwd: string, id: string) => Promise<AiSessionExportResult>
+  /**
+   * 批量导出会话日志：只弹一次目录选择框，与单条导出使用同一套选择参数，
+   * 把选中会话的 jsonl 全部复制过去；没有落盘内容的会话跳过并在结果里列出。
+   */
+  exportSessions: (cwd: string, ids: string[]) => Promise<AiSessionsExportResult>
 }

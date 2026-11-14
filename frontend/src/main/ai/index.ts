@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import type { MessageBoxOptions, OpenDialogOptions } from 'electron'
+import type { MessageBoxOptions, OpenDialogOptions, WebContents } from 'electron'
 import { isAbsolute, join } from 'path'
 import { DEFAULT_CONTEXT_WINDOW } from '../../shared/ai/context'
 import { AI_CHANNELS } from '../../shared/ai/events'
@@ -8,6 +8,7 @@ import type {
   AiLoadedSession,
   AiSendRequest,
   AiSessionExportResult,
+  AiSessionsExportResult,
   AiSessionSummary,
   ToolCardView
 } from '../../shared/ai/types'
@@ -157,21 +158,50 @@ export function registerAiHandlers(): void {
       if (!(await sessions.exists(project, id))) {
         return { status: 'empty' }
       }
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const options: OpenDialogOptions = {
-        title: '选择导出目录',
-        buttonLabel: '导出到此处',
-        properties: ['openDirectory', 'createDirectory']
-      }
-      const result = window
-        ? await dialog.showOpenDialog(window, options)
-        : await dialog.showOpenDialog(options)
-      const targetDir = result.filePaths[0]
-      if (result.canceled || !targetDir) {
+      const targetDir = await pickExportDir(event.sender)
+      if (targetDir === null) {
         return { status: 'canceled' }
       }
-      const path = await sessions.exportTo(project, id, targetDir)
+      const summary = (await sessions.list(project)).find((item) => item.id === id)
+      const path = await sessions.exportTo(project, id, targetDir, exportFileName(summary, id))
       return { status: 'exported', path }
+    }
+  )
+
+  // 批量导出：与单条导出共用同一套目录选择框，只弹一次，全部复制到该目录。
+  // 没有落盘内容的会话跳过并随结果返回，由渲染进程提示；一条都不剩时不弹目录。
+  ipcMain.handle(
+    AI_CHANNELS.exportSessions,
+    async (event, cwd: string, ids: string[]): Promise<AiSessionsExportResult> => {
+      const project = requireProjectPath(cwd)
+      const sessionIds = validateSessionIds(ids)
+      // 去重：同一会话被重复选中时只复制一次
+      const uniqueIds = [...new Set(sessionIds)]
+      const exportable: string[] = []
+      const missing: string[] = []
+      for (const id of uniqueIds) {
+        if (await sessions.exists(project, id)) {
+          exportable.push(id)
+        } else {
+          missing.push(id)
+        }
+      }
+      if (exportable.length === 0) {
+        return { status: 'empty' }
+      }
+      const targetDir = await pickExportDir(event.sender)
+      if (targetDir === null) {
+        return { status: 'canceled' }
+      }
+      // 逐个复制：exportTo 各自排在会话写入链末尾，拿到的是完整文件；
+      // 文件名带各自标题与时间，同标题的会话也能区分
+      const summaries = new Map((await sessions.list(project)).map((item) => [item.id, item]))
+      const paths: string[] = []
+      for (const id of exportable) {
+        const fileName = exportFileName(summaries.get(id), id)
+        paths.push(await sessions.exportTo(project, id, targetDir, fileName))
+      }
+      return { status: 'exported', dir: targetDir, paths, missing }
     }
   )
 
@@ -304,6 +334,64 @@ function requireProjectPath(cwd: unknown): string {
     throw new Error('cwd 必须是绝对路径')
   }
   return cwd
+}
+
+/** 批量导出的会话 id 列表：非字符串或空串一律拒绝，避免拼出非法路径 */
+function validateSessionIds(ids: unknown): string[] {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new Error('sessionId 列表无效')
+  }
+  if (ids.some((id) => typeof id !== 'string' || id.length === 0)) {
+    throw new Error('sessionId 列表无效')
+  }
+  return ids
+}
+
+/**
+ * 弹出导出目录选择框：单条与批量导出共用，保证两次交互参数完全一致。
+ * @returns 选中的目录；用户取消时为 null
+ */
+async function pickExportDir(sender: WebContents): Promise<string | null> {
+  const window = BrowserWindow.fromWebContents(sender)
+  const options: OpenDialogOptions = {
+    title: '选择导出目录',
+    buttonLabel: '导出到此处',
+    properties: ['openDirectory', 'createDirectory']
+  }
+  const result = window
+    ? await dialog.showOpenDialog(window, options)
+    : await dialog.showOpenDialog(options)
+  const targetDir = result.filePaths[0]
+  return result.canceled || !targetDir ? null : targetDir
+}
+
+/** 文件名非法字符：按最严格的 Windows 规则清洗（含控制字符），三大平台都安全 */
+const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]|\p{Cc}/gu
+
+/**
+ * 会话标题 → 文件名片段：去掉非法字符与首尾空白/点，过长截断。
+ * 全部被清掉时退回「会话」，保证文件名始终可读。
+ */
+function sanitizeFileTitle(title: string): string {
+  const cleaned = title.replace(INVALID_FILENAME_CHARS, '').replace(/^[. ]+|[. ]+$/g, '')
+  return cleaned.length > 0 ? cleaned.slice(0, 60) : '会话'
+}
+
+/** 文件名时间戳：YYYYMMDD_HHmmss，避开冒号等非法字符 */
+function formatFileTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
+/**
+ * 导出文件名：<会话标题>_<时间>.jsonl。
+ * 时间取会话最后活动时间（与历史列表展示一致），同名会话靠它区分；
+ * 同一会话重复导出到同一目录时同名覆盖，拿到的始终是最新内容。
+ */
+function exportFileName(summary: AiSessionSummary | undefined, id: string): string {
+  const title = sanitizeFileTitle(summary?.title ?? id)
+  return `${title}_${formatFileTime(summary?.updatedAt ?? Date.now())}.jsonl`
 }
 
 /**

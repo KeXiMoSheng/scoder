@@ -11,7 +11,10 @@ import type { AiSidebarProps } from './types'
 
 /** 导出会话后的提示：null 表示没有待展示的对话框 */
 type ExportNotice =
-  { kind: 'empty' } | { kind: 'error'; message: string } | { kind: 'exported'; path: string }
+  | { kind: 'empty'; many: boolean }
+  | { kind: 'error'; message: string }
+  | { kind: 'exported'; path: string }
+  | { kind: 'exportedMany'; dir: string; firstPath: string; count: number; skipped: number }
 
 /**
  * 右侧 AI 边栏：
@@ -40,6 +43,7 @@ export default function AiSidebar({
     rename,
     remove,
     exportSession,
+    exportSessions,
     close,
     closeOthers,
     touch
@@ -96,7 +100,7 @@ export default function AiSidebar({
           if (result.status === 'exported') {
             setExportNotice({ kind: 'exported', path: result.path })
           } else if (result.status === 'empty') {
-            setExportNotice({ kind: 'empty' })
+            setExportNotice({ kind: 'empty', many: false })
           }
         })
         .catch((error: unknown) => {
@@ -107,6 +111,36 @@ export default function AiSidebar({
         })
     },
     [exportSession]
+  )
+
+  /**
+   * 批量导出选中的会话：主进程只弹一次目录选择框（与单条导出同一套参数），
+   * 没有落盘内容的会话被跳过，结果里一并提示数量。
+   */
+  const handleExportMany = useCallback(
+    (ids: string[]): void => {
+      void exportSessions(ids)
+        .then((result) => {
+          if (result.status === 'exported') {
+            setExportNotice({
+              kind: 'exportedMany',
+              dir: result.dir,
+              firstPath: result.paths[0] ?? result.dir,
+              count: result.paths.length,
+              skipped: result.missing.length
+            })
+          } else if (result.status === 'empty') {
+            setExportNotice({ kind: 'empty', many: true })
+          }
+        })
+        .catch((error: unknown) => {
+          setExportNotice({
+            kind: 'error',
+            message: error instanceof Error ? error.message : String(error)
+          })
+        })
+    },
+    [exportSessions]
   )
 
   /** 在系统文件管理器中定位导出文件；失败时就地改为错误提示 */
@@ -173,6 +207,7 @@ export default function AiSidebar({
             onSelect={handleSelectHistory}
             onDelete={remove}
             onExport={handleExport}
+            onExportMany={handleExportMany}
             onClose={() => setHistoryOpen(false)}
           />
         ) : null}
@@ -216,25 +251,39 @@ export default function AiSidebar({
           message={
             exportNotice.kind === 'exported'
               ? '会话文件已导出'
-              : exportNotice.kind === 'empty'
-                ? '该会话还没有可导出的内容'
-                : '导出会话失败'
+              : exportNotice.kind === 'exportedMany'
+                ? `已导出 ${exportNotice.count} 个会话文件`
+                : exportNotice.kind === 'empty'
+                  ? exportNotice.many
+                    ? '选中的会话还没有可导出的内容'
+                    : '该会话还没有可导出的内容'
+                  : '导出会话失败'
           }
           detail={
             exportNotice.kind === 'exported'
               ? exportNotice.path
-              : exportNotice.kind === 'empty'
-                ? '发送第一条消息后，会话才会写入磁盘日志。'
-                : exportNotice.message
+              : exportNotice.kind === 'exportedMany'
+                ? exportNotice.skipped > 0
+                  ? `${exportNotice.dir}；${exportNotice.skipped} 个会话没有内容，已跳过`
+                  : exportNotice.dir
+                : exportNotice.kind === 'empty'
+                  ? exportNotice.many
+                    ? '发送第一条消息后，会话才会写入磁盘日志；所选会话都还没有内容。'
+                    : '发送第一条消息后，会话才会写入磁盘日志。'
+                  : exportNotice.message
           }
           actions={
-            exportNotice.kind === 'exported'
+            exportNotice.kind === 'exported' || exportNotice.kind === 'exportedMany'
               ? [
                   { label: '完成', primary: true, onClick: closeExportNotice },
                   {
                     label: '打开所在文件夹',
                     onClick: () => {
-                      revealExported(exportNotice.path)
+                      revealExported(
+                        exportNotice.kind === 'exported'
+                          ? exportNotice.path
+                          : exportNotice.firstPath
+                      )
                       closeExportNotice()
                     }
                   }

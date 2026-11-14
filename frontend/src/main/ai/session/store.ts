@@ -282,12 +282,13 @@ export class SessionStore {
    * @param cwd 会话所属项目根目录
    * @param id 会话 id
    * @param targetDir 导出目录（由系统目录选择框返回的绝对路径）
+   * @param fileName 导出文件名（含 .jsonl），由调用方按会话标题与时间生成
    * @returns 导出后的文件绝对路径
    */
-  async exportTo(cwd: string, id: string, targetDir: string): Promise<string> {
+  async exportTo(cwd: string, id: string, targetDir: string, fileName: string): Promise<string> {
     const key = refKey(cwd, id)
     return this.enqueue(key, async () => {
-      const target = join(targetDir, `${id}.jsonl`)
+      const target = join(targetDir, fileName)
       await exportSessionLog(sessionLogPath(this.resolveRoot(), cwd, id), target)
       return target
     })

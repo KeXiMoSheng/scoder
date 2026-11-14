@@ -17,6 +17,8 @@ export const AI_CHANNELS = {
   updateSessionTitle: 'ai:sessions:title',
   /** 渲染进程 → 主进程：导出会话日志到用户选中的目录（invoke） */
   exportSession: 'ai:sessions:export',
+  /** 渲染进程 → 主进程：批量导出多个会话日志到同一目录（invoke） */
+  exportSessions: 'ai:sessions:export-many',
   /** 渲染进程 → 主进程：读取会话历史消息（invoke） */
   loadMessages: 'ai:sessions:messages'
 } as const

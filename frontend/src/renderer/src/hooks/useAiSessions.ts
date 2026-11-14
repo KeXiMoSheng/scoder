@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AiSessionExportResult, AiSessionSummary } from '../../../shared/ai/types'
+import type {
+  AiSessionExportResult,
+  AiSessionsExportResult,
+  AiSessionSummary
+} from '../../../shared/ai/types'
 
 /** 默认会话标题 */
 const DEFAULT_TITLE = '新会话'
@@ -53,6 +57,8 @@ export interface AiSessionsApi {
   remove: (id: string) => void
   /** 导出会话日志：主进程弹出目录选择框并复制 jsonl，结果交给调用方展示 */
   exportSession: (id: string) => Promise<AiSessionExportResult>
+  /** 批量导出会话日志：目录选择框只弹一次，与单条导出同一套参数 */
+  exportSessions: (ids: string[]) => Promise<AiSessionsExportResult>
   /** 关闭单个会话标签（不删除磁盘日志） */
   close: (id: string) => void
   /** 关闭除指定会话外的全部标签（不删除磁盘日志） */
@@ -394,6 +400,20 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
   )
 
   /**
+   * 批量导出会话日志：目录选择与复制都在主进程完成，只弹一次目录选择框。
+   * 没有落盘内容的会话由主进程跳过，结果里带回它们的 id，供调用方提示。
+   */
+  const exportSessions = useCallback(
+    async (ids: string[]): Promise<AiSessionsExportResult> => {
+      if (projectPath === null || ids.length === 0) {
+        return { status: 'canceled' }
+      }
+      return window.api.ai.exportSessions(projectPath, ids)
+    },
+    [projectPath]
+  )
+
+  /**
    * 发送消息后只更新活动时间。
    * 标题不再用消息内容截取：仍保持「新会话」默认名，直到首轮模型润色或用户手动改名。
    */
@@ -429,6 +449,7 @@ export function useAiSessions(projectPath: string | null): AiSessionsApi {
     applyServerTitle,
     remove,
     exportSession,
+    exportSessions,
     close,
     closeOthers,
     touch
