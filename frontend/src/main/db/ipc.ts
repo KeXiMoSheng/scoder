@@ -1,11 +1,13 @@
 import { BrowserWindow, dialog, ipcMain, type MessageBoxOptions } from 'electron'
 import { promises as fs } from 'fs'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
+import { FILE_SETTINGS_CHANNELS, type FileSettings } from '../../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
 import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
 import type { EditorTabsSnapshot, RecentProject } from '../../shared/workspace/types'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
+import { getFileSettings, saveFileSettings } from './file-settings'
 import {
   clearRestoreProject,
   getLastProjectPath,
@@ -61,6 +63,12 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle(AI_RUNTIME_CHANNELS.get, (): AiRuntimeSettings => getAiRuntimeSettings())
   ipcMain.handle(AI_RUNTIME_CHANNELS.save, (_event, input: AiRuntimeSettings): AiRuntimeSettings =>
     saveAiRuntimeSettings(input)
+  )
+
+  // 文件限制：设置页读写，主进程在每次打开文本流时重新读取
+  ipcMain.handle(FILE_SETTINGS_CHANNELS.get, (): FileSettings => getFileSettings())
+  ipcMain.handle(FILE_SETTINGS_CHANNELS.save, (_event, input: FileSettings): FileSettings =>
+    saveFileSettings(input)
   )
 
   registerWorkspaceHandlers()

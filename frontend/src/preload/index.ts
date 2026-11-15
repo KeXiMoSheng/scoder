@@ -6,6 +6,8 @@ import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
+import { FILE_SETTINGS_CHANNELS } from '../shared/files/settings'
+import type { FileSettings } from '../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
 import type { ModelConfigInput, RemoteModelListRequest } from '../shared/model-config/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
@@ -46,8 +48,26 @@ const api: ScoderAPI = {
   readDirectory: (dirPath: string) => ipcRenderer.invoke(FILES_CHANNELS.readDirectory, dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFile, filePath),
   readFileBytes: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFileBytes, filePath),
-  writeFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke(FILES_CHANNELS.writeFile, filePath, content),
+  // 文本流：主进程负责句柄与跨块 UTF-8 解码，渲染进程逐块灌入 model
+  openTextStream: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.openTextStream, filePath),
+  readTextStreamChunk: (streamId: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.readTextStreamChunk, streamId),
+  closeTextStream: (streamId: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.closeTextStream, streamId),
+  // 写入流：大文件分块保存，主进程负责临时文件与原子替换
+  openWriteStream: (filePath: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.openWriteStream, filePath),
+  appendWriteChunk: (writeId: string, text: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.appendWriteChunk, writeId, text),
+  finishWriteStream: (writeId: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.finishWriteStream, writeId),
+  abortWriteStream: (writeId: string) =>
+    ipcRenderer.invoke(FILES_CHANNELS.abortWriteStream, writeId),
+  // 文件观测：大小与二进制判定，供编辑器给出超限提示
+  statFile: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.statFile, filePath),
+  // 文件限制：与 AI 运行参数一样落在主进程的 app_settings 表
+  getFileSettings: () => ipcRenderer.invoke(FILE_SETTINGS_CHANNELS.get),
+  saveFileSettings: (input: FileSettings) => ipcRenderer.invoke(FILE_SETTINGS_CHANNELS.save, input),
   createEntry: (dirPath: string, name: string, isDirectory: boolean) =>
     ipcRenderer.invoke(FILES_CHANNELS.createEntry, dirPath, name, isDirectory),
   moveEntry: (sourcePath: string, targetPath: string) =>

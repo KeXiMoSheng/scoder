@@ -17,3 +17,35 @@ export interface SearchResult {
   /** 结果是否因达到上限被截断 */
   truncated: boolean
 }
+
+/** 打开文本读取流的结果：大文件按块拉取，避免整份内容挤进一次 IPC 消息 */
+export interface TextStreamOpenResult {
+  /** 会话标识，后续按块拉取与释放都带上它 */
+  streamId: string
+  /** 打开时观测到的文件字节数（用于进度展示） */
+  size: number
+}
+
+/** 一次文本流拉取的结果 */
+export interface TextStreamChunk {
+  /** 本块解码后的文本；空文件或仅剩不完整字节时可为空串 */
+  text: string
+  /** 文件已读完；会话由主进程自动释放，无需再 close */
+  done: boolean
+  /** 本块实际读取的字节数（用于进度累计） */
+  bytesRead: number
+}
+
+/** 打开文本写入流的结果：大文件按块写入同目录临时文件，完成后原子替换目标 */
+export interface TextWriteOpenResult {
+  /** 会话标识，后续追加块、完成与放弃都带上它 */
+  writeId: string
+}
+
+/** 文件观测：只 stat + 采样文件头，不读全文，用于超限提示与二进制判定 */
+export interface FileStat {
+  /** 文件字节数 */
+  size: number
+  /** 文件头 8 KB 内是否含 NUL 字节（二进制文件不进编辑器，也不参与大小限制提示） */
+  binary: boolean
+}

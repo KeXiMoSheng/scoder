@@ -2,15 +2,24 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'r
 import { monaco } from '../../lib/monaco'
 import { detectLanguage, isMarkdownFile, isSvgFile } from '../../lib/language'
 import { extractErrorMessage } from '../../lib/errorMessage'
+import { appendModelText, LineEndingNormalizer } from '../../lib/fileStream'
 import { dirname, isAtOrUnder } from '../../lib/filePath'
 import { getActiveThemeId } from '../../lib/theme'
 import { cn } from '../../lib/utils'
 import { useModelText } from '../../hooks/useModelText'
+import { MAX_EDITOR_TEXT_BYTES, megabytesToBytes } from '@shared/files/settings'
 import MarkdownPreview from '../MarkdownPreview'
 import ResizeHandle from '../ResizeHandle'
 import SvgPreview from '../SvgPreview'
 import { Button } from '../ui/button'
-import type { CodeEditorProps, LoadFailure, PreviewViewMode } from './types'
+import type {
+  CodeEditorProps,
+  FileLoadProgress,
+  FileSaveProgress,
+  LoadFailure,
+  OversizeFile,
+  PreviewViewMode
+} from './types'
 
 /**
  * 每个 model 的保存点版本：model 是全局缓存，保存点也跟随 model 而非组件实例，
@@ -22,6 +31,56 @@ const savedVersions = new WeakMap<monaco.editor.ITextModel, number>()
 const SPLIT_MIN_RATIO = 0.2
 const SPLIT_MAX_RATIO = 0.8
 
+/** 流式保存的单块字符数：snapshot 约 64 KB 一块，攒到 4M 字符再发一次 IPC */
+const SAVE_CHUNK_CHARS = 4 * 1024 * 1024
+
+/**
+ * 大文件阈值（字符数）：超过后关闭需要扫描/索引全文的编辑器特性。
+ * 单词补全索引、出现高亮、选区高亮都会在 GB 级文本上产生海量对象，
+ * 是 1GB 文件把渲染进程堆打满的直接原因。
+ */
+const LARGE_FILE_CHARS = 20 * 1024 * 1024
+
+/**
+ * 编辑器文件级选项：wordBasedSuggestions 在类型上属于全局选项，但运行时
+ * updateOptions 同样会更新它；用交叉类型避免 IEditorOptions 的声明限制。
+ */
+type EditorFileOptions = monaco.editor.IEditorOptions & {
+  wordBasedSuggestions?: 'off' | 'currentDocument' | 'matchingDocuments' | 'allDocuments'
+}
+
+/** 大文件编辑器选项：关闭全文索引类特性，保留搜索与滚动 */
+const LARGE_FILE_OPTIONS: EditorFileOptions = {
+  occurrencesHighlight: 'off',
+  selectionHighlight: false,
+  wordBasedSuggestions: 'off',
+  codeLens: false,
+  folding: false,
+  bracketPairColorization: { enabled: false },
+  guides: { indentation: false },
+  stickyScroll: { enabled: false },
+  quickSuggestions: false,
+  suggestOnTriggerCharacters: false,
+  parameterHints: { enabled: false },
+  lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.Off }
+}
+
+/** 普通文件的编辑器选项：恢复 Monaco 默认行为 */
+const NORMAL_FILE_OPTIONS: EditorFileOptions = {
+  occurrencesHighlight: 'singleFile',
+  selectionHighlight: true,
+  wordBasedSuggestions: 'currentDocument',
+  codeLens: true,
+  folding: true,
+  bracketPairColorization: { enabled: true },
+  guides: { indentation: true },
+  stickyScroll: { enabled: true },
+  quickSuggestions: { other: true, comments: false, strings: false },
+  suggestOnTriggerCharacters: true,
+  parameterHints: { enabled: true },
+  lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.OnCode }
+}
+
 /** 工具栏上的三档视图选项 */
 const VIEW_MODES: readonly { id: PreviewViewMode; label: string }[] = [
   { id: 'edit', label: '编辑' },
@@ -29,15 +88,77 @@ const VIEW_MODES: readonly { id: PreviewViewMode; label: string }[] = [
   { id: 'preview', label: '预览' }
 ]
 
+/** 加载进度文案：分块阶段按 MB 展示；缓存大文件恢复视图时只显示打开提示 */
+function formatLoadingProgress(progress: FileLoadProgress): string {
+  if (progress.total <= 0) {
+    return '正在打开…'
+  }
+  const mb = (bytes: number): string => (bytes / 1024 / 1024).toFixed(1)
+  const percent = Math.min(100, Math.floor((progress.loaded / progress.total) * 100))
+  return `正在加载 ${mb(progress.loaded)} / ${mb(progress.total)} MB（${percent}%）`
+}
+
+/** 文件大小展示：MB 保留一位小数 */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** 保存进度文案：字符数换算成 MB 展示 */
+function formatSaveProgress(progress: FileSaveProgress): string {
+  const mb = (chars: number): string => (chars / 1024 / 1024).toFixed(1)
+  if (progress.total <= 0) {
+    return '正在保存…'
+  }
+  const percent = Math.min(100, Math.floor((progress.written / progress.total) * 100))
+  return `正在保存 ${mb(progress.written)} / ${mb(progress.total)} MB（${percent}%）`
+}
+
+/** 按 model 大小切换编辑器特性：大文件关闭全文索引类功能 */
+function applyEditorFileMode(
+  editor: monaco.editor.IStandaloneCodeEditor,
+  model: monaco.editor.ITextModel | null
+): void {
+  const large = model !== null && model.getValueLength() > LARGE_FILE_CHARS
+  editor.updateOptions(large ? LARGE_FILE_OPTIONS : NORMAL_FILE_OPTIONS)
+}
+
+/** 等浏览器完成一次绘制：先让「正在打开」提示可见，再执行同步 attach */
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (!settled) {
+        settled = true
+        resolve()
+      }
+    }
+    requestAnimationFrame(() => requestAnimationFrame(finish))
+    // rAF 在窗口不可见时会被暂停：加超时兜底，避免永远停在提示上
+    window.setTimeout(finish, 100)
+  })
+}
+
 export default function CodeEditor({
   file,
   onDirtyChange,
   onSendSelectionToAi,
+  onOpenEditorSettings,
+  recheckToken,
   ref
 }: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const [failure, setFailure] = useState<LoadFailure | null>(null)
+  // 流式加载进度：块读取 + 增量灌入 model；按路径归属，切换文件后旧进度不展示
+  const [loading, setLoading] = useState<FileLoadProgress | null>(null)
+  // 流式保存进度（分块写入较大文件时展示）
+  const [saving, setSaving] = useState<FileSaveProgress | null>(null)
+  // 正在保存的路径：同一文件不允许并发写流，避免两次保存互相覆盖
+  const savingPathsRef = useRef<Set<string>>(new Set())
+  // 超过配置上限的普通文本文件：只提示不读取，等用户决定继续打开或调整配置
+  const [oversize, setOversize] = useState<OversizeFile | null>(null)
+  // 用户选择「继续打开」的路径：跳过上限检查，按一次性读取打开
+  const [forceOpenPath, setForceOpenPath] = useState<string | null>(null)
   // 各文件已上报的脏状态（仅在翻转时通知外部，避免每次击键都触发重渲染）
   const reportedDirtyRef = useRef<Map<string, boolean>>(new Map())
   // 已挂载内容变更监听的 model（避免重复挂载）
@@ -93,16 +214,77 @@ export default function CodeEditor({
     [syncDirty]
   )
 
+  /** 流式保存：snapshot 分块读 + 主进程写流，所有文件共用这一条路径 */
+  const saveModelBySnapshot = useCallback(
+    async (model: monaco.editor.ITextModel): Promise<void> => {
+      const path = model.uri.fsPath
+      const total = model.getValueLength()
+      // snapshot 约 64 KB 一块，固定住保存时刻的内容；保存期间的编辑不影响本次写入
+      const snapshot = model.createSnapshot()
+      const { writeId } = await window.api.openWriteStream(path)
+      let written = 0
+      // 小文件写入是瞬时的：不显示进度，避免提示闪烁
+      const showProgress = total > SAVE_CHUNK_CHARS
+      try {
+        let buffer = ''
+        for (;;) {
+          const chunk = snapshot.read()
+          if (chunk === null) {
+            break
+          }
+          buffer += chunk
+          if (buffer.length < SAVE_CHUNK_CHARS) {
+            continue
+          }
+          await window.api.appendWriteChunk(writeId, buffer)
+          written += buffer.length
+          buffer = ''
+          if (showProgress) {
+            setSaving({ path, written, total })
+          }
+        }
+        if (buffer.length > 0) {
+          await window.api.appendWriteChunk(writeId, buffer)
+          written += buffer.length
+          if (showProgress) {
+            setSaving({ path, written, total })
+          }
+        }
+        await window.api.finishWriteStream(writeId)
+      } catch (error) {
+        await window.api.abortWriteStream(writeId).catch(() => undefined)
+        throw error
+      } finally {
+        setSaving((prev) => (prev?.path === path ? null : prev))
+      }
+    },
+    []
+  )
+
   /** 保存单个缓冲区到磁盘；保存期间产生的新改动仍保持未保存状态 */
   const saveModel = useCallback(
     async (model: monaco.editor.ITextModel): Promise<void> => {
       const path = model.uri.fsPath
-      const version = model.getAlternativeVersionId()
-      await window.api.writeFile(path, model.getValue())
-      savedVersions.set(model, version)
-      reportDirty(path, model.getAlternativeVersionId() !== version)
+      // 加载中（尚无保存点）不能把半截内容写回磁盘
+      if (!savedVersions.has(model)) {
+        return
+      }
+      // 同一文件不允许并发写流：两次保存会互相覆盖
+      if (savingPathsRef.current.has(path)) {
+        return
+      }
+      savingPathsRef.current.add(path)
+      try {
+        const version = model.getAlternativeVersionId()
+        // 所有保存统一走 snapshot + 写流，不再依赖 V8 单字符串上限
+        await saveModelBySnapshot(model)
+        savedVersions.set(model, version)
+        reportDirty(path, model.getAlternativeVersionId() !== version)
+      } finally {
+        savingPathsRef.current.delete(path)
+      }
     },
-    [reportDirty]
+    [reportDirty, saveModelBySnapshot]
   )
 
   /** 保存当前文件（Ctrl/Cmd+S 及编辑器右键菜单入口） */
@@ -208,7 +390,8 @@ export default function CodeEditor({
   }, [saveCurrent])
 
   // 切换激活文件：以文件路径为 model 的 URI 复用已有 model
-  // （保留内容缓存、未保存修改与滚动位置），未缓存时才读盘创建
+  // （保留内容缓存、未保存修改与滚动位置），未缓存时才读盘创建。
+  // 普通文本超过配置上限时先提示，用户可选择继续打开或调整上限。
   useEffect(() => {
     const editor = editorRef.current
     if (!editor) {
@@ -216,49 +399,145 @@ export default function CodeEditor({
     }
     if (!file) {
       editor.setModel(null)
+      editor.updateOptions(NORMAL_FILE_OPTIONS)
       return
     }
 
     const uri = monaco.Uri.file(file.path)
     const cachedModel = monaco.editor.getModel(uri)
     if (cachedModel) {
-      // 错误提示按路径派生过滤（errorMessage），切换文件后旧错误自然隐藏
-      observeModel(cachedModel)
-      editor.setModel(cachedModel)
-      // 模型缓存可能早于本次组件挂载（热更新重挂载后保存点已丢失）：
-      // 以当前内容为基线，避免仅打开文件就误报脏点
-      if (!savedVersions.has(cachedModel)) {
-        savedVersions.set(cachedModel, cachedModel.getAlternativeVersionId())
+      /** 恢复缓存 model：先按大小设好编辑器特性再 attach，避免按上一个文件的选项初始化 */
+      const attach = (): void => {
+        applyEditorFileMode(editor, cachedModel)
+        observeModel(cachedModel)
+        editor.setModel(cachedModel)
+        // 模型缓存可能早于本次组件挂载（热更新重挂载后保存点已丢失）：
+        // 以当前内容为基线，避免仅打开文件就误报脏点
+        if (!savedVersions.has(cachedModel)) {
+          savedVersions.set(cachedModel, cachedModel.getAlternativeVersionId())
+        }
+        syncDirty(cachedModel)
       }
-      syncDirty(cachedModel)
-      return
-    }
-
-    let cancelled = false
-    window.api
-      .readFile(file.path)
-      .then((content) => {
+      if (cachedModel.getValueLength() <= LARGE_FILE_CHARS) {
+        attach()
+        return
+      }
+      // 大 model 同步 attach 会阻塞一段时间：先清空编辑器并画出「正在打开」，下一帧再挂
+      let cancelled = false
+      void (async (): Promise<void> => {
+        setLoading({ path: file.path, loaded: 0, total: 0 })
+        editor.setModel(null)
+        await waitForPaint()
         if (cancelled) {
           return
         }
-        const model = monaco.editor.createModel(content, detectLanguage(file.name), uri)
+        attach()
+        setLoading((prev) => (prev?.path === file.path ? null : prev))
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    let cancelled = false
+    // 先清空编辑器：大文件加载期间不能继续显示上一个文件的内容
+    editor.setModel(null)
+    // 加载期间先关闭全文索引类特性：否则 model 增长过程中会持续建单词索引
+    editor.updateOptions(LARGE_FILE_OPTIONS)
+    // recheckToken 只作为「从设置页返回后重新检查」的触发器，值本身不参与判断
+    void recheckToken
+
+    void (async (): Promise<void> => {
+      try {
+        const info = await window.api.statFile(file.path)
+        if (info === null) {
+          throw new Error(`文件不存在或不是普通文件：${file.path}`)
+        }
+        // 二进制文件不参与大小限制提示：直接按不支持打开处理
+        if (info.binary) {
+          throw new Error('二进制文件不支持在编辑器中打开')
+        }
+        // 普通文本超过配置上限：先不读取，交给用户决定继续打开或调整上限
+        const settings = await window.api.getFileSettings()
+        const limit = settings.maxEditorFileMegabytes
+        if (info.size > megabytesToBytes(limit) && forceOpenPath !== file.path) {
+          if (!cancelled) {
+            setFailure(null)
+            setOversize({ path: file.path, size: info.size, limit })
+          }
+          return
+        }
+        // 按块读取并增量灌入空 model：不拼整串，突破 V8 单字符串长度上限
+        const opened = await window.api.openTextStream(file.path)
+        if (cancelled) {
+          void window.api.closeTextStream(opened.streamId)
+          return
+        }
+        const model = monaco.editor.createModel('', detectLanguage(file.name), uri)
+        // 加载期间不挂到编辑器：applyEdits 只更新 model，
+        // 不触发视图重绘与大文件特性重建，1GB 文件可从数十秒降到几秒
+        const normalizer = new LineEndingNormalizer()
+        let firstChunk = true
+        let loaded = 0
+        try {
+          for (;;) {
+            const chunk = await window.api.readTextStreamChunk(opened.streamId)
+            if (cancelled) {
+              model.dispose()
+              return
+            }
+            if (chunk.text.length > 0) {
+              const normalized = normalizer.normalize(chunk.text)
+              if (firstChunk) {
+                firstChunk = false
+                // 原文是 CRLF 时把 model 目标行尾设成一致，保存写回不会整文件变动
+                if (normalizer.crlf) {
+                  model.setEOL(monaco.editor.EndOfLineSequence.CRLF)
+                }
+              }
+              appendModelText(model, normalized)
+            }
+            loaded += chunk.bytesRead
+            setLoading({ path: file.path, loaded, total: opened.size })
+            if (chunk.done) {
+              break
+            }
+          }
+          appendModelText(model, normalizer.flush())
+        } finally {
+          void window.api.closeTextStream(opened.streamId)
+        }
+        if (cancelled) {
+          model.dispose()
+          return
+        }
+        // 全部灌入后一次性挂到编辑器：先按大小设好特性再 attach
+        applyEditorFileMode(editor, model)
+        editor.setModel(model)
         savedVersions.set(model, model.getAlternativeVersionId())
         observeModel(model)
-        editor.setModel(model)
         syncDirty(model)
         setFailure(null)
-      })
-      .catch((reason: unknown) => {
+        // 上限调大或选择继续打开后，同一路径的提示不再保留
+        setOversize((previous) => (previous?.path === file.path ? null : previous))
+      } catch (reason) {
         if (cancelled) {
           return
         }
         editor.setModel(null)
+        editor.updateOptions(NORMAL_FILE_OPTIONS)
         setFailure({ path: file.path, message: extractErrorMessage(reason) })
-      })
+      } finally {
+        if (!cancelled) {
+          setLoading((prev) => (prev?.path === file.path ? null : prev))
+        }
+      }
+    })()
+
     return () => {
       cancelled = true
     }
-  }, [file, observeModel, syncDirty])
+  }, [file, observeModel, syncDirty, forceOpenPath, recheckToken])
 
   // 文档预览（Markdown / SVG）：预览文本由 useModelText 直接订阅当前激活的 model
   const isMarkdown = file !== null && isMarkdownFile(file.name)
@@ -337,9 +616,13 @@ export default function CodeEditor({
         if (!model || isDirty(model)) {
           return
         }
-        void window.api
-          .readFile(path)
-          .then((content) => {
+        // 超大文本不支持整串重载（readFile 是一次性字符串），跳过外部刷新
+        if (model.getValueLength() > MAX_EDITOR_TEXT_BYTES) {
+          return
+        }
+        void (async (): Promise<void> => {
+          try {
+            const content = await window.api.readFile(path)
             // 读盘期间用户可能开始输入：再判一次，避免冲掉刚写的内容
             if (isDirty(model) || model.getValue() === content) {
               return
@@ -347,14 +630,23 @@ export default function CodeEditor({
             model.setValue(content)
             savedVersions.set(model, model.getAlternativeVersionId())
             syncDirty(model)
-          })
-          .catch(() => {
+          } catch {
             // 读不到（例如刚被删除）：保持现状，让用户下次操作时看到真实错误
-          })
+          }
+        })()
       }
     }),
     [isDirty, saveModel, syncDirty]
   )
+
+  /** 超限提示里的「继续打开」：跳过上限检查，按当前路径重新加载 */
+  const handleForceOpen = useCallback((): void => {
+    if (file === null) {
+      return
+    }
+    setOversize(null)
+    setForceOpenPath(file.path)
+  }, [file])
 
   // 仅展示当前文件对应的错误（派生值，无需在 effect 中同步重置）
   const errorMessage = failure && failure.path === file?.path ? failure.message : null
@@ -400,6 +692,38 @@ export default function CodeEditor({
             <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-dim">
               {errorMessage}
             </p>
+          ) : null}
+          {oversize && oversize.path === file?.path && !errorMessage ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+              <p className="m-0 leading-[1.6] text-dim">
+                文件大小 {formatMegabytes(oversize.size)}，超过编辑器上限 {oversize.limit}{' '}
+                MB，未读取。
+              </p>
+              <div className="flex items-center gap-2">
+                <Button type="button" size="sm" onClick={handleForceOpen}>
+                  继续打开
+                </Button>
+                {onOpenEditorSettings ? (
+                  <Button type="button" size="sm" variant="outline" onClick={onOpenEditorSettings}>
+                    调整大小上限
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {loading && loading.path === file?.path ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <span className="rounded border border-line bg-elevated px-3 py-1.5 text-[12px] text-dim shadow-sm">
+                {formatLoadingProgress(loading)}
+              </span>
+            </div>
+          ) : null}
+          {saving && saving.path === file?.path ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <span className="rounded border border-line bg-elevated px-3 py-1.5 text-[12px] text-dim shadow-sm">
+                {formatSaveProgress(saving)}
+              </span>
+            </div>
           ) : null}
           {!file && !errorMessage ? (
             <p className="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-dim">

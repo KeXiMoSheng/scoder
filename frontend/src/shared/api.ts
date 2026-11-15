@@ -6,7 +6,15 @@
 import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
 import type { AppInfo } from './app/types'
-import type { FileEntry, SearchResult } from './files/types'
+import type {
+  FileEntry,
+  FileStat,
+  SearchResult,
+  TextStreamChunk,
+  TextStreamOpenResult,
+  TextWriteOpenResult
+} from './files/types'
+import type { FileSettings } from './files/settings'
 import type {
   ModelConfig,
   ModelConfigInput,
@@ -22,14 +30,32 @@ export interface ScoderAPI {
   openProjectDirectory: () => Promise<string | null>
   /** 读取目录单层内容（目录在前、名称升序），供文件树懒加载 */
   readDirectory: (dirPath: string) => Promise<FileEntry[]>
-  /** 读取文本文件内容；二进制或超大文件会抛错 */
+  /** 读取文本文件内容；二进制文件会抛错 */
   readFile: (filePath: string) => Promise<string>
+  /** 打开文本读取流：编辑器按块拉取并增量灌入 model，不受单字符串长度上限约束 */
+  openTextStream: (filePath: string) => Promise<TextStreamOpenResult>
+  /** 拉取下一块文本；逐个 await 形成天然背压 */
+  readTextStreamChunk: (streamId: string) => Promise<TextStreamChunk>
+  /** 释放尚未读完的流（切换文件、出错时调用）；已读完的会话无需释放 */
+  closeTextStream: (streamId: string) => Promise<void>
+  /** 打开写入流：在同目录建临时文件，供大文件分块保存 */
+  openWriteStream: (filePath: string) => Promise<TextWriteOpenResult>
+  /** 向写入流追加一块文本（按 UTF-8 写入） */
+  appendWriteChunk: (writeId: string, text: string) => Promise<void>
+  /** 完成写入：fsync 后原子替换目标文件（保留原权限） */
+  finishWriteStream: (writeId: string) => Promise<void>
+  /** 放弃写入：关闭并删除临时文件，目标文件保持不变 */
+  abortWriteStream: (writeId: string) => Promise<void>
+  /** 读取文件大小并采样文件头（不读全文）；不存在或不是普通文件时返回 null */
+  statFile: (filePath: string) => Promise<FileStat | null>
+  /** 读取文件限制（编辑器可打开的最大文件体积等） */
+  getFileSettings: () => Promise<FileSettings>
+  /** 保存文件限制；校验不通过时整份拒绝并抛错 */
+  saveFileSettings: (input: FileSettings) => Promise<FileSettings>
   /**
    * 读取文件原始字节，供图片/音视频等二进制预览；超过体积上限时抛错。
    */
   readFileBytes: (filePath: string) => Promise<Uint8Array<ArrayBuffer>>
-  /** 将文本写入文件（utf-8 覆盖写入），供编辑器保存 */
-  writeFile: (filePath: string, content: string) => Promise<void>
   /** 在 dirPath 下创建空文件（isDirectory 为 false）或空目录，返回新建条目；名称非法或已存在时报错 */
   createEntry: (dirPath: string, name: string, isDirectory: boolean) => Promise<FileEntry>
   /** 重命名/拖拽移动文件或目录到目标绝对路径；目标已存在时报错 */

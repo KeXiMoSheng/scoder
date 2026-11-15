@@ -9,6 +9,7 @@ import {
   type OpenDialogOptions
 } from 'electron'
 import { promises as fs } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import * as pty from 'node-pty'
@@ -17,12 +18,19 @@ import icon from '../../resources/icon.png?asset'
 import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
 import { registerAppHandlers } from './app'
+import { disposeAllFileStreams, registerFileStreamHandlers } from './files/stream'
+import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { registerModelImportHandlers } from './model-import'
 import { FILES_CHANNELS } from '../shared/files/events'
-import type { FileEntry, SearchResult } from '../shared/files/types'
+import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
+import type { FileEntry, FileStat, SearchResult } from '../shared/files/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
+
+// GB 级文本 + Monaco 的行模型与全文索引需要更大的老生代空间：
+// 默认约 4GB 在 1GB 文本叠加全文特性对象时容易触发 V8 OOM
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192')
 
 // 开发版标识：electron-vite dev 热重载模式，或 dev 通道打包产物（版本号带 -dev.<时间戳>，见 scripts/dist.mjs）
 // 注意：打包后 is.dev 恒为 false，dev 通道必须靠版本号后缀区分，否则调试快捷键会被禁用
@@ -31,8 +39,15 @@ const isDevChannel = is.dev || app.getVersion().includes('-dev')
 // 文件树中隐藏的噪音目录（版本库元数据与依赖缓存）
 const IGNORED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', '__pycache__', '.venv'])
 
-// 文本预览的体积上限，超过则拒绝读取（避免超大文件卡死渲染进程）
-const MAX_PREVIEW_FILE_SIZE = 5 * 1024 * 1024
+// 二进制采样窗口：只检查文件头 8 KB 的 NUL
+const BINARY_SAMPLE_BYTES = 8192
+
+/** 超出单字符串上限时的统一错误：必须在读取前拦住，否则 V8 会抛底层英文错误 */
+function editorTextTooLargeError(): Error {
+  return new Error(
+    `文件超过 ${Math.round(MAX_EDITOR_TEXT_BYTES / 1024 / 1024)} MB，超出编辑器可载入上限，无法打开`
+  )
+}
 
 // 二进制预览的体积上限：图片/音视频整块复制到渲染进程内存，过大时直拒
 const MAX_BINARY_PREVIEW_SIZE = 50 * 1024 * 1024
@@ -83,20 +98,61 @@ function registerFileSystemHandlers(): void {
     }
   )
 
+  // 一次性读取文本文件（编辑器打开）：体积上限由渲染进程按配置先行判断
   ipcMain.handle(FILES_CHANNELS.readFile, async (_event, filePath: string): Promise<string> => {
     if (typeof filePath !== 'string') {
       throw new Error('文件路径无效')
     }
-    const buffer = await fs.readFile(filePath)
-    if (buffer.byteLength > MAX_PREVIEW_FILE_SIZE) {
-      throw new Error('文件超过 5 MB，暂不支持预览')
+    // 先看大小：超过 V8 单字符串上限的文件必然读不出字符串，避免白白分配整块内存
+    const info = await fs.stat(filePath)
+    if (info.size > MAX_EDITOR_TEXT_BYTES) {
+      throw editorTextTooLargeError()
     }
-    // 含 NUL 字节的按二进制处理，不做文本预览
+    const buffer = await fs.readFile(filePath)
+    // 读取期间文件可能增长：兜底再判一次
+    if (buffer.byteLength > MAX_EDITOR_TEXT_BYTES) {
+      throw editorTextTooLargeError()
+    }
+    // 含 NUL 字节的按二进制处理，不做文本打开
     if (buffer.includes(0)) {
-      throw new Error('二进制文件暂不支持预览')
+      throw new Error('二进制文件不支持在编辑器中打开')
     }
     return buffer.toString('utf-8')
   })
+
+  // 文件观测：stat + 文件头 8 KB 采样；二进制文件不进编辑器，也不参与大小限制提示
+  ipcMain.handle(
+    FILES_CHANNELS.statFile,
+    async (_event, filePath: string): Promise<FileStat | null> => {
+      if (typeof filePath !== 'string') {
+        throw new Error('文件路径无效')
+      }
+      let handle: FileHandle
+      try {
+        handle = await fs.open(filePath, 'r')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return null
+        }
+        throw error
+      }
+      try {
+        const info = await handle.stat()
+        if (!info.isFile()) {
+          return null
+        }
+        let binary = false
+        if (info.size > 0) {
+          const sample = Buffer.allocUnsafe(Math.min(BINARY_SAMPLE_BYTES, info.size))
+          await handle.read(sample, 0, sample.length, 0)
+          binary = sample.includes(0)
+        }
+        return { size: info.size, binary }
+      } finally {
+        await handle.close().catch(() => undefined)
+      }
+    }
+  )
 
   // 二进制预览：图片/音视频需要完整字节，超过体积上限直接拒绝（避免打爆渲染进程）
   ipcMain.handle(
@@ -117,16 +173,6 @@ function registerFileSystemHandlers(): void {
       } finally {
         await handle.close()
       }
-    }
-  )
-
-  ipcMain.handle(
-    FILES_CHANNELS.writeFile,
-    async (_event, filePath: string, content: string): Promise<void> => {
-      if (typeof filePath !== 'string' || typeof content !== 'string') {
-        throw new Error('参数无效')
-      }
-      await fs.writeFile(filePath, content, 'utf-8')
     }
   )
 
@@ -488,6 +534,10 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   registerFileSystemHandlers()
+  // 文本流：大文件按块读取并增量灌入编辑器，句柄由主进程按窗口回收
+  registerFileStreamHandlers()
+  // 写入流：超大文本按块保存到临时文件，完成后原子替换目标
+  registerFileWriteHandlers()
   registerTerminalHandlers()
   registerWindowHandlers()
   // 应用信息（版本号 / 仓库跳转）不依赖数据库，窗口创建前注册即可
@@ -550,6 +600,8 @@ app.whenReady().then(() => {
 // 应用退出前结束所有终端会话（pty 子进程不会随主进程自动退出）
 app.on('before-quit', () => {
   abortAllAiRuns()
+  disposeAllFileStreams()
+  disposeAllFileWrites()
   for (const session of terminalSessions.values()) {
     session.process.kill()
   }

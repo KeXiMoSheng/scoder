@@ -10,6 +10,7 @@ import FilePreview from './components/FilePreview'
 import FileTree from './components/FileTree'
 import ResizeHandle from './components/ResizeHandle'
 import SettingsPage from './components/SettingsPage'
+import type { SettingsSectionId } from './components/SettingsSidebar/types'
 import TerminalPanel from './components/TerminalPanel'
 import type { TerminalPanelHandle } from './components/TerminalPanel/types'
 import TitleBar from './components/TitleBar'
@@ -79,6 +80,10 @@ function App(): React.JSX.Element {
   const [terminalHeight, setTerminalHeight] = useState<number | null>(null)
   // 系统配置页：以覆盖层形式显示在工作区之上，工作区保持挂载（编辑/终端状态不丢失）
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 设置页打开时定位的分区（编辑器超限提示跳转「编辑器」用）
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('models')
+  // 关闭设置页后递增：通知编辑器重新判定当前文件是否超限
+  const [settingsVersion, setSettingsVersion] = useState(0)
   // 文件树刷新信号：AI 写工具落盘后递增，文件树据此重读已加载目录
   const [fsRefreshToken, setFsRefreshToken] = useState(0)
   // 编辑器标签请求在文件树中定位的目标（路径 + 递增信号）：递增 nonce 保证同一路径重复请求也能触发
@@ -477,11 +482,23 @@ function App(): React.JSX.Element {
 
   /** 切换系统配置页（标题栏设置按钮与设置页返回按钮共用） */
   const toggleSettings = useCallback((): void => {
-    setSettingsOpen((prev) => !prev)
-  }, [])
+    if (settingsOpen) {
+      setSettingsOpen(false)
+      setSettingsVersion((version) => version + 1)
+    } else {
+      setSettingsOpen(true)
+    }
+  }, [settingsOpen])
 
   const closeSettings = useCallback((): void => {
     setSettingsOpen(false)
+    setSettingsVersion((version) => version + 1)
+  }, [])
+
+  /** 打开系统配置并定位到指定分区（编辑器超限提示里的「调整大小上限」） */
+  const openEditorSettings = useCallback((): void => {
+    setSettingsSection('files')
+    setSettingsOpen(true)
   }, [])
 
   /** 标题栏终端按钮：确保命令行面板展开，并新建一个终端会话 */
@@ -641,6 +658,8 @@ function App(): React.JSX.Element {
                     file={previewKind === null ? activeFile : null}
                     onDirtyChange={handleDirtyChange}
                     onSendSelectionToAi={attachToAi}
+                    onOpenEditorSettings={openEditorSettings}
+                    recheckToken={settingsVersion}
                   />
                 </div>
                 {previewKind !== null && activeFile !== null ? (
@@ -685,7 +704,7 @@ function App(): React.JSX.Element {
         </div>
         {settingsOpen ? (
           <div className="absolute inset-0 z-20 flex bg-base">
-            <SettingsPage onClose={closeSettings} />
+            <SettingsPage onClose={closeSettings} initialSection={settingsSection} />
           </div>
         ) : null}
       </div>

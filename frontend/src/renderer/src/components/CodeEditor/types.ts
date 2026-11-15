@@ -24,6 +24,10 @@ export interface CodeEditorProps {
   onDirtyChange: (path: string, dirty: boolean) => void
   /** 把编辑器中选中的整行发送给 AI（附当前文件路径、行号与选中文本） */
   onSendSelectionToAi: (attachment: AiAttachment) => void
+  /** 打开系统配置的「编辑器」分区（超限提示里的「调整大小上限」） */
+  onOpenEditorSettings?: () => void
+  /** 重新检查令牌：从设置页返回后递增，用于重新判定当前文件是否超限 */
+  recheckToken?: number
   ref?: Ref<CodeEditorHandle>
 }
 
@@ -31,6 +35,36 @@ export interface CodeEditorProps {
 export interface LoadFailure {
   path: string
   message: string
+}
+
+/** 流式加载进度（按路径归属，切换文件后旧进度不再展示） */
+export interface FileLoadProgress {
+  /** 正在加载的文件绝对路径 */
+  path: string
+  /** 已读取字节数 */
+  loaded: number
+  /** 文件总字节数；0 表示空文件或尚未拿到大小 */
+  total: number
+}
+
+/** 流式保存进度（按路径归属，切换文件后旧进度不再展示） */
+export interface FileSaveProgress {
+  /** 正在保存的文件绝对路径 */
+  path: string
+  /** 已写入的字符数 */
+  written: number
+  /** 文件总字符数 */
+  total: number
+}
+
+/** 体积超过编辑器上限的文件：只提示不读取，用户可选择临时继续打开或调整配置 */
+export interface OversizeFile {
+  /** 文件绝对路径 */
+  path: string
+  /** 文件字节数 */
+  size: number
+  /** 当前配置的上限（MB） */
+  limit: number
 }
 
 /** 带预览能力的文档（Markdown / SVG）的三档视图：仅编辑 / 编辑与预览分栏 / 仅预览 */

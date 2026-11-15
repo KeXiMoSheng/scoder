@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import AboutSettings from '../AboutSettings'
 import AiSettings from '../AiSettings'
+import FileSettings from '../FileSettings'
 import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
@@ -23,12 +24,16 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   models: '模型',
   import: '一键导入模型',
   ai: 'AI 助手',
+  files: '编辑器',
   about: '关于'
 }
 
 /** 系统配置页：左侧分区导航 + 右侧设置内容，嵌入在标题栏下方的工作区位置 */
-export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.Element {
-  const [section, setSection] = useState<SettingsSectionId>('models')
+export default function SettingsPage({
+  onClose,
+  initialSection
+}: SettingsPageProps): React.JSX.Element {
+  const [section, setSection] = useState<SettingsSectionId>(initialSection ?? 'models')
 
   // 模型列表与导入页互相跳转：列表页的「导入模型」与导入成功后的「查看模型列表」
   const openImport = useCallback((): void => setSection('import'), [])
@@ -59,6 +64,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps): React.JSX.
           {section === 'models' ? <ModelSettings onOpenImport={openImport} /> : null}
           {section === 'import' ? <ModelImport onOpenModels={openModels} /> : null}
           {section === 'ai' ? <AiSettings /> : null}
+          {section === 'files' ? <FileSettings /> : null}
           {section === 'about' ? <AboutSettings /> : null}
         </div>
       </SidebarInset>

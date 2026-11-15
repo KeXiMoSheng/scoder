@@ -5,7 +5,17 @@ export const FILES_CHANNELS = {
   readDirectory: 'fs:readDirectory',
   readFile: 'fs:readFile',
   readFileBytes: 'fs:readFileBytes',
-  writeFile: 'fs:writeFile',
+  /** 文本流：大文件按块读取并增量灌入编辑器 */
+  openTextStream: 'fs:openTextStream',
+  readTextStreamChunk: 'fs:readTextStreamChunk',
+  closeTextStream: 'fs:closeTextStream',
+  /** 写入流：大文件按块写入临时文件，完成后 fsync + rename 原子替换 */
+  openWriteStream: 'fs:openWriteStream',
+  appendWriteChunk: 'fs:appendWriteChunk',
+  finishWriteStream: 'fs:finishWriteStream',
+  abortWriteStream: 'fs:abortWriteStream',
+  /** 文件大小观测：决定是否给出超限提示 */
+  statFile: 'fs:statFile',
   createEntry: 'fs:createEntry',
   moveEntry: 'fs:moveEntry',
   deleteEntry: 'fs:deleteEntry',
