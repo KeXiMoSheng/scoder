@@ -1,42 +1,21 @@
-import type { ReadWindow } from '../fs/service'
+import { READ_LIMIT, formatReadOutput } from '../fs/readRender'
 import type { ToolDefinition } from './registry'
 import { optionalInteger, requireString, sectionText } from './registry'
 
-/** 一次读取的默认行数与上限（与 deepseek-harness 的 readLimit 默认值对齐） */
-const DEFAULT_LIMIT = 800
-const MAX_LIMIT = 2000
-/** 单行长度上限：超长行（压缩产物、base64）会挤占整个上下文 */
-const MAX_LINE_LENGTH = 2000
-
-/** 把读取窗口渲染成带续读指令的模型文本 */
-export function formatReadOutput(window: ReadWindow): string {
-  const endLine = window.lines.at(-1)?.number ?? Math.max(0, window.offset - 1)
-  const footer =
-    endLine < window.totalLines
-      ? `(Showing lines ${window.offset}-${endLine} of ${window.totalLines}. Use offset=${endLine + 1} to continue.)`
-      : `(End of file - total ${window.totalLines} lines)`
-  const body =
-    window.lines.length > 0
-      ? `${window.lines.map((line) => `${line.number}: ${clipLine(line.text)}`).join('\n')}\n\n${footer}`
-      : footer
-  return `<path>${window.target.displayPath}</path>\n<type>file</type>\n<content>\n${body}\n</content>`
-}
-
-/** 截断超长单行，保留开头便于模型判断内容类型 */
-function clipLine(text: string): string {
-  return text.length <= MAX_LINE_LENGTH ? text : `${text.slice(0, MAX_LINE_LENGTH)}…`
-}
+/** 一次读取的默认行数（与上限相同，对齐 deepseek-harness 的 readLimit） */
+const DEFAULT_LIMIT = READ_LIMIT
 
 /**
  * read 工具：读取工作区内的文本文件。
  * 流程：解析路径 → 观测类型 → 读有界窗口 → 渲染行号文本。
+ * 大文件由文件系统层流式扫描，窗口内存只与行数/字节上限相关；
  * 顺带把读到的版本记进会话观测，供 write/edit 做“先读后改”与并发校验。
  */
 export function createReadTool(): ToolDefinition {
   return {
     name: 'read',
     description:
-      '读取工作区内的 UTF-8 文本文件，返回带行号的内容。大文件用 offset 与 limit 分页续读。',
+      '读取工作区内的 UTF-8 文本文件，返回带行号的内容。大文件用 offset 与 limit 分页续读；单次输出受字节上限约束，命中上限时按 footer 继续读。',
     parameters: {
       type: 'object',
       properties: {
@@ -53,7 +32,7 @@ export function createReadTool(): ToolDefinition {
     async execute(args, ctx) {
       const filePath = requireString(args, 'file_path')
       const offset = optionalInteger(args, 'offset', 1, Number.MAX_SAFE_INTEGER)
-      const limit = optionalInteger(args, 'limit', DEFAULT_LIMIT, MAX_LIMIT)
+      const limit = optionalInteger(args, 'limit', DEFAULT_LIMIT, READ_LIMIT)
       const target = await ctx.fs.resolve(filePath, ctx.cwd)
       const info = await ctx.fs.stat(target)
       if (!info) {
@@ -67,11 +46,12 @@ export function createReadTool(): ToolDefinition {
       if (info.type !== 'file') {
         throw new Error(`不是普通文件：${target.displayPath}`)
       }
-      const window = await ctx.fs.readWindow(target, offset, limit)
+      // 已知大小的文件按阈值选择整读或流式；大小未知时一律流式，避免整份缓冲
+      const window = await ctx.fs.readWindow(target, offset, limit, info.size)
       // 读到即观测：写工具据此拿到可以安全覆盖的版本基准
       ctx.observation.record(ctx.sessionId, target, { kind: 'present', version: info.version })
       return {
-        text: formatReadOutput(window),
+        text: formatReadOutput(target.displayPath, window),
         meta: { path: target.displayPath, offset, totalLines: window.totalLines }
       }
     },

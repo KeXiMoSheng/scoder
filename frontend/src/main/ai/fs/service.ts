@@ -2,6 +2,14 @@ import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import type { BigIntStats } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'path'
+import { TextFileStream, TextStreamError, decodeWholeText } from '../../files/textStream'
+import {
+  READ_MAX_BYTES,
+  READ_MAX_LINE_LENGTH,
+  READ_STREAM_MIN_SIZE,
+  buildWindow
+} from './readRender'
+import type { ReadWindowRequest, WindowResult } from './readRender'
 
 /**
  * 解析后的文件身份。
@@ -65,21 +73,11 @@ export interface FsDirEntry {
   type: 'file' | 'directory' | 'other'
 }
 
-/** 读取窗口中的一行 */
-export interface FsLine {
-  number: number
-  text: string
-}
-
-/** 一次有界的读取结果 */
-export interface ReadWindow {
+/** 一次有界的读取结果：窗口内容 + 目标身份 */
+export interface ReadWindow extends WindowResult {
   target: FsTarget
-  /** 实际起始行（1 起） */
+  /** 请求的起始行（1 起） */
   offset: number
-  lines: FsLine[]
-  totalLines: number
-  /** 是否还有后续行未返回 */
-  truncated: boolean
 }
 
 /**
@@ -93,8 +91,11 @@ export interface FileSystemService {
   resolve(input: string, cwd?: string): Promise<FsTarget>
   /** 观测目标；不存在返回 undefined */
   stat(target: FsTarget): Promise<FsStat | undefined>
-  /** 获取有界行窗口 */
-  readWindow(target: FsTarget, offset: number, limit: number): Promise<ReadWindow>
+  /**
+   * 获取有界行窗口。
+   * @param size 调用方已观测到的文件字节数；大文件或大小未知时走流式扫描
+   */
+  readWindow(target: FsTarget, offset: number, limit: number, size?: number): Promise<ReadWindow>
   /** 列出目录直接子项 */
   list(target: FsTarget): Promise<FsDirEntry[]>
   /** 按意图整文件写入；缺省意图为无条件原子写 */
@@ -109,10 +110,13 @@ export interface FileSystemService {
   contains(parent: FsTarget, child: FsTarget): boolean
 }
 
-/** P0 的整文件读取上限：超过即拒绝，避免把超大文件读进主进程内存 */
+/**
+ * 编辑与 diff 基准的整文件上限：编辑必须拿到完整原文做字面匹配，超过即拒绝。
+ * read 工具不受此限制：大文件走流式窗口，内存只与窗口大小相关。
+ */
 const MAX_READ_BYTES = 2 * 1024 * 1024
 
-/** 写入上限：与读取上限对齐，避免模型一次把超大内容灌进磁盘 */
+/** 写入上限：单次写入的字节保护，避免模型一次把超大内容灌进磁盘 */
 const MAX_WRITE_BYTES = 2 * 1024 * 1024
 
 /** 目录列举与搜索共同忽略的噪音目录（版本库元数据与依赖缓存） */
@@ -210,29 +214,31 @@ export class LocalFileSystem implements FileSystemService {
     }
   }
 
-  async readWindow(target: FsTarget, offset: number, limit: number): Promise<ReadWindow> {
-    const buffer = await fs.readFile(target.key)
-    if (buffer.byteLength > MAX_READ_BYTES) {
-      throw new Error(`文件超过 ${MAX_READ_BYTES / 1024 / 1024} MB，P0 暂不支持读取`)
-    }
-    // 含 NUL 字节按二进制处理：交给模型只会得到乱码
-    if (buffer.includes(0)) {
-      throw new Error('二进制文件不支持读取')
-    }
-    const text = buffer.toString('utf8')
-    // 末尾换行不作为额外一行，避免行号比编辑器多 1
-    const body = text.endsWith('\n') ? text.slice(0, -1) : text
-    const all = body.length === 0 ? [] : body.split(/\r?\n/)
-    const start = Math.min(Math.max(0, offset - 1), all.length)
-    const selected = all
-      .slice(start, start + limit)
-      .map((line, index) => ({ number: start + index + 1, text: line }))
-    return {
-      target,
+  /**
+   * 有界行窗口：小文件整读，大文件或大小未知时流式扫描。
+   * 两条路径共用同一套二进制与编码语义，窗口只保留命中上限前的内容。
+   */
+  async readWindow(
+    target: FsTarget,
+    offset: number,
+    limit: number,
+    size?: number
+  ): Promise<ReadWindow> {
+    const request: ReadWindowRequest = {
       offset,
-      lines: selected,
-      totalLines: all.length,
-      truncated: start + selected.length < all.length
+      limit,
+      maxLineLength: READ_MAX_LINE_LENGTH,
+      maxBytes: READ_MAX_BYTES
+    }
+    try {
+      const chunks =
+        size !== undefined && size < READ_STREAM_MIN_SIZE
+          ? [await readWholeText(target)]
+          : streamWholeText(target)
+      const window = await buildWindow(chunks, request, target.displayPath)
+      return { target, offset, ...window }
+    } catch (error) {
+      throw readError(error, target.displayPath)
     }
   }
 
@@ -379,6 +385,35 @@ function assertWriteSize(target: FsTarget, content: string): void {
       `写入内容超过 ${MAX_WRITE_BYTES / 1024 / 1024} MB，请拆分成多次修改：${target.displayPath}`
     )
   }
+}
+
+/**
+ * 整文件解码：小文件读取路径。
+ * 二进制采样与 fatal 解码都与流式路径一致，保证同一份内容两条路径结果相同。
+ */
+async function readWholeText(target: FsTarget): Promise<string> {
+  return decodeWholeText(await fs.readFile(target.key), target.displayPath)
+}
+
+/** 流式解码：块边界对调用方没有意义，句柄在迭代结束或异常时释放 */
+async function* streamWholeText(target: FsTarget): AsyncGenerator<string> {
+  const stream = await TextFileStream.open(target.key)
+  yield* stream.chunks()
+}
+
+/** 把读取失败转成给模型看的可读原因 */
+function readError(error: unknown, displayPath: string): Error {
+  if (error instanceof TextStreamError) {
+    switch (error.reason) {
+      case 'binary':
+        return new Error(`二进制文件不支持读取：${displayPath}`)
+      case 'not-utf8':
+        return new Error(`文件不是 UTF-8 文本，无法读取：${displayPath}`)
+      default:
+        return new Error(`不是普通文件：${displayPath}`)
+    }
+  }
+  return error instanceof Error ? error : new Error(`读取文件失败：${displayPath}`)
 }
 
 /**
