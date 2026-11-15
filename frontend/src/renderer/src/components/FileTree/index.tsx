@@ -17,6 +17,7 @@ import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
 import PromptDialog from '../PromptDialog'
+import { Button } from '../ui/button'
 import type {
   ContextMenuState,
   FileNode,
@@ -49,10 +50,36 @@ function toFileNode(entry: FileEntry): FileNode {
 }
 
 /**
+ * 目录条目与当前节点列表是否完全一致（名称、类型、顺序）：
+ * 一致时保留原引用，避免保存文件等「只有内容变化」的事件引发整树重渲染。
+ */
+function sameEntries(nodes: FileNode[], entries: FileEntry[]): boolean {
+  if (nodes.length !== entries.length) {
+    return false
+  }
+  for (let index = 0; index < entries.length; index++) {
+    const node = nodes[index]
+    const entry = entries[index]
+    if (
+      node.path !== entry.path ||
+      node.name !== entry.name ||
+      node.isDirectory !== entry.isDirectory
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
  * 把目录最新条目合并为节点数组：路径未变的节点保留原对象（含已加载的深层子项），
  * 避免刷新后已展开的目录丢失内容；新增/类型变化的条目重建节点。
+ * 条目完全一致时返回原数组，让上游的不可变更新能提前短路。
  */
 function mergeFileNodes(prevNodes: FileNode[], entries: FileEntry[]): FileNode[] {
+  if (sameEntries(prevNodes, entries)) {
+    return prevNodes
+  }
   const prevByPath = new Map(prevNodes.map((node) => [node.path, node]))
   return entries.map((entry) => {
     const existing = prevByPath.get(entry.path)
@@ -68,8 +95,13 @@ function injectChildren(nodes: FileNode[], dirPath: string, entries: FileEntry[]
   let changed = false
   const next = nodes.map((node) => {
     if (node.path === dirPath) {
+      const prevChildren = node.children ?? []
+      const nextChildren = mergeFileNodes(prevChildren, entries)
+      if (nextChildren === prevChildren) {
+        return node
+      }
       changed = true
-      return { ...node, children: mergeFileNodes(node.children ?? [], entries) }
+      return { ...node, children: nextChildren }
     }
     if (!node.children || node.children.length === 0) {
       return node
@@ -286,13 +318,13 @@ export default function FileTree({
   rootPath,
   selectedPath,
   dirtyPaths,
-  refreshToken,
   revealRequest,
   onSelectFile,
   onBeforeEntryMove,
   onEntryMoved,
   onEntryDeleted,
-  onSendToAi
+  onSendToAi,
+  onReopenProject
 }: FileTreeProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null)
   const { width, height } = useContainerSize(listRef)
@@ -300,11 +332,18 @@ export default function FileTree({
 
   const [treeData, setTreeData] = useState<FileNode[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  // 根目录已被外部删除/重命名：树失效，展示提示并允许重试或重新打开文件夹
+  const [rootMissing, setRootMissing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   // 手动刷新进行中（防止重复触发）
   const [refreshing, setRefreshing] = useState(false)
   // 已发起过加载的目录集合（失败时移除，允许重试）
   const loadedDirsRef = useRef<Set<string>>(new Set())
+
+  /** 把已加载目录同步给主进程：这是唯一会显示在树上的内容，只有它们需要磁盘监听 */
+  const syncWatchedDirectories = useCallback((): void => {
+    void window.api.setWatchedDirectories(Array.from(loadedDirsRef.current)).catch(() => undefined)
+  }, [])
 
   // 新建弹窗目标：null 不显示，'file'/'folder' 分别对应新建文件与新建文件夹
   const [pendingCreate, setPendingCreate] = useState<null | 'file' | 'folder'>(null)
@@ -348,6 +387,8 @@ export default function FileTree({
         loadedDirsRef.current.add(rootPath)
         setTreeData(entries.map(toFileNode))
         setLoadError(null)
+        setRootMissing(false)
+        syncWatchedDirectories()
       })
       .catch((reason: unknown) => {
         if (cancelled) {
@@ -359,7 +400,7 @@ export default function FileTree({
     return () => {
       cancelled = true
     }
-  }, [rootPath])
+  }, [rootPath, syncWatchedDirectories])
 
   const loadChildren = useCallback(
     async (dirPath: string): Promise<void> => {
@@ -375,12 +416,13 @@ export default function FileTree({
       try {
         const entries = await window.api.readDirectory(dirPath)
         setTreeData((prev) => injectChildren(prev, dirPath, entries))
+        syncWatchedDirectories()
       } catch (reason) {
         loaded.delete(dirPath)
         setNotice(`读取目录失败：${extractErrorMessage(reason)}`)
       }
     },
-    [rootPath]
+    [rootPath, syncWatchedDirectories]
   )
 
   // 外部（编辑器标签）请求定位：自顶向下逐级加载目标的祖先目录，确保 react-arborist 数据里存在目标节点。
@@ -458,24 +500,26 @@ export default function FileTree({
       // 根目录不是树数据中的节点（树数据即根目录的子项），需直接合并到顶层
       if (dirPath === rootPath) {
         setTreeData((prev) => mergeFileNodes(prev, entries))
-        return
+      } else {
+        setTreeData((prev) => injectChildren(prev, dirPath, entries))
       }
-      setTreeData((prev) => injectChildren(prev, dirPath, entries))
+      syncWatchedDirectories()
     },
-    [rootPath]
+    [rootPath, syncWatchedDirectories]
   )
 
-  /** 手动刷新：重新读取根目录与所有已加载目录的最新内容（外部工具改动磁盘后同步树） */
-  const handleRefresh = useCallback(async (): Promise<void> => {
-    if (refreshing) {
-      return
-    }
-    setRefreshing(true)
-    try {
-      const dirs = Array.from(loadedDirsRef.current)
-      // 目录已在外部被删除时读取失败：仅移除其加载记录，由父目录的刷新将其从树上剔除
+  /**
+   * 批量重读已加载目录并合并到树上（手动刷新与磁盘变更推送共用）。
+   * 读取失败的目录视为已被外部删除：移除其加载记录（节点由父目录的刷新结果剔除），再同步 watch 集合。
+   */
+  const refreshDirectories = useCallback(
+    async (dirs: string[]): Promise<void> => {
+      const targets = dirs.filter((dir) => loadedDirsRef.current.has(dir))
+      if (targets.length === 0) {
+        return
+      }
       const results = await Promise.all(
-        dirs.map(async (dir) => {
+        targets.map(async (dir) => {
           try {
             return { dir, entries: await window.api.readDirectory(dir) }
           } catch {
@@ -483,6 +527,16 @@ export default function FileTree({
           }
         })
       )
+      // 根目录被外部删除/重命名：清空树与全部懒加载记录，切换到失效提示
+      const rootResult = results.find((result) => result.dir === rootPath)
+      if (rootResult && rootResult.entries === null) {
+        loadedDirsRef.current.clear()
+        setTreeData([])
+        setLoadError(null)
+        setRootMissing(true)
+        syncWatchedDirectories()
+        return
+      }
       for (const { dir, entries } of results) {
         if (entries === null) {
           loadedDirsRef.current.delete(dir)
@@ -499,28 +553,64 @@ export default function FileTree({
         }
         return next
       })
+      syncWatchedDirectories()
+    },
+    [rootPath, syncWatchedDirectories]
+  )
+
+  /** 手动刷新：重新读取根目录与所有已加载目录的最新内容（外部工具改动磁盘后同步树） */
+  const handleRefresh = useCallback(async (): Promise<void> => {
+    if (refreshing) {
+      return
+    }
+    setRefreshing(true)
+    try {
+      // 根目录曾失效或读取失败：手动刷新时先重试根目录（目录可能已被重新创建）
+      if (rootMissing || loadError !== null) {
+        try {
+          const entries = await window.api.readDirectory(rootPath)
+          loadedDirsRef.current.add(rootPath)
+          setTreeData(entries.map(toFileNode))
+          setRootMissing(false)
+          setLoadError(null)
+          syncWatchedDirectories()
+        } catch (reason) {
+          const message = extractErrorMessage(reason)
+          if (loadError !== null) {
+            setLoadError(message)
+          } else {
+            setNotice(`当前目录仍不可用：${message}`)
+          }
+        }
+        return
+      }
+      await refreshDirectories(Array.from(loadedDirsRef.current))
     } finally {
       setRefreshing(false)
     }
-  }, [refreshing, rootPath])
+  }, [refreshing, refreshDirectories, rootMissing, loadError, rootPath, syncWatchedDirectories])
 
-  /** 外部刷新信号指向最新的 handleRefresh：避免 effect 依赖随 refreshing 反复重建 */
-  const externalRefreshRef = useRef(handleRefresh)
+  /** 磁盘变更的自动刷新指向最新的 refreshDirectories：避免订阅随依赖反复重建 */
+  const autoRefreshRef = useRef(refreshDirectories)
   useEffect(() => {
-    externalRefreshRef.current = handleRefresh
-  }, [handleRefresh])
+    autoRefreshRef.current = refreshDirectories
+  }, [refreshDirectories])
 
-  // AI 写工具改动磁盘后：复用手动刷新路径（重读已加载目录），保留展开状态与懒加载缓存。
-  // 去抖合并同一轮对话里的多次写入，避免连续写文件时互相把刷新挡掉。
+  // 磁盘变更（终端、其他编辑器等外部写入）：主进程只推送已加载目录，重读后即可反映条目增删。
+  // 未展开目录不在监听集合内，展开时会自然读到最新内容。
   useEffect(() => {
-    if (refreshToken === undefined || refreshToken === 0) {
-      return
+    const unsubscribe = window.api.onDirectoriesChanged(({ dirs }) => {
+      const targets = dirs.filter((dir) => isAtOrUnder(dir, rootPath))
+      if (targets.length > 0) {
+        void autoRefreshRef.current(targets)
+      }
+    })
+    return () => {
+      unsubscribe()
+      // 切换或关闭项目时清掉本窗口的 watcher，避免继续为旧项目推送变更
+      void window.api.clearWatchedDirectories().catch(() => undefined)
     }
-    const timer = window.setTimeout(() => {
-      void externalRefreshRef.current()
-    }, 60)
-    return () => window.clearTimeout(timer)
-  }, [refreshToken])
+  }, [rootPath])
 
   /** 新建目标目录：当前编辑器打开文件所在的同级目录；未打开文件时回退到根目录 */
   const getCreateTargetDir = useCallback((): string => {
@@ -813,11 +903,12 @@ export default function FileTree({
         <div className="flex items-center gap-1 px-2 py-1.5">
           <input
             type="text"
-            className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover"
+            className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
             value={query}
             placeholder="搜索文件"
             spellCheck={false}
             aria-label="搜索文件"
+            disabled={rootMissing || loadError !== null}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
@@ -840,16 +931,16 @@ export default function FileTree({
         <div className="flex items-center gap-0.5 px-2 pb-1.5">
           <ToolbarButton
             label="新建文件"
-            disabled={searchActive}
-            disabledReason="搜索模式下不可用"
+            disabled={searchActive || rootMissing}
+            disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
             onClick={handleNewFile}
           >
             <FilePlus className="size-3.5" />
           </ToolbarButton>
           <ToolbarButton
             label="新建文件夹"
-            disabled={searchActive}
-            disabledReason="搜索模式下不可用"
+            disabled={searchActive || rootMissing}
+            disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
             onClick={handleNewFolder}
           >
             <FolderPlus className="size-3.5" />
@@ -886,8 +977,36 @@ export default function FileTree({
         className="relative min-h-0 flex-1 overflow-hidden py-1.5"
         onKeyDown={handleKeyDown}
       >
-        {loadError ? (
-          <p className="mx-3 my-4 break-all leading-[1.6] text-danger">无法读取目录：{loadError}</p>
+        {rootMissing ? (
+          <div className="mx-3 my-4 flex flex-col items-start gap-2">
+            <p className="m-0 break-all leading-[1.6] text-danger">
+              当前目录已不可用：可能已被删除、重命名，或没有访问权限。
+            </p>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="xs" onClick={() => void handleRefresh()}>
+                重试
+              </Button>
+              {onReopenProject ? (
+                <Button type="button" size="xs" variant="outline" onClick={onReopenProject}>
+                  打开其他文件夹
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : loadError ? (
+          <div className="mx-3 my-4 flex flex-col items-start gap-2">
+            <p className="m-0 break-all leading-[1.6] text-danger">无法读取目录：{loadError}</p>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="xs" onClick={() => void handleRefresh()}>
+                重试
+              </Button>
+              {onReopenProject ? (
+                <Button type="button" size="xs" variant="outline" onClick={onReopenProject}>
+                  打开其他文件夹
+                </Button>
+              ) : null}
+            </div>
+          </div>
         ) : width > 0 && height > 0 ? (
           <DirtyPathsContext.Provider value={dirtyPaths}>
             <OpenContextMenuContext.Provider value={openContextMenu}>

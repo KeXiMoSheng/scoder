@@ -50,6 +50,8 @@ function clamp(value: number, min: number, max: number): number {
 
 function App(): React.JSX.Element {
   const [projectPath, setProjectPath] = useState<string | null>(null)
+  // 手动打开项目的递增信号：重复打开同一路径时也让文件树重挂载并重新读取目录
+  const [projectEpoch, setProjectEpoch] = useState(0)
   // 最近打开的项目（MRU，最多 5 个），供「文件」菜单展示
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([])
   // 多标签文件状态（打开/激活/关闭/路径同步）
@@ -86,8 +88,6 @@ function App(): React.JSX.Element {
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('models')
   // 关闭设置页后递增：通知编辑器重新判定当前文件是否超限
   const [settingsVersion, setSettingsVersion] = useState(0)
-  // 文件树刷新信号：AI 写工具落盘后递增，文件树据此重读已加载目录
-  const [fsRefreshToken, setFsRefreshToken] = useState(0)
   // 编辑器标签请求在文件树中定位的目标（路径 + 递增信号）：递增 nonce 保证同一路径重复请求也能触发
   const [revealRequest, setRevealRequest] = useState<{ path: string; nonce: number } | null>(null)
   // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
@@ -175,6 +175,8 @@ function App(): React.JSX.Element {
   const openProjectPath = useCallback(
     (dirPath: string): void => {
       setProjectPath(dirPath)
+      // 同一路径重新打开（例如目录被删后重建）也要让文件树重挂载、重新读盘
+      setProjectEpoch((epoch) => epoch + 1)
       closeAll()
       setDirtyPaths(new Set())
       // 附件属于上一个项目，切换项目后不再继续待发送
@@ -332,27 +334,16 @@ function App(): React.JSX.Element {
     })
   }, [])
 
-  // AI 写工具改动磁盘后：重载已打开的缓冲区并刷新文件树；模型润色完标题后同步标签。
-  // 工具给的是相对工作区根的路径，转回绝对路径后才能对上编辑器的 model。
+  // 模型润色完标题后同步标签。
+  // 磁盘改动不再由 AI 事件专门刷新：文件树与编辑器缓冲区统一由文件监听驱动。
   useEffect(() => {
     if (projectPath === null) {
       return
     }
-    const separator = projectPath.includes('\\') ? '\\' : '/'
     return window.api.ai.onEvent(({ sessionId, event }) => {
       if (event.type === 'session-title') {
         applyServerTitle(sessionId, event.title)
-        return
       }
-      if (event.type !== 'file-changed') {
-        return
-      }
-      for (const relative of event.paths) {
-        editorRef.current?.reloadFromDisk(
-          joinPath(projectPath, relative.split('/').join(separator))
-        )
-      }
-      setFsRefreshToken((token) => token + 1)
     })
   }, [applyServerTitle, projectPath])
 
@@ -625,17 +616,17 @@ function App(): React.JSX.Element {
           >
             {projectPath ? (
               <FileTree
-                key={projectPath}
+                key={`${projectPath}:${projectEpoch}`}
                 rootPath={projectPath}
                 selectedPath={activePath}
                 dirtyPaths={dirtyPaths}
-                refreshToken={fsRefreshToken}
                 revealRequest={revealRequest}
                 onSelectFile={openFileByPath}
                 onBeforeEntryMove={handleBeforeEntryMove}
                 onEntryMoved={handleEntryMoved}
                 onEntryDeleted={handleEntryDeleted}
                 onSendToAi={handleAttachPathToAi}
+                onReopenProject={() => void handleOpenProject()}
               />
             ) : (
               <p className="mx-3 my-4 leading-[1.6] text-dim">
@@ -675,6 +666,7 @@ function App(): React.JSX.Element {
                     file={previewKind === null ? activeFile : null}
                     onDirtyChange={handleDirtyChange}
                     onSendSelectionToAi={attachToAi}
+                    onDeletedFromDisk={handleEntryDeleted}
                     onOpenEditorSettings={openEditorSettings}
                     recheckToken={settingsVersion}
                     onEncodingChange={setEncodingState}

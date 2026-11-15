@@ -23,6 +23,7 @@ import { decodeWholeText, TextStreamError } from './files/textStream'
 import { BINARY_SAMPLE_BYTES, isBinarySample } from './files/encoding'
 import { isTextEncodingId } from '../shared/files/encoding'
 import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
+import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
 import { registerModelImportHandlers } from './model-import'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
@@ -158,7 +159,7 @@ function registerFileSystemHandlers(): void {
           // 与文本流共用同一套判定：BOM 声明 UTF-16 时 NUL 不算二进制信号
           binary = isBinarySample(sample.subarray(0, bytesRead))
         }
-        return { size: info.size, binary }
+        return { size: info.size, binary, mtimeMs: info.mtimeMs }
       } finally {
         await handle.close().catch(() => undefined)
       }
@@ -545,6 +546,8 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   registerFileSystemHandlers()
+  // 目录监听：渲染进程同步已加载目录，主进程在条目变化时推送，供文件树自动刷新
+  registerDirectoryWatchHandlers()
   // 文本流：大文件按块读取并增量灌入编辑器，句柄由主进程按窗口回收
   registerFileStreamHandlers()
   // 写入流：超大文本按块保存到临时文件，完成后原子替换目标
@@ -613,6 +616,7 @@ app.on('before-quit', () => {
   abortAllAiRuns()
   disposeAllFileStreams()
   disposeAllFileWrites()
+  disposeAllDirectoryWatchers()
   for (const session of terminalSessions.values()) {
     session.process.kill()
   }

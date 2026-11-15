@@ -17,8 +17,6 @@ export interface FileTreeProps {
   dirtyPaths: ReadonlySet<string>
   /** 单击文件：把绝对路径交给外部在编辑器中打开 */
   onSelectFile: (path: string) => void
-  /** 外部（AI 写工具）改动磁盘后的刷新信号：值变化即重读已加载目录，不重挂载 */
-  refreshToken?: number
   /** 条目被重命名/移动前调用（例如先把脏缓冲区落盘）；抛错则中止本次操作 */
   onBeforeEntryMove: (path: string) => Promise<void>
   /** 条目重命名/移动完成后调用（oldPath → newPath） */
@@ -27,6 +25,8 @@ export interface FileTreeProps {
   onEntryDeleted: (path: string) => void
   /** 把文件或目录作为上下文发送给 AI（添加到右侧输入区）；目录只提供路径与类型 */
   onSendToAi: (path: string, isDirectory: boolean) => void
+  /** 当前项目目录已失效（被删除/重命名）或无法读取时，请求重新选择文件夹 */
+  onReopenProject?: () => void
   /**
    * 外部（编辑器标签）请求在文件树中定位某文件：路径 + 递增信号。
    * 每次 nonce 变化触发一次定位，同一路径重复请求也能生效。

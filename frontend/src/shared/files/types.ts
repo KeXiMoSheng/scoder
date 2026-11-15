@@ -48,10 +48,30 @@ export interface TextWriteOpenResult {
   writeId: string
 }
 
+/**
+ * 已加载目录的磁盘变更推送：目录内条目发生增删或改名时由主进程发出。
+ * 只包含「目录」而非具体条目：渲染进程重读该目录即可拿到准确的增删结果。
+ */
+export interface DirectoriesChangedEvent {
+  /** 发生变化的目录绝对路径（同一批事件已去重合并） */
+  dirs: string[]
+}
+
+/**
+ * 已打开文件的磁盘变更推送：文件内容被外部修改、或被原子替换（临时文件 + rename）时由主进程发出。
+ * 渲染进程按路径重查 stat 自行判定（自身保存也会产生事件，需用 mtime 基线排除）。
+ */
+export interface FilesChangedEvent {
+  /** 发生变化的文件绝对路径（同一批事件已去重合并） */
+  paths: string[]
+}
+
 /** 文件观测：只 stat + 采样文件头，不读全文，用于超限提示与二进制判定 */
 export interface FileStat {
   /** 文件字节数 */
   size: number
-  /** 文件头 8 KB 内是否含 NUL 字节（二进制文件不进编辑器，也不参与大小限制提示） */
+  /** 文件头 8 KB 内是否含 NUL 字节（二进制文件不进编辑器，也不参与大小限制提示 ） */
   binary: boolean
+  /** 最后修改时间（毫秒时间戳）：编辑器据此区分自身保存与外部修改 */
+  mtimeMs: number
 }

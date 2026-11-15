@@ -20,11 +20,6 @@ export interface CodeEditorHandle {
   saveDirtyUnder: (path: string) => Promise<void>
   /** 丢弃指定路径及其子路径的模型缓存（条目被重命名/移动后调用，避免旧路径残留） */
   dropCachedUnder: (path: string) => void
-  /**
-   * 磁盘上的文件被外部（AI 写工具）改后，重新载入编辑器缓存。
-   * 文件未打开、或缓冲区有未保存修改时保持现状，不覆盖用户输入。
-   */
-  reloadFromDisk: (path: string) => void
   /** 以指定编码重新读取当前文件（手动切换编码）；有未保存修改时先弹确认框 */
   reopenWithEncoding: (encoding: TextEncodingId) => void
 }
@@ -36,6 +31,8 @@ export interface CodeEditorProps {
   onDirtyChange: (path: string, dirty: boolean) => void
   /** 把编辑器中选中的整行发送给 AI（附当前文件路径、行号与选中文本） */
   onSendSelectionToAi: (attachment: AiAttachment) => void
+  /** 磁盘上的文件被删除/重命名后，用户确认关闭标签：外层负责关闭标签并清理缓存 */
+  onDeletedFromDisk?: (path: string) => void
   /** 打开系统配置的「编辑器」分区（超限提示里的「调整大小上限」） */
   onOpenEditorSettings?: () => void
   /** 重新检查令牌：从设置页返回后递增，用于重新判定当前文件是否超限 */

@@ -7,7 +7,7 @@ import { dirname, isAtOrUnder } from '../../lib/filePath'
 import { getActiveThemeId } from '../../lib/theme'
 import { cn } from '../../lib/utils'
 import { useModelText } from '../../hooks/useModelText'
-import { MAX_EDITOR_TEXT_BYTES, megabytesToBytes } from '@shared/files/settings'
+import { megabytesToBytes } from '@shared/files/settings'
 import type { EncodingCandidate, TextEncodingId } from '@shared/files/encoding'
 import MarkdownPreview from '../MarkdownPreview'
 import MessageDialog from '../MessageDialog'
@@ -44,6 +44,18 @@ const modelEncodingCandidates = new WeakMap<
 /** 分栏模式下的编辑区宽度占比上下限 */
 const SPLIT_MIN_RATIO = 0.2
 const SPLIT_MAX_RATIO = 0.8
+
+/**
+ * 磁盘文件基线（mtime + 大小）：保存与打开时记录，
+ * 收到文件监听事件后与最新 stat 比对，用于区分自身保存与外部修改。
+ */
+interface DiskFileMeta {
+  mtimeMs: number
+  size: number
+}
+
+/** 外部变更提示：内容被修改（带最新磁盘基线），或文件被删除/重命名（旧路径消失） */
+type ExternalNotice = ({ kind: 'modified' } & DiskFileMeta) | { kind: 'deleted' }
 
 /** 流式保存的单块字符数：snapshot 约 64 KB 一块，攒到 4M 字符再发一次 IPC */
 const SAVE_CHUNK_CHARS = 4 * 1024 * 1024
@@ -156,6 +168,7 @@ export default function CodeEditor({
   file,
   onDirtyChange,
   onSendSelectionToAi,
+  onDeletedFromDisk,
   onOpenEditorSettings,
   recheckToken,
   onEncodingChange,
@@ -191,6 +204,20 @@ export default function CodeEditor({
   const splitAreaRef = useRef<HTMLDivElement | null>(null)
   // 等待用户确认的编码切换：有未保存修改时先弹框，确认后再重新读盘
   const [pendingEncoding, setPendingEncoding] = useState<TextEncodingId | null>(null)
+  // 各文件在磁盘上的基线（mtime + 大小）：用于区分自身保存与外部修改
+  const diskMetaRef = useRef<Map<string, DiskFileMeta>>(new Map())
+  // 有未保存修改时遇到外部修改：按路径挂起提示，仅当前激活文件展示
+  const [externalNotices, setExternalNotices] = useState<ReadonlyMap<string, ExternalNotice>>(
+    new Map()
+  )
+  // 正在打开（流式读盘）的路径：打开流程本身会读到最新内容，期间的文件事件不重复处理
+  const openingPathsRef = useRef<Set<string>>(new Set())
+  // 正在流式重载的路径：清空+灌入的中间态不上报脏状态，也禁止保存
+  const suppressDirtyPathsRef = useRef<Set<string>>(new Set())
+  // 外部变更检查的串行队列：同一文件的事件按顺序处理，避免并发读盘把较旧内容写回
+  const checkQueuesRef = useRef<Map<string, Promise<void>>>(new Map())
+  // 指向最新的检查函数，供队列与保存中重试调用（避免回调自引用）
+  const checkExternalRef = useRef<(path: string) => Promise<void>>(async () => {})
 
   /** 上报脏状态：仅在翻转时通知外部（避免每次击键都触发重渲染） */
   const reportDirty = useCallback(
@@ -214,6 +241,10 @@ export default function CodeEditor({
   /** 计算 model 相对保存点的脏状态并上报 */
   const syncDirty = useCallback(
     (model: monaco.editor.ITextModel): void => {
+      // 流式重载会先清空再增量灌入：抑制中间态上报，完成后再统一同步
+      if (suppressDirtyPathsRef.current.has(model.uri.fsPath)) {
+        return
+      }
       reportDirty(model.uri.fsPath, isDirty(model))
     },
     [isDirty, reportDirty]
@@ -241,13 +272,16 @@ export default function CodeEditor({
       path: string,
       encoding: TextEncodingId | undefined,
       onProgress: (loaded: number, total: number) => void,
-      isCancelled: () => boolean
+      isCancelled: () => boolean,
+      onOpened?: () => void
     ): Promise<{ encoding: TextEncodingId; candidates: EncodingCandidate[] } | null> => {
       const opened = await window.api.openTextStream(path, encoding)
       if (isCancelled()) {
         void window.api.closeTextStream(opened.streamId)
         return null
       }
+      // 读取流已就绪后再清空缓冲区（调用方在打开失败时得以保留原内容）
+      onOpened?.()
       const normalizer = new LineEndingNormalizer()
       let firstChunk = true
       let loaded = 0
@@ -282,6 +316,180 @@ export default function CodeEditor({
     },
     []
   )
+
+  /** 把编辑器缓存的全部 model 路径同步给主进程：外部改动后由主进程推送 */
+  const syncWatchedFiles = useCallback((): void => {
+    const paths = monaco.editor.getModels().map((model) => model.uri.fsPath)
+    void window.api.setWatchedFiles(paths).catch(() => undefined)
+  }, [])
+
+  /** 清除某个文件的外部变更提示 */
+  const clearExternalNotice = useCallback((path: string): void => {
+    setExternalNotices((prev) => {
+      if (!prev.has(path)) {
+        return prev
+      }
+      const next = new Map(prev)
+      next.delete(path)
+      return next
+    })
+  }, [])
+
+  /**
+   * 用磁盘内容替换 model 缓冲区（自动重载与用户确认后重载共用）。
+   * 统一走流式灌入：与打开文件一致地展示加载进度，大文本也不会整串读入。
+   * force 为 false 时不会覆盖未保存修改。
+   */
+  const reloadModelFromStream = useCallback(
+    async (
+      model: monaco.editor.ITextModel,
+      meta: DiskFileMeta,
+      force: boolean
+    ): Promise<boolean> => {
+      const path = model.uri.fsPath
+      if (!force && isDirty(model)) {
+        return false
+      }
+      const editor = editorRef.current
+      // 只有重载的正是当前挂载的缓冲区才影响编辑器：切只读并展示加载提示；
+      // 其他缓存文件的静默重载不能干扰用户正在编辑的文件。
+      const attached = editor !== null && editor.getModel() === model
+      if (attached) {
+        editor.updateOptions({ readOnly: true })
+        setLoading({ path, loaded: 0, total: 0 })
+      }
+      // 清空+灌入的中间态：不上报脏状态，也禁止保存写盘
+      suppressDirtyPathsRef.current.add(path)
+      try {
+        // 先让「正在加载」提示绘制出来；读取流建立成功后才清空缓冲区，失败时保留原内容
+        if (attached) {
+          await waitForPaint()
+        }
+        const loaded = await fillModelFromStream(
+          model,
+          path,
+          modelEncodings.get(model),
+          (loadedBytes, total) => {
+            if (attached) {
+              setLoading({ path, loaded: loadedBytes, total })
+            }
+          },
+          () => false,
+          () => model.setValue('')
+        )
+        if (loaded === null) {
+          return false
+        }
+        modelEncodings.set(model, loaded.encoding)
+        modelEncodingCandidates.set(model, loaded.candidates)
+        savedVersions.set(model, model.getAlternativeVersionId())
+        suppressDirtyPathsRef.current.delete(path)
+        syncDirty(model)
+        diskMetaRef.current.set(path, meta)
+        onEncodingChange?.({ path, encoding: loaded.encoding, candidates: loaded.candidates })
+        setFailure((prev) => (prev?.path === path ? null : prev))
+        clearExternalNotice(path)
+        return true
+      } catch (error) {
+        // 读取失败时缓冲区可能已被清空：按当前内容重新上报脏状态，提醒用户检查
+        suppressDirtyPathsRef.current.delete(path)
+        syncDirty(model)
+        setFailure({ path, message: `重新加载失败：${extractErrorMessage(error)}` })
+        return false
+      } finally {
+        suppressDirtyPathsRef.current.delete(path)
+        if (attached) {
+          editor?.updateOptions({ readOnly: false })
+          setLoading((prev) => (prev?.path === path ? null : prev))
+        }
+      }
+    },
+    [clearExternalNotice, fillModelFromStream, isDirty, onEncodingChange, syncDirty]
+  )
+
+  /** 检查一个已缓存文件是否被外部改动：干净时静默重载，有未保存修改时挂起重载提示 */
+  const checkExternalChange = useCallback(
+    async (path: string): Promise<void> => {
+      // 打开流程正在进行：它本身会读到最新内容，结束后会主动复核一次
+      if (openingPathsRef.current.has(path)) {
+        return
+      }
+      const model = monaco.editor.getModel(monaco.Uri.file(path))
+      if (!model) {
+        return
+      }
+      const info = await window.api.statFile(path)
+      if (info === null) {
+        // 外部删除或重命名（旧路径消失）统一按「已删除」提示，由用户决定是否关闭标签
+        diskMetaRef.current.delete(path)
+        setExternalNotices((prev) => {
+          if (prev.get(path)?.kind === 'deleted') {
+            return prev
+          }
+          const next = new Map(prev)
+          next.set(path, { kind: 'deleted' })
+          return next
+        })
+        return
+      }
+      const known = diskMetaRef.current.get(path)
+      if (known && known.mtimeMs === info.mtimeMs && known.size === info.size) {
+        return // 自身保存或已处理过的变更
+      }
+      const meta: DiskFileMeta = { mtimeMs: info.mtimeMs, size: info.size }
+      if (!isDirty(model)) {
+        await reloadModelFromStream(model, meta, false)
+        return
+      }
+      setExternalNotices((prev) => {
+        const current = prev.get(path)
+        if (
+          current?.kind === 'modified' &&
+          current.mtimeMs === meta.mtimeMs &&
+          current.size === meta.size
+        ) {
+          return prev
+        }
+        const next = new Map(prev)
+        next.set(path, { kind: 'modified', ...meta })
+        return next
+      })
+    },
+    [isDirty, reloadModelFromStream]
+  )
+
+  useEffect(() => {
+    checkExternalRef.current = checkExternalChange
+  }, [checkExternalChange])
+
+  /** 外部变更事件入口：同一文件串行排队；自身保存尚未结束时等基线更新后再判断 */
+  const enqueueExternalCheck = useCallback((path: string): void => {
+    const previous = checkQueuesRef.current.get(path) ?? Promise.resolve()
+    const next = previous
+      .then(async () => {
+        while (savingPathsRef.current.has(path)) {
+          await new Promise((resolve) => window.setTimeout(resolve, 200))
+        }
+        await checkExternalRef.current(path)
+      })
+      .catch(() => undefined)
+    checkQueuesRef.current.set(path, next)
+    void next.finally(() => {
+      if (checkQueuesRef.current.get(path) === next) {
+        checkQueuesRef.current.delete(path)
+      }
+    })
+  }, [])
+
+  // 外部改动（其他编辑器、终端、AI 写工具等）：干净缓冲区自动重载，有未保存修改时提示，
+  // 不覆盖用户输入
+  useEffect(() => {
+    return window.api.onFilesChanged(({ paths }) => {
+      for (const path of paths) {
+        enqueueExternalCheck(path)
+      }
+    })
+  }, [enqueueExternalCheck])
 
   /** 流式保存：snapshot 分块读 + 主进程写流，所有文件共用这一条路径 */
   const saveModelBySnapshot = useCallback(
@@ -346,6 +554,10 @@ export default function CodeEditor({
       if (savingPathsRef.current.has(path)) {
         return
       }
+      // 流式重载的中间态（已清空/半灌入）不能写回磁盘
+      if (suppressDirtyPathsRef.current.has(path)) {
+        return
+      }
       savingPathsRef.current.add(path)
       try {
         const version = model.getAlternativeVersionId()
@@ -353,6 +565,20 @@ export default function CodeEditor({
         await saveModelBySnapshot(model)
         savedVersions.set(model, version)
         reportDirty(path, model.getAlternativeVersionId() !== version)
+        // 保存会触发文件的 rename 事件：先把新 mtime 记为基线，避免被当成外部修改
+        const info = await window.api.statFile(path).catch(() => null)
+        if (info !== null) {
+          diskMetaRef.current.set(path, { mtimeMs: info.mtimeMs, size: info.size })
+        }
+        // 本地保存已经覆盖磁盘：针对旧磁盘内容的提示不再有意义
+        setExternalNotices((prev) => {
+          if (!prev.has(path)) {
+            return prev
+          }
+          const next = new Map(prev)
+          next.delete(path)
+          return next
+        })
       } finally {
         savingPathsRef.current.delete(path)
       }
@@ -470,6 +696,8 @@ export default function CodeEditor({
     if (!editor) {
       return
     }
+    // 上一次大文件流式重载可能设置了只读：切换/打开文件时先恢复可编辑
+    editor.updateOptions({ readOnly: false })
     if (!file) {
       editor.setModel(null)
       editor.updateOptions(NORMAL_FILE_OPTIONS)
@@ -496,6 +724,8 @@ export default function CodeEditor({
           encoding: modelEncodings.get(cachedModel) ?? 'utf-8',
           candidates: modelEncodingCandidates.get(cachedModel) ?? []
         })
+        // 组件重挂载后监听集合是新的：按当前缓存的 model 集合重新同步一次
+        syncWatchedFiles()
       }
       if (cachedModel.getValueLength() <= LARGE_FILE_CHARS) {
         attach()
@@ -519,6 +749,9 @@ export default function CodeEditor({
     }
 
     let cancelled = false
+    // 打开流程本身会读到最新内容：期间的文件事件跳过，结束后主动复核一次
+    const openingPaths = openingPathsRef.current
+    openingPaths.add(file.path)
     // 先清空编辑器：大文件加载期间不能继续显示上一个文件的内容
     editor.setModel(null)
     // 加载期间先关闭全文索引类特性：否则 model 增长过程中会持续建单词索引
@@ -527,6 +760,8 @@ export default function CodeEditor({
     void recheckToken
 
     void (async (): Promise<void> => {
+      // 先显示「正在打开」：stat/权限检查与建立读取流也可能耗时，不能等第一块到达才提示
+      setLoading({ path: file.path, loaded: 0, total: 0 })
       try {
         const info = await window.api.statFile(file.path)
         if (info === null) {
@@ -577,6 +812,9 @@ export default function CodeEditor({
         applyEditorFileMode(editor, model)
         editor.setModel(model)
         savedVersions.set(model, model.getAlternativeVersionId())
+        // 记录磁盘基线：文件监听事件据此区分自身保存与外部修改
+        diskMetaRef.current.set(file.path, { mtimeMs: info.mtimeMs, size: info.size })
+        syncWatchedFiles()
         observeModel(model)
         syncDirty(model)
         setFailure(null)
@@ -597,21 +835,28 @@ export default function CodeEditor({
         onEncodingChange?.(null)
       } finally {
         if (!cancelled) {
+          openingPaths.delete(file.path)
           setLoading((prev) => (prev?.path === file.path ? null : prev))
+          // 打开期间文件可能又被写入（事件被 opening 标记跳过）：完成后主动复核一次
+          enqueueExternalCheck(file.path)
         }
       }
     })()
 
     return () => {
       cancelled = true
+      // 快速切换文件时清掉标记，避免目标路径后续的事件被永久跳过
+      openingPaths.delete(file.path)
     }
   }, [
     file,
     observeModel,
     syncDirty,
+    syncWatchedFiles,
     forceOpenPath,
     recheckToken,
     fillModelFromStream,
+    enqueueExternalCheck,
     onEncodingChange
   ])
 
@@ -742,6 +987,7 @@ export default function CodeEditor({
       },
       dropCachedUnder(path: string): void {
         const editor = editorRef.current
+        const dropped: string[] = []
         for (const model of monaco.editor.getModels()) {
           const modelPath = model.uri.fsPath
           if (!isAtOrUnder(modelPath, path)) {
@@ -752,34 +998,24 @@ export default function CodeEditor({
           }
           savedVersions.delete(model)
           reportedDirtyRef.current.delete(modelPath)
+          diskMetaRef.current.delete(modelPath)
+          dropped.push(modelPath)
           model.dispose()
         }
-      },
-      reloadFromDisk(path: string): void {
-        const model = monaco.editor.getModel(monaco.Uri.file(path))
-        // 文件没在编辑器里打开过（或已有未保存修改）：切到该标签时会重新读盘，不覆盖用户输入
-        if (!model || isDirty(model)) {
-          return
-        }
-        // 超大文本不支持整串重载（readFile 是一次性字符串），跳过外部刷新
-        if (model.getValueLength() > MAX_EDITOR_TEXT_BYTES) {
-          return
-        }
-        void (async (): Promise<void> => {
-          try {
-            // 外部改动后按当前记录的编码重新解码，避免错误识别把内容变成乱码
-            const content = await window.api.readFile(path, modelEncodings.get(model))
-            // 读盘期间用户可能开始输入：再判一次，避免冲掉刚写的内容
-            if (isDirty(model) || model.getValue() === content) {
-              return
+        if (dropped.length > 0) {
+          // 提示与监听集合都属于被丢弃的 model，一并清理
+          setExternalNotices((prev) => {
+            let changed = false
+            const next = new Map(prev)
+            for (const modelPath of dropped) {
+              if (next.delete(modelPath)) {
+                changed = true
+              }
             }
-            model.setValue(content)
-            savedVersions.set(model, model.getAlternativeVersionId())
-            syncDirty(model)
-          } catch {
-            // 读不到（例如刚被删除）：保持现状，让用户下次操作时看到真实错误
-          }
-        })()
+            return changed ? next : prev
+          })
+          syncWatchedFiles()
+        }
       },
       reopenWithEncoding(encoding: TextEncodingId): void {
         const model = editorRef.current?.getModel()
@@ -794,7 +1030,7 @@ export default function CodeEditor({
         void applyEncoding(encoding)
       }
     }),
-    [applyEncoding, isDirty, saveModel, syncDirty]
+    [applyEncoding, isDirty, saveModel, syncWatchedFiles]
   )
 
   /** 超限提示里的「继续打开」：跳过上限检查，按当前路径重新加载 */
@@ -805,6 +1041,43 @@ export default function CodeEditor({
     setOversize(null)
     setForceOpenPath(file.path)
   }, [file])
+
+  // 当前文件的外部修改提示（其他文件的提示在切换过去后再展示）
+  const externalNotice = file !== null ? (externalNotices.get(file.path) ?? null) : null
+
+  /** 用户确认重新加载：放弃本地未保存修改，用磁盘内容替换缓冲区 */
+  const handleReloadExternal = useCallback((): void => {
+    if (!file || externalNotice?.kind !== 'modified') {
+      return
+    }
+    const model = monaco.editor.getModel(monaco.Uri.file(file.path))
+    if (model) {
+      void reloadModelFromStream(model, externalNotice, true)
+    }
+  }, [externalNotice, file, reloadModelFromStream])
+
+  /** 忽略外部修改：把当前磁盘状态记为基线，保留本地缓冲区（之后的保存会覆盖磁盘） */
+  const handleIgnoreExternal = useCallback((): void => {
+    if (!file || !externalNotice) {
+      return
+    }
+    if (externalNotice.kind === 'modified') {
+      diskMetaRef.current.set(file.path, externalNotice)
+    }
+    clearExternalNotice(file.path)
+  }, [clearExternalNotice, externalNotice, file])
+
+  /** 磁盘上的文件已被删除/重命名：交给外层关闭标签并清理缓存（未提供回调时仅收起提示） */
+  const handleCloseDeletedFile = useCallback((): void => {
+    if (!file) {
+      return
+    }
+    if (onDeletedFromDisk) {
+      onDeletedFromDisk(file.path)
+      return
+    }
+    clearExternalNotice(file.path)
+  }, [clearExternalNotice, file, onDeletedFromDisk])
 
   // 仅展示当前文件对应的错误（派生值，无需在 effect 中同步重置）
   const errorMessage = failure && failure.path === file?.path ? failure.message : null
@@ -834,6 +1107,29 @@ export default function CodeEditor({
           <span className="ml-auto pr-1 text-[11px] text-dim">
             {isMarkdown ? 'Markdown' : 'SVG'}
           </span>
+        </div>
+      ) : null}
+      {externalNotice ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-line bg-elevated px-3 py-1.5">
+          <span className="text-[12px] text-fg">
+            {externalNotice.kind === 'deleted'
+              ? '文件已在磁盘上删除或重命名。'
+              : '文件已在磁盘上更改。'}
+          </span>
+          <div className="ml-auto flex items-center gap-1">
+            {externalNotice.kind === 'modified' ? (
+              <Button type="button" size="xs" onClick={handleReloadExternal}>
+                重新加载
+              </Button>
+            ) : (
+              <Button type="button" size="xs" onClick={handleCloseDeletedFile}>
+                关闭标签
+              </Button>
+            )}
+            <Button type="button" size="xs" variant="ghost" onClick={handleIgnoreExternal}>
+              忽略
+            </Button>
+          </div>
         </div>
       ) : null}
       <div ref={splitAreaRef} className="flex min-h-0 flex-1">

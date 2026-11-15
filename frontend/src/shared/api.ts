@@ -7,8 +7,10 @@ import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
 import type { AppInfo } from './app/types'
 import type {
+  DirectoriesChangedEvent,
   FileEntry,
   FileStat,
+  FilesChangedEvent,
   SearchResult,
   TextStreamChunk,
   TextStreamOpenResult,
@@ -67,6 +69,22 @@ export interface ScoderAPI {
   revealEntry: (targetPath: string) => Promise<void>
   /** 以 rootPath 为根递归搜索名称包含关键词的条目（跳过噪音目录），最多返回 limit 条 */
   searchFiles: (rootPath: string, query: string, limit?: number) => Promise<SearchResult>
+  /**
+   * 同步需要监听的目录集合（已加载/展开的目录，全量替换）：
+   * 目录内条目增删或改名时主进程通过 onDirectoriesChanged 推送该目录。
+   */
+  setWatchedDirectories: (dirs: string[]) => Promise<void>
+  /** 停止监听当前窗口的全部目录（切换或关闭项目时调用） */
+  clearWatchedDirectories: () => Promise<void>
+  /** 订阅目录条目变化事件（只报告目录，需由渲染进程重读最新条目）；返回取消订阅函数 */
+  onDirectoriesChanged: (callback: (event: DirectoriesChangedEvent) => void) => () => void
+  /**
+   * 同步需要监听的文件集合（编辑器已打开/已缓存的文件，全量替换）：
+   * 文件内容被外部修改或被原子替换时主进程通过 onFilesChanged 推送路径。
+   */
+  setWatchedFiles: (paths: string[]) => Promise<void>
+  /** 订阅打开文件的磁盘变化事件（自身保存也会触发，需用 stat 基线排除）；返回取消订阅函数 */
+  onFilesChanged: (callback: (event: FilesChangedEvent) => void) => () => void
   /** 创建终端会话（在 cwd 中启动系统 shell，cwd 为 null 时用用户主目录），返回会话 id */
   createTerminal: (cwd: string | null, cols: number, rows: number) => Promise<number>
   /** 向终端会话写入用户输入（fire-and-forget，不等待回执） */

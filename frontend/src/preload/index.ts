@@ -6,6 +6,7 @@ import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
+import type { DirectoriesChangedEvent, FilesChangedEvent } from '../shared/files/types'
 import type { TextEncodingId } from '../shared/files/encoding'
 import { FILE_SETTINGS_CHANNELS } from '../shared/files/settings'
 import type { FileSettings } from '../shared/files/settings'
@@ -79,6 +80,24 @@ const api: ScoderAPI = {
   revealEntry: (targetPath: string) => ipcRenderer.invoke(FILES_CHANNELS.revealEntry, targetPath),
   searchFiles: (rootPath: string, query: string, limit?: number) =>
     ipcRenderer.invoke(FILES_CHANNELS.searchFiles, rootPath, query, limit),
+  // 目录监听：同步已加载目录（全量替换），条目变化由主进程推送
+  setWatchedDirectories: (dirs: string[]) =>
+    ipcRenderer.invoke(FILES_CHANNELS.setWatchedDirectories, dirs),
+  clearWatchedDirectories: () => ipcRenderer.invoke(FILES_CHANNELS.clearWatchedDirectories),
+  onDirectoriesChanged: (callback: (event: DirectoriesChangedEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: DirectoriesChangedEvent): void =>
+      callback(payload)
+    ipcRenderer.on(FILES_CHANNELS.directoriesChanged, listener)
+    return () => ipcRenderer.removeListener(FILES_CHANNELS.directoriesChanged, listener)
+  },
+  // 文件监听：同步编辑器已打开（已缓存）的文件，内容变化由主进程推送
+  setWatchedFiles: (paths: string[]) => ipcRenderer.invoke(FILES_CHANNELS.setWatchedFiles, paths),
+  onFilesChanged: (callback: (event: FilesChangedEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: FilesChangedEvent): void =>
+      callback(payload)
+    ipcRenderer.on(FILES_CHANNELS.filesChanged, listener)
+    return () => ipcRenderer.removeListener(FILES_CHANNELS.filesChanged, listener)
+  },
   createTerminal: (cwd: string | null, cols: number, rows: number) =>
     ipcRenderer.invoke(TERMINAL_CHANNELS.create, cwd, cols, rows),
   // 键入与尺寸调整走单向 send：高频且无需等待主进程回执

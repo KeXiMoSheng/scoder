@@ -20,5 +20,14 @@ export const FILES_CHANNELS = {
   moveEntry: 'fs:moveEntry',
   deleteEntry: 'fs:deleteEntry',
   revealEntry: 'fs:revealEntry',
-  searchFiles: 'fs:searchFiles'
+  searchFiles: 'fs:searchFiles',
+  /** 目录监听：渲染进程同步「已加载目录」，主进程挂原生 watcher 并推送条目变化 */
+  setWatchedDirectories: 'fs:setWatchedDirectories',
+  clearWatchedDirectories: 'fs:clearWatchedDirectories',
+  /** 文件监听：渲染进程同步「编辑器已打开（已缓存）的文件」，内容变化时推送 */
+  setWatchedFiles: 'fs:setWatchedFiles',
+  /** 主进程 → 渲染进程：目录内条目发生增删/改名 */
+  directoriesChanged: 'fs:directoriesChanged',
+  /** 主进程 → 渲染进程：打开文件的内容被外部修改或条目被替换 */
+  filesChanged: 'fs:filesChanged'
 } as const
