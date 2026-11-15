@@ -21,7 +21,7 @@ export function createEditTool(): ToolDefinition {
   return {
     name: 'edit',
     description:
-      '对工作区内的 UTF-8 文本文件做字面替换。old_string 必须在文件中唯一出现，否则请给更精确的片段或设置 replace_all。',
+      '对工作区内的文本文件做字面替换（沿用目标文件已有编码）。old_string 必须在文件中唯一出现，否则请给更精确的片段或设置 replace_all。',
     parameters: {
       type: 'object',
       properties: {

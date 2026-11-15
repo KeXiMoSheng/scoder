@@ -2,7 +2,17 @@
 
 import type { Ref } from 'react'
 import type { AiAttachment } from '@shared/ai/types'
+import type { EncodingCandidate, TextEncodingId } from '@shared/files/encoding'
 import type { OpenedFile } from '../../hooks/useOpenedFiles'
+
+/** 当前激活文件的编码（上报给 App 的底部状态栏） */
+export interface EditorEncodingState {
+  /** 文件绝对路径：切换标签后旧文件的编码不再展示 */
+  path: string
+  encoding: TextEncodingId
+  /** 自动识别的候选编码（按可能性降序）：状态栏菜单据此标注最可能的编码 */
+  candidates: readonly EncodingCandidate[]
+}
 
 /** 暴露给 App 的命令式接口（通过 ref 调用） */
 export interface CodeEditorHandle {
@@ -15,6 +25,8 @@ export interface CodeEditorHandle {
    * 文件未打开、或缓冲区有未保存修改时保持现状，不覆盖用户输入。
    */
   reloadFromDisk: (path: string) => void
+  /** 以指定编码重新读取当前文件（手动切换编码）；有未保存修改时先弹确认框 */
+  reopenWithEncoding: (encoding: TextEncodingId) => void
 }
 
 export interface CodeEditorProps {
@@ -28,6 +40,8 @@ export interface CodeEditorProps {
   onOpenEditorSettings?: () => void
   /** 重新检查令牌：从设置页返回后递增，用于重新判定当前文件是否超限 */
   recheckToken?: number
+  /** 当前激活文件的编码变化（自动识别或手动切换）；没有文本文件时回传 null */
+  onEncodingChange?: (state: EditorEncodingState | null) => void
   ref?: Ref<CodeEditorHandle>
 }
 

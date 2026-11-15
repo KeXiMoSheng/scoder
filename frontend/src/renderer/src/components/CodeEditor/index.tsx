@@ -8,7 +8,9 @@ import { getActiveThemeId } from '../../lib/theme'
 import { cn } from '../../lib/utils'
 import { useModelText } from '../../hooks/useModelText'
 import { MAX_EDITOR_TEXT_BYTES, megabytesToBytes } from '@shared/files/settings'
+import type { EncodingCandidate, TextEncodingId } from '@shared/files/encoding'
 import MarkdownPreview from '../MarkdownPreview'
+import MessageDialog from '../MessageDialog'
 import ResizeHandle from '../ResizeHandle'
 import SvgPreview from '../SvgPreview'
 import { Button } from '../ui/button'
@@ -26,6 +28,18 @@ import type {
  * 组件重挂载（热更新）后复用缓存时不会因查不到保存点而误报脏点。
  */
 const savedVersions = new WeakMap<monaco.editor.ITextModel, number>()
+
+/**
+ * 每个 model 的编码：自动识别或手动切换的结果，保存时按它写回。
+ * 与保存点一样跟随 model（而非组件实例），切标签或组件重挂载后不丢。
+ */
+const modelEncodings = new WeakMap<monaco.editor.ITextModel, TextEncodingId>()
+
+/** 每个 model 的候选编码：打开时由主进程自动识别，供状态栏菜单标注最可能的编码 */
+const modelEncodingCandidates = new WeakMap<
+  monaco.editor.ITextModel,
+  readonly EncodingCandidate[]
+>()
 
 /** 分栏模式下的编辑区宽度占比上下限 */
 const SPLIT_MIN_RATIO = 0.2
@@ -144,6 +158,7 @@ export default function CodeEditor({
   onSendSelectionToAi,
   onOpenEditorSettings,
   recheckToken,
+  onEncodingChange,
   ref
 }: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -174,6 +189,8 @@ export default function CodeEditor({
   const [splitRatio, setSplitRatio] = useState(0.5)
   const splitStartRatioRef = useRef(0.5)
   const splitAreaRef = useRef<HTMLDivElement | null>(null)
+  // 等待用户确认的编码切换：有未保存修改时先弹框，确认后再重新读盘
+  const [pendingEncoding, setPendingEncoding] = useState<TextEncodingId | null>(null)
 
   /** 上报脏状态：仅在翻转时通知外部（避免每次击键都触发重渲染） */
   const reportDirty = useCallback(
@@ -214,6 +231,58 @@ export default function CodeEditor({
     [syncDirty]
   )
 
+  /**
+   * 把文件内容流式灌入 model：先打开文本流（编码可由调用方指定），再逐块 applyEdits。
+   * 调用方负责创建/清空 model，以及取消后的清理；取消时返回 null。
+   */
+  const fillModelFromStream = useCallback(
+    async (
+      model: monaco.editor.ITextModel,
+      path: string,
+      encoding: TextEncodingId | undefined,
+      onProgress: (loaded: number, total: number) => void,
+      isCancelled: () => boolean
+    ): Promise<{ encoding: TextEncodingId; candidates: EncodingCandidate[] } | null> => {
+      const opened = await window.api.openTextStream(path, encoding)
+      if (isCancelled()) {
+        void window.api.closeTextStream(opened.streamId)
+        return null
+      }
+      const normalizer = new LineEndingNormalizer()
+      let firstChunk = true
+      let loaded = 0
+      try {
+        for (;;) {
+          const chunk = await window.api.readTextStreamChunk(opened.streamId)
+          if (isCancelled()) {
+            return null
+          }
+          if (chunk.text.length > 0) {
+            const normalized = normalizer.normalize(chunk.text)
+            if (firstChunk) {
+              firstChunk = false
+              // 原文是 CRLF 时把 model 目标行尾设成一致，保存写回不会整文件变动
+              if (normalizer.crlf) {
+                model.setEOL(monaco.editor.EndOfLineSequence.CRLF)
+              }
+            }
+            appendModelText(model, normalized)
+          }
+          loaded += chunk.bytesRead
+          onProgress(loaded, opened.size)
+          if (chunk.done) {
+            break
+          }
+        }
+        appendModelText(model, normalizer.flush())
+        return { encoding: opened.encoding, candidates: opened.candidates }
+      } finally {
+        void window.api.closeTextStream(opened.streamId)
+      }
+    },
+    []
+  )
+
   /** 流式保存：snapshot 分块读 + 主进程写流，所有文件共用这一条路径 */
   const saveModelBySnapshot = useCallback(
     async (model: monaco.editor.ITextModel): Promise<void> => {
@@ -221,7 +290,11 @@ export default function CodeEditor({
       const total = model.getValueLength()
       // snapshot 约 64 KB 一块，固定住保存时刻的内容；保存期间的编辑不影响本次写入
       const snapshot = model.createSnapshot()
-      const { writeId } = await window.api.openWriteStream(path)
+      // 按本次打开/切换时记录的编码写回，文件编码不会因保存而改变
+      const { writeId } = await window.api.openWriteStream(
+        path,
+        modelEncodings.get(model) ?? 'utf-8'
+      )
       let written = 0
       // 小文件写入是瞬时的：不显示进度，避免提示闪烁
       const showProgress = total > SAVE_CHUNK_CHARS
@@ -400,6 +473,7 @@ export default function CodeEditor({
     if (!file) {
       editor.setModel(null)
       editor.updateOptions(NORMAL_FILE_OPTIONS)
+      onEncodingChange?.(null)
       return
     }
 
@@ -417,6 +491,11 @@ export default function CodeEditor({
           savedVersions.set(cachedModel, cachedModel.getAlternativeVersionId())
         }
         syncDirty(cachedModel)
+        onEncodingChange?.({
+          path: file.path,
+          encoding: modelEncodings.get(cachedModel) ?? 'utf-8',
+          candidates: modelEncodingCandidates.get(cachedModel) ?? []
+        })
       }
       if (cachedModel.getValueLength() <= LARGE_FILE_CHARS) {
         attach()
@@ -468,49 +547,32 @@ export default function CodeEditor({
           return
         }
         // 按块读取并增量灌入空 model：不拼整串，突破 V8 单字符串长度上限
-        const opened = await window.api.openTextStream(file.path)
-        if (cancelled) {
-          void window.api.closeTextStream(opened.streamId)
-          return
-        }
+        // 打开时自动识别编码，状态栏展示识别结果，保存按同一编码写回
         const model = monaco.editor.createModel('', detectLanguage(file.name), uri)
-        // 加载期间不挂到编辑器：applyEdits 只更新 model，
-        // 不触发视图重绘与大文件特性重建，1GB 文件可从数十秒降到几秒
-        const normalizer = new LineEndingNormalizer()
-        let firstChunk = true
-        let loaded = 0
+        let loaded: { encoding: TextEncodingId; candidates: EncodingCandidate[] } | null
         try {
-          for (;;) {
-            const chunk = await window.api.readTextStreamChunk(opened.streamId)
-            if (cancelled) {
-              model.dispose()
-              return
-            }
-            if (chunk.text.length > 0) {
-              const normalized = normalizer.normalize(chunk.text)
-              if (firstChunk) {
-                firstChunk = false
-                // 原文是 CRLF 时把 model 目标行尾设成一致，保存写回不会整文件变动
-                if (normalizer.crlf) {
-                  model.setEOL(monaco.editor.EndOfLineSequence.CRLF)
-                }
+          loaded = await fillModelFromStream(
+            model,
+            file.path,
+            undefined,
+            (loadedBytes, total) => {
+              if (!cancelled) {
+                setLoading({ path: file.path, loaded: loadedBytes, total })
               }
-              appendModelText(model, normalized)
-            }
-            loaded += chunk.bytesRead
-            setLoading({ path: file.path, loaded, total: opened.size })
-            if (chunk.done) {
-              break
-            }
-          }
-          appendModelText(model, normalizer.flush())
-        } finally {
-          void window.api.closeTextStream(opened.streamId)
+            },
+            () => cancelled
+          )
+        } catch (error) {
+          // 打开流失败时不能留下同 URI 的空 model，否则下次会命中缓存
+          model.dispose()
+          throw error
         }
-        if (cancelled) {
+        if (loaded === null) {
           model.dispose()
           return
         }
+        modelEncodings.set(model, loaded.encoding)
+        modelEncodingCandidates.set(model, loaded.candidates)
         // 全部灌入后一次性挂到编辑器：先按大小设好特性再 attach
         applyEditorFileMode(editor, model)
         editor.setModel(model)
@@ -518,6 +580,11 @@ export default function CodeEditor({
         observeModel(model)
         syncDirty(model)
         setFailure(null)
+        onEncodingChange?.({
+          path: file.path,
+          encoding: loaded.encoding,
+          candidates: loaded.candidates
+        })
         // 上限调大或选择继续打开后，同一路径的提示不再保留
         setOversize((previous) => (previous?.path === file.path ? null : previous))
       } catch (reason) {
@@ -527,6 +594,7 @@ export default function CodeEditor({
         editor.setModel(null)
         editor.updateOptions(NORMAL_FILE_OPTIONS)
         setFailure({ path: file.path, message: extractErrorMessage(reason) })
+        onEncodingChange?.(null)
       } finally {
         if (!cancelled) {
           setLoading((prev) => (prev?.path === file.path ? null : prev))
@@ -537,7 +605,15 @@ export default function CodeEditor({
     return () => {
       cancelled = true
     }
-  }, [file, observeModel, syncDirty, forceOpenPath, recheckToken])
+  }, [
+    file,
+    observeModel,
+    syncDirty,
+    forceOpenPath,
+    recheckToken,
+    fillModelFromStream,
+    onEncodingChange
+  ])
 
   // 文档预览（Markdown / SVG）：预览文本由 useModelText 直接订阅当前激活的 model
   const isMarkdown = file !== null && isMarkdownFile(file.name)
@@ -579,6 +655,75 @@ export default function CodeEditor({
     const ratio = splitStartRatioRef.current + offsetX / width
     setSplitRatio(Math.min(Math.max(ratio, SPLIT_MIN_RATIO), SPLIT_MAX_RATIO))
   }, [])
+
+  /**
+   * 以指定编码重新解码当前文件：清空 model 后重新流式读盘。
+   * 编码切换等价于「重新解释磁盘字节」，未保存修改在调用前已确认丢弃；
+   * 切换失败时用原编码把内容读回来，不留下空或半截缓冲区。
+   */
+  const applyEncoding = useCallback(
+    async (encoding: TextEncodingId): Promise<void> => {
+      const model = editorRef.current?.getModel()
+      if (!model) {
+        return
+      }
+      const path = model.uri.fsPath
+      const previous = modelEncodings.get(model) ?? 'utf-8'
+      setLoading({ path, loaded: 0, total: 0 })
+      try {
+        model.setValue('')
+        const loaded = await fillModelFromStream(
+          model,
+          path,
+          encoding,
+          (loadedBytes, total) => setLoading({ path, loaded: loadedBytes, total }),
+          () => false
+        )
+        if (loaded === null) {
+          return
+        }
+        modelEncodings.set(model, loaded.encoding)
+        modelEncodingCandidates.set(model, loaded.candidates)
+        savedVersions.set(model, model.getAlternativeVersionId())
+        syncDirty(model)
+        setFailure((last) => (last?.path === path ? null : last))
+        onEncodingChange?.({
+          path,
+          encoding: loaded.encoding,
+          candidates: loaded.candidates
+        })
+      } catch (reason) {
+        // 切换失败：用原编码恢复内容，避免用户看到空文件并误存
+        try {
+          model.setValue('')
+          const restored = await fillModelFromStream(
+            model,
+            path,
+            previous,
+            () => undefined,
+            () => false
+          )
+          if (restored !== null) {
+            modelEncodings.set(model, restored.encoding)
+            modelEncodingCandidates.set(model, restored.candidates)
+            savedVersions.set(model, model.getAlternativeVersionId())
+            syncDirty(model)
+            onEncodingChange?.({
+              path,
+              encoding: restored.encoding,
+              candidates: restored.candidates
+            })
+          }
+        } catch {
+          // 恢复也失败：保留错误提示，缓冲区仍为未保存状态，不会被当成已保存
+        }
+        setFailure({ path, message: `切换编码失败：${extractErrorMessage(reason)}` })
+      } finally {
+        setLoading((last) => (last?.path === path ? null : last))
+      }
+    },
+    [fillModelFromStream, onEncodingChange, syncDirty]
+  )
 
   useImperativeHandle(
     ref,
@@ -622,7 +767,8 @@ export default function CodeEditor({
         }
         void (async (): Promise<void> => {
           try {
-            const content = await window.api.readFile(path)
+            // 外部改动后按当前记录的编码重新解码，避免错误识别把内容变成乱码
+            const content = await window.api.readFile(path, modelEncodings.get(model))
             // 读盘期间用户可能开始输入：再判一次，避免冲掉刚写的内容
             if (isDirty(model) || model.getValue() === content) {
               return
@@ -634,9 +780,21 @@ export default function CodeEditor({
             // 读不到（例如刚被删除）：保持现状，让用户下次操作时看到真实错误
           }
         })()
+      },
+      reopenWithEncoding(encoding: TextEncodingId): void {
+        const model = editorRef.current?.getModel()
+        if (!model) {
+          return
+        }
+        // 有未保存修改时先确认：切换编码会按磁盘内容重新解码
+        if (isDirty(model)) {
+          setPendingEncoding(encoding)
+          return
+        }
+        void applyEncoding(encoding)
       }
     }),
-    [isDirty, saveModel, syncDirty]
+    [applyEncoding, isDirty, saveModel, syncDirty]
   )
 
   /** 超限提示里的「继续打开」：跳过上限检查，按当前路径重新加载 */
@@ -764,6 +922,25 @@ export default function CodeEditor({
           </>
         ) : null}
       </div>
+      {pendingEncoding !== null ? (
+        <MessageDialog
+          title="切换文件编码"
+          message="将按新编码重新读取磁盘内容，当前未保存的修改会丢失。"
+          actions={[
+            { label: '取消', onClick: () => setPendingEncoding(null) },
+            {
+              label: '切换',
+              primary: true,
+              onClick: () => {
+                const next = pendingEncoding
+                setPendingEncoding(null)
+                void applyEncoding(next)
+              }
+            }
+          ]}
+          onClose={() => setPendingEncoding(null)}
+        />
+      ) : null}
     </div>
   )
 }

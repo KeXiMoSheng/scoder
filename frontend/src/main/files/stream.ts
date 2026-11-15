@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
+import { isTextEncodingId, type TextEncodingId } from '../../shared/files/encoding'
 import { FILES_CHANNELS } from '../../shared/files/events'
 import type { TextStreamChunk, TextStreamOpenResult } from '../../shared/files/types'
 import { TextFileStream, TextStreamError } from './textStream'
@@ -84,31 +85,49 @@ function openError(filePath: string, error: unknown): Error {
 function chunkError(error: unknown, filePath: string): Error {
   if (error instanceof TextStreamError) {
     return error.reason === 'binary'
-      ? new Error(`二进制文件不支持在编辑器中打开：${filePath}`)
-      : new Error(`文件不是 UTF-8 文本，无法在编辑器中打开：${filePath}`)
+      ? new Error(`二进制文件不支持在编辑器中打开：${filePath}`, { cause: error })
+      : new Error(`不是普通文件，无法打开：${filePath}`, { cause: error })
   }
   return error instanceof Error ? error : new Error(`读取文件失败：${filePath}`)
+}
+
+/** 校验渲染进程传来的编码参数；未传时返回 undefined（自动识别） */
+function parseEncoding(encoding: unknown): TextEncodingId | undefined {
+  if (encoding === undefined) {
+    return undefined
+  }
+  if (!isTextEncodingId(encoding)) {
+    throw new Error('文件编码无效')
+  }
+  return encoding
 }
 
 /** 向渲染进程提供文本流式读取：打开会话、逐块拉取、提前释放 */
 export function registerFileStreamHandlers(): void {
   ipcMain.handle(
     FILES_CHANNELS.openTextStream,
-    async (event, filePath: string): Promise<TextStreamOpenResult> => {
+    async (event, filePath: string, encoding?: unknown): Promise<TextStreamOpenResult> => {
       if (typeof filePath !== 'string') {
         throw new Error('文件路径无效')
       }
+      // 编码由渲染进程给出时按它解码（手动切换编码），否则自动识别
+      const requested = parseEncoding(encoding)
       let stream: TextFileStream
       try {
-        // 编辑器要原样保存，BOM 作为内容保留，不在解码阶段剥离
-        stream = await TextFileStream.open(filePath, { preserveBom: true })
+        stream = await TextFileStream.open(filePath, { encoding: requested })
       } catch (error) {
         throw openError(filePath, error)
       }
       const streamId = randomUUID()
       sessions.set(streamId, { stream, ownerId: event.sender.id })
       watchSender(event.sender)
-      return { streamId, size: stream.size }
+      // 编码与候选一起回传：状态栏据此展示当前编码并标注最可能的编码
+      return {
+        streamId,
+        size: stream.size,
+        encoding: stream.encoding,
+        candidates: stream.candidates
+      }
     }
   )
 

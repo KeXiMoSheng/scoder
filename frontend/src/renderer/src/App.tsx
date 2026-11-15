@@ -4,19 +4,21 @@ import type { AiAttachment } from '@shared/ai/types'
 import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
-import type { CodeEditorHandle } from './components/CodeEditor/types'
+import type { CodeEditorHandle, EditorEncodingState } from './components/CodeEditor/types'
 import EditorTabs from './components/EditorTabs'
 import FilePreview from './components/FilePreview'
 import FileTree from './components/FileTree'
 import ResizeHandle from './components/ResizeHandle'
 import SettingsPage from './components/SettingsPage'
 import type { SettingsSectionId } from './components/SettingsSidebar/types'
+import StatusBar from './components/StatusBar'
 import TerminalPanel from './components/TerminalPanel'
 import type { TerminalPanelHandle } from './components/TerminalPanel/types'
 import TitleBar from './components/TitleBar'
 import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
+import type { TextEncodingId } from '@shared/files/encoding'
 import { basename, isAbsolutePath, isAtOrUnder, joinPath } from './lib/filePath'
 import { previewKindOf } from './lib/filePreview'
 import { cn } from './lib/utils'
@@ -94,6 +96,16 @@ function App(): React.JSX.Element {
   const { themeId, setThemeId } = useTheme()
   // 当前激活文件如果是二进制类型（图片/音视频等）则走预览页签而不是文本编辑器
   const previewKind = activeFile !== null ? previewKindOf(activeFile.name) : null
+  // 编辑器上报的当前文本文件编码（底部状态栏展示与切换）
+  const [encodingState, setEncodingState] = useState<EditorEncodingState | null>(null)
+  // 只信任与当前激活文件、当前预览类型都匹配的上报结果
+  const activeEncodingState =
+    encodingState !== null &&
+    activeFile !== null &&
+    encodingState.path === activeFile.path &&
+    previewKind === null
+      ? encodingState
+      : null
 
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   // 编辑器区（含标签栏、编辑器与命令行面板）：面板高度比例都以它为准
@@ -399,6 +411,11 @@ function App(): React.JSX.Element {
     [closeUnder]
   )
 
+  /** 底部状态栏切换编码：编辑器按新编码重新读盘，后续保存按同一编码写回 */
+  const handleEncodingChange = useCallback((encoding: TextEncodingId): void => {
+    editorRef.current?.reopenWithEncoding(encoding)
+  }, [])
+
   /** 编辑器标签：在资源管理器视图中显示 —— 确保文件树可见、激活对应标签并下发定位请求 */
   const handleRevealInTree = useCallback(
     (path: string): void => {
@@ -660,6 +677,7 @@ function App(): React.JSX.Element {
                     onSendSelectionToAi={attachToAi}
                     onOpenEditorSettings={openEditorSettings}
                     recheckToken={settingsVersion}
+                    onEncodingChange={setEncodingState}
                   />
                 </div>
                 {previewKind !== null && activeFile !== null ? (
@@ -708,6 +726,12 @@ function App(): React.JSX.Element {
           </div>
         ) : null}
       </div>
+      {/* 整个窗口的最底部：右侧显示当前文件编码（设置页打开时不展示） */}
+      <StatusBar
+        encoding={settingsOpen ? null : (activeEncodingState?.encoding ?? null)}
+        candidates={activeEncodingState?.candidates ?? []}
+        onChange={handleEncodingChange}
+      />
     </div>
   )
 }

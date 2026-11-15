@@ -35,6 +35,8 @@
     "@vscode/ripgrep": "^1.18.0",
     "better-sqlite3": "^13.0.3",
     "diff": "^9.0.0",
+    "iconv-lite": "^0.7.3",
+    "jschardet": "^4.1.0",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {

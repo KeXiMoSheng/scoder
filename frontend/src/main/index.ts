@@ -19,6 +19,9 @@ import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
 import { registerAppHandlers } from './app'
 import { disposeAllFileStreams, registerFileStreamHandlers } from './files/stream'
+import { decodeWholeText, TextStreamError } from './files/textStream'
+import { BINARY_SAMPLE_BYTES, isBinarySample } from './files/encoding'
+import { isTextEncodingId } from '../shared/files/encoding'
 import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { registerModelImportHandlers } from './model-import'
 import { FILES_CHANNELS } from '../shared/files/events'
@@ -38,9 +41,6 @@ const isDevChannel = is.dev || app.getVersion().includes('-dev')
 
 // 文件树中隐藏的噪音目录（版本库元数据与依赖缓存）
 const IGNORED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', '__pycache__', '.venv'])
-
-// 二进制采样窗口：只检查文件头 8 KB 的 NUL
-const BINARY_SAMPLE_BYTES = 8192
 
 /** 超出单字符串上限时的统一错误：必须在读取前拦住，否则 V8 会抛底层英文错误 */
 function editorTextTooLargeError(): Error {
@@ -99,26 +99,36 @@ function registerFileSystemHandlers(): void {
   )
 
   // 一次性读取文本文件（编辑器打开）：体积上限由渲染进程按配置先行判断
-  ipcMain.handle(FILES_CHANNELS.readFile, async (_event, filePath: string): Promise<string> => {
-    if (typeof filePath !== 'string') {
-      throw new Error('文件路径无效')
+  ipcMain.handle(
+    FILES_CHANNELS.readFile,
+    async (_event, filePath: string, encoding?: unknown): Promise<string> => {
+      if (typeof filePath !== 'string') {
+        throw new Error('文件路径无效')
+      }
+      if (encoding !== undefined && !isTextEncodingId(encoding)) {
+        throw new Error('文件编码无效')
+      }
+      // 先看大小：超过 V8 单字符串上限的文件必然读不出字符串，避免白白分配整块内存
+      const info = await fs.stat(filePath)
+      if (info.size > MAX_EDITOR_TEXT_BYTES) {
+        throw editorTextTooLargeError()
+      }
+      const buffer = await fs.readFile(filePath)
+      // 读取期间文件可能增长：兜底再判一次
+      if (buffer.byteLength > MAX_EDITOR_TEXT_BYTES) {
+        throw editorTextTooLargeError()
+      }
+      try {
+        // 未指定编码时自动识别；BOM 作为编码标记剥离，不进入文本
+        return decodeWholeText(buffer, filePath, encoding)
+      } catch (error) {
+        if (error instanceof TextStreamError) {
+          throw new Error('二进制文件不支持在编辑器中打开', { cause: error })
+        }
+        throw error
+      }
     }
-    // 先看大小：超过 V8 单字符串上限的文件必然读不出字符串，避免白白分配整块内存
-    const info = await fs.stat(filePath)
-    if (info.size > MAX_EDITOR_TEXT_BYTES) {
-      throw editorTextTooLargeError()
-    }
-    const buffer = await fs.readFile(filePath)
-    // 读取期间文件可能增长：兜底再判一次
-    if (buffer.byteLength > MAX_EDITOR_TEXT_BYTES) {
-      throw editorTextTooLargeError()
-    }
-    // 含 NUL 字节的按二进制处理，不做文本打开
-    if (buffer.includes(0)) {
-      throw new Error('二进制文件不支持在编辑器中打开')
-    }
-    return buffer.toString('utf-8')
-  })
+  )
 
   // 文件观测：stat + 文件头 8 KB 采样；二进制文件不进编辑器，也不参与大小限制提示
   ipcMain.handle(
@@ -144,8 +154,9 @@ function registerFileSystemHandlers(): void {
         let binary = false
         if (info.size > 0) {
           const sample = Buffer.allocUnsafe(Math.min(BINARY_SAMPLE_BYTES, info.size))
-          await handle.read(sample, 0, sample.length, 0)
-          binary = sample.includes(0)
+          const { bytesRead } = await handle.read(sample, 0, sample.length, 0)
+          // 与文本流共用同一套判定：BOM 声明 UTF-16 时 NUL 不算二进制信号
+          binary = isBinarySample(sample.subarray(0, bytesRead))
         }
         return { size: info.size, binary }
       } finally {

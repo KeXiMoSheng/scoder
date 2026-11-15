@@ -1,5 +1,7 @@
 /** 文件系统域：主进程返回、渲染进程消费的条目标结构 */
 
+import type { EncodingCandidate, TextEncodingId } from './encoding'
+
 /** 目录单层条目（文件树懒加载的数据源） */
 export interface FileEntry {
   /** 条目名称（不含路径） */
@@ -24,6 +26,10 @@ export interface TextStreamOpenResult {
   streamId: string
   /** 打开时观测到的文件字节数（用于进度展示） */
   size: number
+  /** 本次读取使用的编码；编辑器记录它，保存时按同一编码写回 */
+  encoding: TextEncodingId
+  /** 自动识别的候选编码（含实际采用的第一条）：状态栏菜单据此标注最可能的编码 */
+  candidates: EncodingCandidate[]
 }
 
 /** 一次文本流拉取的结果 */

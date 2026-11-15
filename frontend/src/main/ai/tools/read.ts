@@ -15,7 +15,7 @@ export function createReadTool(): ToolDefinition {
   return {
     name: 'read',
     description:
-      '读取工作区内的 UTF-8 文本文件，返回带行号的内容。大文件用 offset 与 limit 分页续读；单次输出受字节上限约束，命中上限时按 footer 继续读。',
+      '读取工作区内的文本文件（自动识别 UTF-8 / UTF-16 / GBK 等编码），返回带行号的内容。大文件用 offset 与 limit 分页续读；单次输出受字节上限约束，命中上限时按 footer 继续读。',
     parameters: {
       type: 'object',
       properties: {

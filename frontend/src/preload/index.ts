@@ -6,6 +6,7 @@ import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
+import type { TextEncodingId } from '../shared/files/encoding'
 import { FILE_SETTINGS_CHANNELS } from '../shared/files/settings'
 import type { FileSettings } from '../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
@@ -46,17 +47,19 @@ const ai: AiAPI = {
 const api: ScoderAPI = {
   openProjectDirectory: () => ipcRenderer.invoke(FILES_CHANNELS.openProjectDirectory),
   readDirectory: (dirPath: string) => ipcRenderer.invoke(FILES_CHANNELS.readDirectory, dirPath),
-  readFile: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFile, filePath),
+  readFile: (filePath: string, encoding?: TextEncodingId) =>
+    ipcRenderer.invoke(FILES_CHANNELS.readFile, filePath, encoding),
   readFileBytes: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.readFileBytes, filePath),
-  // 文本流：主进程负责句柄与跨块 UTF-8 解码，渲染进程逐块灌入 model
-  openTextStream: (filePath: string) => ipcRenderer.invoke(FILES_CHANNELS.openTextStream, filePath),
+  // 文本流：主进程负责句柄、编码探测与跨块解码，渲染进程逐块灌入 model
+  openTextStream: (filePath: string, encoding?: TextEncodingId) =>
+    ipcRenderer.invoke(FILES_CHANNELS.openTextStream, filePath, encoding),
   readTextStreamChunk: (streamId: string) =>
     ipcRenderer.invoke(FILES_CHANNELS.readTextStreamChunk, streamId),
   closeTextStream: (streamId: string) =>
     ipcRenderer.invoke(FILES_CHANNELS.closeTextStream, streamId),
-  // 写入流：大文件分块保存，主进程负责临时文件与原子替换
-  openWriteStream: (filePath: string) =>
-    ipcRenderer.invoke(FILES_CHANNELS.openWriteStream, filePath),
+  // 写入流：大文件分块保存，主进程按当前编码写入临时文件并原子替换
+  openWriteStream: (filePath: string, encoding?: TextEncodingId) =>
+    ipcRenderer.invoke(FILES_CHANNELS.openWriteStream, filePath, encoding),
   appendWriteChunk: (writeId: string, text: string) =>
     ipcRenderer.invoke(FILES_CHANNELS.appendWriteChunk, writeId, text),
   finishWriteStream: (writeId: string) =>

@@ -1,25 +1,36 @@
 import { promises as fs } from 'fs'
 import type { FileHandle } from 'fs/promises'
+import type { EncodingCandidate, TextEncodingId } from '../../shared/files/encoding'
 import type { TextStreamChunk } from '../../shared/files/types'
+import {
+  BINARY_SAMPLE_BYTES,
+  createTextDecoder,
+  decodeText,
+  detectEncodingCandidates,
+  detectTextEncoding,
+  isBinarySample,
+  readHeadSample,
+  type TextDecoderStream
+} from './encoding'
 
 /**
  * 主进程内的文本读取流：句柄与增量解码器留在主进程，按块拉取。
  * 编辑器 IPC 与 AI read 工具共用这一实现；本模块不依赖 ipcMain，
  * 因此可以在主进程内部直接使用，不经过渲染进程往返。
+ *
+ * 编码语义由 encoding.ts 统一提供：打开时按 BOM / jschardet 自动识别，
+ * 也可由调用方指定（编辑器手动切换编码）；BOM 作为编码标记剥离，不进入文本。
  */
 
 /** 单块读取字节数：16 MB 一次，1 GB 文件约 64 块，减少 IPC 与行扫描次数 */
 export const TEXT_CHUNK_BYTES = 16 * 1024 * 1024
 
-/** 二进制判定只采样文件头 8 KB 中的 NUL（与上游 harness 一致） */
-export const BINARY_SAMPLE_BYTES = 8192
-
 /** 文本流失败原因：调用方负责把原因转成自己的提示文案 */
 export class TextStreamError extends Error {
-  readonly reason: 'binary' | 'not-utf8' | 'not-file'
+  readonly reason: 'binary' | 'not-file'
   readonly path: string
 
-  constructor(reason: 'binary' | 'not-utf8' | 'not-file', path: string) {
+  constructor(reason: 'binary' | 'not-file', path: string) {
     super(`${reason}: ${path}`)
     this.name = 'TextStreamError'
     this.reason = reason
@@ -29,31 +40,49 @@ export class TextStreamError extends Error {
 
 /** 打开流时的编码选项 */
 export interface TextStreamOptions {
-  /**
-   * 是否保留 BOM 字符。
-   * 编辑器需要原样保留（保存时不能丢 BOM）；AI 读取按上游 harness 语义剥离。
-   */
-  preserveBom?: boolean
+  /** 调用方指定的编码（手动切换编码时使用）；缺省时按文件头自动识别 */
+  encoding?: TextEncodingId
 }
 
 /**
  * 打开一个文本读取流：只取句柄与大小，内容按块拉取。
- * 编码失败（非法 UTF-8）与二进制判定都在读块时抛 {@link TextStreamError}。
+ * 二进制与非普通文件在读块 / 打开时抛 {@link TextStreamError}。
  */
 export class TextFileStream {
   readonly path: string
   readonly size: number
+  /** 本次读取使用的编码：自动识别或调用方指定 */
+  readonly encoding: TextEncodingId
+  /** 自动识别的候选编码（第一条为实际采用）：状态栏菜单据此标注最可能的编码 */
+  readonly candidates: EncodingCandidate[]
+  /**
+   * 是否为调用方手动指定的编码。
+   * 手动指定时不再用 NUL 采样判二进制：用户明确要求按该编码解释，
+   * 即使解出乱码也由用户自己切换回来（与 VS Code 的 Reopen with Encoding 一致）。
+   */
+  private readonly manualEncoding: boolean
   private readonly handle: FileHandle
-  private readonly decoder: TextDecoder
+  private readonly decoder: TextDecoderStream
   private position = 0
   private sampledBytes = 0
   private closed = false
 
-  private constructor(handle: FileHandle, decoder: TextDecoder, path: string, size: number) {
+  private constructor(
+    handle: FileHandle,
+    decoder: TextDecoderStream,
+    path: string,
+    size: number,
+    encoding: TextEncodingId,
+    candidates: EncodingCandidate[],
+    manualEncoding: boolean
+  ) {
     this.handle = handle
     this.decoder = decoder
     this.path = path
     this.size = size
+    this.encoding = encoding
+    this.candidates = candidates
+    this.manualEncoding = manualEncoding
   }
 
   /**
@@ -68,11 +97,18 @@ export class TextFileStream {
       if (!info.isFile()) {
         throw new TextStreamError('not-file', path)
       }
-      const decoder = new TextDecoder('utf-8', {
-        fatal: true,
-        ignoreBOM: options.preserveBom === true
-      })
-      return new TextFileStream(handle, decoder, path, info.size)
+      // 采样只读一次：编码识别与候选标注共用同一段文件头字节
+      const sample = await readHeadSample(handle, info.size)
+      const encoding = options.encoding ?? detectTextEncoding(sample)
+      return new TextFileStream(
+        handle,
+        createTextDecoder(encoding),
+        path,
+        info.size,
+        encoding,
+        detectEncodingCandidates(sample),
+        options.encoding !== undefined
+      )
     } catch (error) {
       await handle.close().catch(() => undefined)
       throw error
@@ -140,28 +176,27 @@ export class TextFileStream {
     await this.handle.close().catch(() => undefined)
   }
 
-  /** 二进制采样：只看文件头 8 KB 内的 NUL，命中即拒绝 */
+  /**
+   * 二进制采样：只看文件头 8 KB 内的 NUL，命中即拒绝。
+   * 手动指定编码时不参与判定；自动识别时 UTF-16 的 NUL 是内容字节，同样跳过。
+   */
   private assertTextSample(chunk: Buffer): void {
-    if (this.sampledBytes >= BINARY_SAMPLE_BYTES) {
+    if (this.manualEncoding || this.sampledBytes >= BINARY_SAMPLE_BYTES) {
       return
     }
     const sample = chunk.subarray(
       0,
       Math.min(chunk.length, BINARY_SAMPLE_BYTES - this.sampledBytes)
     )
-    if (sample.includes(0)) {
+    if (isBinarySample(sample, this.encoding)) {
       throw new TextStreamError('binary', this.path)
     }
     this.sampledBytes += sample.length
   }
 
-  /** 增量解码一块字节；非法 UTF-8 由 fatal 解码器直接抛出 */
+  /** 增量解码一块字节；跨块不完整的序列由解码器缓存 */
   private decode(chunk: Buffer): string {
-    try {
-      return this.decoder.decode(chunk, { stream: true })
-    } catch {
-      throw new TextStreamError('not-utf8', this.path)
-    }
+    return this.decoder.write(chunk)
   }
 
   /** 收尾时把解码器里残留的不完整序列刷出来 */
@@ -169,11 +204,7 @@ export class TextFileStream {
     if (this.closed) {
       return ''
     }
-    try {
-      return this.decoder.decode()
-    } catch {
-      throw new TextStreamError('not-utf8', this.path)
-    }
+    return this.decoder.end()
   }
 }
 
@@ -182,16 +213,18 @@ export class TextFileStream {
  * 保证小文件整读和大文件流式读对同一份内容给出一样的结果。
  * @param buffer 文件原始字节
  * @param path 仅用于错误信息的展示路径
+ * @param encoding 调用方指定的编码；缺省时自动识别
  */
-export function decodeWholeText(buffer: Uint8Array, path: string): string {
+export function decodeWholeText(
+  buffer: Uint8Array,
+  path: string,
+  encoding?: TextEncodingId
+): string {
   const sample = buffer.subarray(0, Math.min(buffer.length, BINARY_SAMPLE_BYTES))
-  if (sample.includes(0)) {
+  const effective = encoding ?? detectTextEncoding(sample)
+  // 手动指定编码时尊重用户选择，不再用 NUL 采样拒绝
+  if (encoding === undefined && isBinarySample(sample, effective)) {
     throw new TextStreamError('binary', path)
   }
-  try {
-    // 默认不 ignoreBOM：BOM 作为编码标记剥离，不进入文本
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
-  } catch {
-    throw new TextStreamError('not-utf8', path)
-  }
+  return decodeText(buffer, effective)
 }

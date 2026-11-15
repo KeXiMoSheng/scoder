@@ -34,7 +34,7 @@ export function createWriteTool(): ToolDefinition {
   return {
     name: 'write',
     description:
-      '创建或整体覆盖工作区内的 UTF-8 文本文件。覆盖已有文件前必须先 read；只改局部内容请用 edit。',
+      '创建或整体覆盖工作区内的文本文件（沿用目标文件已有编码，新文件为 UTF-8）。覆盖已有文件前必须先 read；只改局部内容请用 edit。',
     parameters: {
       type: 'object',
       properties: {

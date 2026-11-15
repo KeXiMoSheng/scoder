@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import type { BigIntStats } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'path'
 import { TextFileStream, TextStreamError, decodeWholeText } from '../../files/textStream'
+import { bomBytesFor, detectFileEncoding, encodeText } from '../../files/encoding'
 import {
   READ_MAX_BYTES,
   READ_MAX_LINE_LENGTH,
@@ -314,7 +315,7 @@ export class LocalFileSystem implements FileSystemService {
       }
       const original = await readTextWithin(target, MAX_READ_BYTES)
       if (original === null) {
-        throw new Error(`内容不是 UTF-8 文本或超过 2 MB，无法编辑：${target.displayPath}`)
+        throw new Error(`内容不是可识别的文本或超过 2 MB，无法编辑：${target.displayPath}`)
       }
       // 匹配与 diff 统一在 LF 基准上做，写回时再还原原文的行尾风格
       const lineEnding = original.includes('\r\n') ? '\r\n' : '\n'
@@ -404,14 +405,9 @@ async function* streamWholeText(target: FsTarget): AsyncGenerator<string> {
 /** 把读取失败转成给模型看的可读原因 */
 function readError(error: unknown, displayPath: string): Error {
   if (error instanceof TextStreamError) {
-    switch (error.reason) {
-      case 'binary':
-        return new Error(`二进制文件不支持读取：${displayPath}`)
-      case 'not-utf8':
-        return new Error(`文件不是 UTF-8 文本，无法读取：${displayPath}`)
-      default:
-        return new Error(`不是普通文件：${displayPath}`)
-    }
+    return error.reason === 'binary'
+      ? new Error(`二进制文件不支持读取：${displayPath}`)
+      : new Error(`不是普通文件：${displayPath}`)
   }
   return error instanceof Error ? error : new Error(`读取文件失败：${displayPath}`)
 }
@@ -424,8 +420,11 @@ function readError(error: unknown, displayPath: string): Error {
 async function readTextWithin(target: FsTarget, maxBytes: number): Promise<string | null> {
   try {
     const buffer = await fs.readFile(target.key)
-    if (buffer.byteLength > maxBytes || buffer.includes(0)) return null
-    return buffer.toString('utf8')
+    if (buffer.byteLength > maxBytes) {
+      return null
+    }
+    // 与 read 工具共用编码识别：非 UTF-8 文本也能作为编辑与 diff 的基准
+    return decodeWholeText(buffer, target.displayPath)
   } catch {
     return null
   }
@@ -452,7 +451,11 @@ async function writeTextAtomic(
   try {
     const handle = await fs.open(tempPath, 'wx', 0o600)
     try {
-      await handle.writeFile(content, 'utf8')
+      // 按目标文件原编码写回（新建文件按 UTF-8）：AI 编辑不会把遗留编码改成 UTF-8
+      const encoding = await detectFileEncoding(target.key)
+      const bom = bomBytesFor(encoding)
+      const body = encodeText(content, encoding)
+      await handle.writeFile(bom === null ? body : Buffer.concat([bom, body]))
       // 先落盘再发布：否则断电后 rename 成功但内容还在页缓存里
       await handle.sync()
       // 新建文件继承临时文件的 0600，需要还给目标原本的权限

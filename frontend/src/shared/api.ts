@@ -14,6 +14,7 @@ import type {
   TextStreamOpenResult,
   TextWriteOpenResult
 } from './files/types'
+import type { TextEncodingId } from './files/encoding'
 import type { FileSettings } from './files/settings'
 import type {
   ModelConfig,
@@ -30,17 +31,17 @@ export interface ScoderAPI {
   openProjectDirectory: () => Promise<string | null>
   /** 读取目录单层内容（目录在前、名称升序），供文件树懒加载 */
   readDirectory: (dirPath: string) => Promise<FileEntry[]>
-  /** 读取文本文件内容；二进制文件会抛错 */
-  readFile: (filePath: string) => Promise<string>
+  /** 读取文本文件内容；二进制文件会抛错。encoding 缺省时自动识别 */
+  readFile: (filePath: string, encoding?: TextEncodingId) => Promise<string>
   /** 打开文本读取流：编辑器按块拉取并增量灌入 model，不受单字符串长度上限约束 */
-  openTextStream: (filePath: string) => Promise<TextStreamOpenResult>
+  openTextStream: (filePath: string, encoding?: TextEncodingId) => Promise<TextStreamOpenResult>
   /** 拉取下一块文本；逐个 await 形成天然背压 */
   readTextStreamChunk: (streamId: string) => Promise<TextStreamChunk>
   /** 释放尚未读完的流（切换文件、出错时调用）；已读完的会话无需释放 */
   closeTextStream: (streamId: string) => Promise<void>
-  /** 打开写入流：在同目录建临时文件，供大文件分块保存 */
-  openWriteStream: (filePath: string) => Promise<TextWriteOpenResult>
-  /** 向写入流追加一块文本（按 UTF-8 写入） */
+  /** 打开写入流：在同目录建临时文件，按 encoding 编码后分块保存 */
+  openWriteStream: (filePath: string, encoding?: TextEncodingId) => Promise<TextWriteOpenResult>
+  /** 向写入流追加一块文本（按打开时记录的编码写入） */
   appendWriteChunk: (writeId: string, text: string) => Promise<void>
   /** 完成写入：fsync 后原子替换目标文件（保留原权限） */
   finishWriteStream: (writeId: string) => Promise<void>
