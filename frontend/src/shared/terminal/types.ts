@@ -15,3 +15,17 @@ export interface TerminalExitEvent {
   /** 进程退出码 */
   exitCode: number
 }
+
+/** 终端会话实际启动的 shell：页签据此显示名称与版本 */
+export interface TerminalShellInfo {
+  /** 可执行文件名（pwsh / powershell / bash） */
+  name: string
+  /** 版本号（如 7.4.6）；没探测到时为 null，页签只显示名称 */
+  version: string | null
+}
+
+/** createTerminal 的回执：会话 id 与实际启动的 shell */
+export interface TerminalCreateResult {
+  id: number
+  shell: TerminalShellInfo
+}

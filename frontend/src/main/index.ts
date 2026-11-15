@@ -8,6 +8,7 @@ import {
   type MessageBoxOptions,
   type OpenDialogOptions
 } from 'electron'
+import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import type { FileHandle } from 'fs/promises'
 import { homedir } from 'os'
@@ -25,11 +26,17 @@ import { isTextEncodingId } from '../shared/files/encoding'
 import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
 import { registerModelImportHandlers } from './model-import'
+import { detectPowerShell } from './powershell'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
 import type { FileEntry, FileStat, SearchResult } from '../shared/files/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
-import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
+import type {
+  TerminalCreateResult,
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalShellInfo
+} from '../shared/terminal/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
 
 // GB 级文本 + Monaco 的行模型与全文索引需要更大的老生代空间：
@@ -356,12 +363,59 @@ interface TerminalSession {
 const terminalSessions = new Map<number, TerminalSession>()
 let nextTerminalId = 1
 
-/** 按平台选择交互式 shell */
+/** 按平台选择交互式 shell：Windows 上装了 PowerShell 7 就用 pwsh，否则回退 5.1 */
 function resolveShell(): { file: string; args: string[] } {
   if (process.platform === 'win32') {
-    return { file: 'powershell.exe', args: ['-NoLogo'] }
+    return { file: detectPowerShell(), args: ['-NoLogo'] }
   }
   return { file: process.env.SHELL || '/bin/bash', args: [] }
+}
+
+/** shell 版本探测结果按可执行文件缓存：同一路径只跑一次进程 */
+const shellVersionCache = new Map<string, Promise<string | null>>()
+
+/**
+ * 取 shell 的名称与版本，供终端页签显示。
+ * 探测失败只影响页签文案，不影响终端本身。
+ */
+async function describeShell(file: string): Promise<TerminalShellInfo> {
+  const name = basename(file).replace(/\.exe$/i, '')
+  if (process.platform !== 'win32') {
+    // 非 Windows 的 shell 版本对用户没有意义，页签只显示名称
+    return { name, version: null }
+  }
+  return { name, version: await powerShellVersion(file) }
+}
+
+/** 跑一次 `$PSVersionTable` 取版本；并发调用共享同一个 Promise */
+function powerShellVersion(file: string): Promise<string | null> {
+  const cached = shellVersionCache.get(file)
+  if (cached !== undefined) {
+    return cached
+  }
+  const pending = new Promise<string | null>((resolve) => {
+    execFile(
+      file,
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '$PSVersionTable.PSVersion.ToString()'
+      ],
+      { timeout: 5000, windowsHide: true },
+      (error, stdout) => {
+        if (error) {
+          resolve(null)
+          return
+        }
+        const version = stdout.trim().split(/\r?\n/).pop()?.trim() ?? ''
+        resolve(version.length > 0 ? version : null)
+      }
+    )
+  })
+  shellVersionCache.set(file, pending)
+  return pending
 }
 
 /** 结束某个窗口创建的全部终端会话 */
@@ -381,7 +435,12 @@ function registerTerminalHandlers(): void {
 
   ipcMain.handle(
     TERMINAL_CHANNELS.create,
-    (event, cwd: string | null, cols: number, rows: number): number => {
+    async (
+      event,
+      cwd: string | null,
+      cols: number,
+      rows: number
+    ): Promise<TerminalCreateResult> => {
       if (
         (cwd !== null && typeof cwd !== 'string') ||
         typeof cols !== 'number' ||
@@ -423,7 +482,8 @@ function registerTerminalHandlers(): void {
         const payload: TerminalExitEvent = { id, exitCode }
         sender.send(TERMINAL_CHANNELS.exit, payload)
       })
-      return id
+      // 版本探测放在 spawn 之后：终端先起来，页签文字随后补上
+      return { id, shell: await describeShell(file) }
     }
   )
 

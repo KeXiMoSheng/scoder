@@ -24,7 +24,7 @@ import type {
   ModelImportResult,
   RemoteModelListRequest
 } from './model-config/types'
-import type { TerminalDataEvent, TerminalExitEvent } from './terminal/types'
+import type { TerminalCreateResult, TerminalDataEvent, TerminalExitEvent } from './terminal/types'
 import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
 
 /** 经 preload contextBridge 暴露给渲染进程的能力（白名单方法） */
@@ -85,8 +85,8 @@ export interface ScoderAPI {
   setWatchedFiles: (paths: string[]) => Promise<void>
   /** 订阅打开文件的磁盘变化事件（自身保存也会触发，需用 stat 基线排除）；返回取消订阅函数 */
   onFilesChanged: (callback: (event: FilesChangedEvent) => void) => () => void
-  /** 创建终端会话（在 cwd 中启动系统 shell，cwd 为 null 时用用户主目录），返回会话 id */
-  createTerminal: (cwd: string | null, cols: number, rows: number) => Promise<number>
+  /** 创建终端会话（在 cwd 中启动系统 shell，cwd 为 null 时用用户主目录），返回会话 id 与实际启动的 shell */
+  createTerminal: (cwd: string | null, cols: number, rows: number) => Promise<TerminalCreateResult>
   /** 向终端会话写入用户输入（fire-and-forget，不等待回执） */
   writeTerminal: (id: number, data: string) => void
   /** 调整终端会话的列数/行数（pty 会向 shell 发送窗口变化信号） */

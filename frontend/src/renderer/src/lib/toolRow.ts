@@ -96,6 +96,8 @@ export interface ToolRowModel {
   filePath?: string
   /** 文件改动的 +/- 统计（write/edit 的结果卡片会带 change） */
   diffStat?: ToolFileChange
+  /** bash 的退出码：0 保持安静，非 0 标在行尾（不改变行状态） */
+  exitCode?: number
   /** 展开体类型；`none` 表示这一行没有可展开内容 */
   bodyKind: ToolRowBodyKind
   /** 结构化正文：read 的行号窗口、list 的条目、glob/grep 的匹配 */
@@ -148,6 +150,7 @@ export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRow
     state: message.status,
     ...(filePath !== undefined ? { filePath } : {}),
     ...(card?.change !== undefined ? { diffStat: card.change } : {}),
+    ...(card?.exitCode !== undefined ? { exitCode: card.exitCode } : {}),
     bodyKind,
     ...(textBody !== undefined ? { textBody } : {}),
     ...(input !== undefined ? { input } : {}),

@@ -95,6 +95,11 @@ export interface ToolCardView {
   hunks?: ToolHunk[]
   /** kind 为 todo 时的清单快照：整表替换后模型认为的最新计划 */
   todos?: TodoItem[]
+  /**
+   * bash 的退出码。非零退出码是「报告」而不是工具失败：
+   * 行状态仍然是 ok，退出码单独标在行尾，供人判断这条命令是否真跑成功。
+   */
+  exitCode?: number
   /** 本次调用对这个文件的影响（增删行数与 A/M），供改动清单汇总 */
   change?: ToolFileChange
 }

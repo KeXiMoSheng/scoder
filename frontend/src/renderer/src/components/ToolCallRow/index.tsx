@@ -152,6 +152,15 @@ export default function ToolCallRow({
             <span className="text-danger">-{model.diffStat.removed}</span>
           </span>
         ) : null}
+        {/* 非零退出码不是行失败：命令可能已经产出可用结果，只在行尾安静地标出来 */}
+        {model.exitCode !== undefined && model.exitCode !== 0 ? (
+          <span
+            className="ml-1.5 shrink-0 rounded-sm bg-hover px-1 font-mono text-[10px] leading-4 text-dim"
+            title={`命令退出码 ${model.exitCode}`}
+          >
+            exit {model.exitCode}
+          </span>
+        ) : null}
         {statusLabel !== undefined ? (
           <span className={cn('ml-1.5 shrink-0 text-[11px]', failed ? 'text-danger' : 'text-dim')}>
             {statusLabel}

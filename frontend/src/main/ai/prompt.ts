@@ -37,7 +37,7 @@ function roleSection(cwd: string): string {
 function environmentSection(platform: NodeJS.Platform): string {
   if (platform === 'win32') {
     return (
-      '运行环境：Windows，bash 工具由 PowerShell（powershell.exe 5.1）执行，命令按 PowerShell 语法书写：' +
+      '运行环境：Windows，bash 工具由 PowerShell 执行（系统装了 PowerShell 7 就用 pwsh，否则用自带的 5.1），命令按 PowerShell 语法书写：' +
       '串联用 ;（不支持 &&），丢弃错误输出用 2>$null，环境变量用 $env:NAME，路径用反斜杠；' +
       'curl 需写 curl.exe（5.1 里 curl 是 Invoke-WebRequest 的别名）。'
     )
@@ -76,7 +76,7 @@ function commandSection(): string {
   return [
     '执行命令的规则：',
     '1. 需要构建、测试、安装依赖、查看 git 状态或验证网络连通性（ping/curl）时用 bash；读、找、改文件仍用文件工具，不要用 cat/ls/sed 代替。',
-    '2. 每次执行都看退出码：非 0 时先读 stderr，再决定重试、换方法还是把关键输出告诉用户。',
+    '2. 每条结果末尾都有 [exit code: N]。非 0 时先看 stdout 和 stderr：可能只是脚本里最后一条命令失败、前面的输出已经够用，不要直接重跑；确认没拿到结果再换方法。',
     '3. 命令默认在工作区根执行；需要子目录时用 workdir 参数，不要用 cd。',
     '4. 不执行破坏性命令（rm -rf、强制推送、批量覆盖），除非用户明确要求。'
   ].join('\n')

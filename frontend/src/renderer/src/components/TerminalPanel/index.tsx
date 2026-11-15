@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { X } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
+import type { TerminalShellInfo } from '@shared/terminal/types'
 import { extractErrorMessage } from '../../lib/errorMessage'
 import type { TerminalPanelHandle, TerminalPanelProps } from './types'
 
@@ -50,6 +51,17 @@ function createColorStripper(): (chunk: string) => string {
 /** 按运行平台返回终端标签名：Windows 用 powershell，其余（Linux/macOS）用 bash */
 function resolveTerminalTitle(): string {
   return window.electron.process.platform === 'win32' ? 'powershell' : 'bash'
+}
+
+/**
+ * 回执后的页签标题：PowerShell 显示成 ps + 版本号（如 ps7.4.6），其它 shell 用名称。
+ * PowerShell 5.1 的版本号很长（5.1.19041.4291），只取前三段。
+ */
+function terminalTitle(shell: TerminalShellInfo): string {
+  if (shell.version === null || (shell.name !== 'pwsh' && shell.name !== 'powershell')) {
+    return shell.name
+  }
+  return `ps${shell.version.split('.').slice(0, 3).join('.')}`
 }
 
 /** 单个终端会话：一个 xterm 实例 + 其 pty 进程（pty id 在创建回执后就位） */
@@ -242,8 +254,11 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
 
     window.api
       .createTerminal(cwdRef.current, term.cols, term.rows)
-      .then((id) => {
+      .then(({ id, shell }) => {
         session.ptyId = id
+        // 版本探测在主进程完成：页签先用占位名，拿到回执后换成 ps+版本号
+        const title = terminalTitle(shell)
+        setTabs((prev) => prev.map((tab) => (tab.uid === session.uid ? { ...tab, title } : tab)))
         // 回执期间容器可能已重新适配（如收起状态下新建、面板随即展开）：
         // 按当前行列补一次尺寸同步，避免 pty 停留在创建时的旧尺寸
         window.api.resizeTerminal(id, term.cols, term.rows)

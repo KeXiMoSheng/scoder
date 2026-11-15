@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import type { JsonValue } from '../../../shared/ai/types'
+import { detectPowerShell } from '../../powershell'
 import type { ToolDefinition } from './registry'
 import { optionalInteger, optionalString, requireString } from './registry'
 
@@ -84,10 +86,8 @@ export function createBashTool(): ToolDefinition {
           `命令超时（超过 ${timeoutMs}ms）：${firstLine(command)}\n\n${formatOutput(run)}`
         )
       }
-      if (run.code !== 0) {
-        const detail = run.code === null ? `信号 ${run.signal ?? 'unknown'}` : `退出码 ${run.code}`
-        throw new Error(`命令失败（${detail}）：${firstLine(command)}\n\n${formatOutput(run)}`)
-      }
+      // 非零退出码是「报告」而不是「工具失败」：一个脚本里某一步失败时，
+      // 前面的输出往往仍然有用，交给模型看 stdout 与末尾的 [exit code: N] 判断。
       return {
         text: formatOutput(run),
         meta: {
@@ -106,10 +106,12 @@ export function createBashTool(): ToolDefinition {
     },
     presentResult(args, outcome) {
       const command = optionalStringValue(args, 'command')
+      const exitCode = readExitCode(outcome.meta)
       return {
         kind: 'generic',
         title: command === undefined ? '执行命令' : firstLine(command),
-        body: outcome.text
+        body: outcome.text,
+        ...(exitCode === undefined ? {} : { exitCode })
       }
     }
   }
@@ -233,13 +235,17 @@ function resolveShell(command: string): { file: string; args: string[] } {
     return { file: '/bin/bash', args: ['-c', command] }
   }
   const script = [
-    '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+    // 模块首次分析的进度通知在管道下无处渲染，只会以 CLIXML 写进 stderr
+    "$ProgressPreference = 'SilentlyContinue'",
+    // 两个编码变量都要设：Console 管 cmdlet 输出，OutputEncoding 管管道与原生命令的交换
+    '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+    '$OutputEncoding = [Text.UTF8Encoding]::new($false)',
     '$global:LASTEXITCODE = 0',
     command,
     'exit $global:LASTEXITCODE'
   ].join('\n')
   return {
-    file: 'powershell.exe',
+    file: detectPowerShell(),
     args: [
       '-NoLogo',
       '-NoProfile',
@@ -269,7 +275,8 @@ function formatOutput(run: ShellRun): string {
     parts.push(`…(输出过长，仅保留末尾 ${MAX_STREAM_CHARS} 字符)`)
   }
   const stdout = stripAnsi(run.stdout).trimEnd()
-  const stderr = stripAnsi(run.stderr).trimEnd()
+  // CLIXML 只来自 Windows 的 PowerShell；bash 的 stderr 原样保留，免得误伤正文
+  const stderr = (IS_WINDOWS ? stripClixml(stripAnsi(run.stderr)) : stripAnsi(run.stderr)).trimEnd()
   if (stdout.length > 0) {
     parts.push(`stdout:\n${stdout}`)
   }
@@ -290,6 +297,64 @@ function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
 }
 
+/** PowerShell 的 CLIXML 噪音：stderr 被重定向时 progress/error 流会被序列化 */
+const CLIXML_MARKER = '#< CLIXML'
+/** progress 记录整段丢弃：模块首次分析、Write-Progress 在管道下都没有展示价值 */
+const CLIXML_PROGRESS = /<Obj S="progress"[\s\S]*?<\/Obj>/g
+/** error 记录里的正文：剥掉 XML 外壳后模型才读得懂 */
+const CLIXML_ERROR_TEXT = /<S S="Error">([\s\S]*?)<\/S>/g
+const CLIXML_OBJS_TAG = /<\/?Objs\b[^>]*>/g
+
+/**
+ * 剥离 PowerShell 的 CLIXML stderr。
+ *
+ * PowerShell 5.1 在 stderr 不是控制台时会把 progress/error 流序列化成
+ * `#< CLIXML` + `<Objs>` 的 XML（每个新进程都带一条「正在准备首次使用模块」），
+ * 直接回灌等于把几十行 XML 当成命令输出。这里只保留 error 记录的文本；
+ * 认不出结构时原样返回，避免吞掉真正的报错。
+ */
+function stripClixml(text: string): string {
+  if (!text.includes(CLIXML_MARKER)) {
+    return text
+  }
+  const start = text.indexOf('<Objs')
+  const end = text.lastIndexOf('</Objs>')
+  if (start < 0 || end < start) {
+    return text
+  }
+  // XML 之外是 shell 直接写进 stderr 的内容，原样保留
+  const outside = `${text.slice(0, start)}\n${text.slice(end + '</Objs>'.length)}`
+    .replace(CLIXML_MARKER, '')
+    .trim()
+  const body = text.slice(start, end + '</Objs>'.length).replace(CLIXML_PROGRESS, '')
+  const messages = Array.from(body.matchAll(CLIXML_ERROR_TEXT), (match) =>
+    // 只去尾部的换行，保留 `+ CategoryInfo` 这类行的缩进
+    decodeClixmlText(match[1]).trimEnd()
+  ).filter((message) => message.trim().length > 0)
+  let inside = messages.join('\n')
+  if (inside.length === 0) {
+    // 没有 error 记录就只剩空壳，丢掉；还有别的记录则保守保留原文
+    inside = body.replace(CLIXML_OBJS_TAG, '').trim().length > 0 ? body : ''
+  }
+  return [inside, outside]
+    .filter((part) => part.length > 0)
+    .join('\n')
+    .trim()
+}
+
+/** CLIXML 文本节点：控制字符被写成 _x000D_ 形式，XML 实体也要还原 */
+function decodeClixmlText(value: string): string {
+  return value
+    .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16))
+    )
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
 /** 中止原因：优先复用 signal 自带的原因 */
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new Error('用户中止了这一轮对话')
@@ -305,4 +370,13 @@ function firstLine(text: string): string {
 function optionalStringValue(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key]
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+/** 从工具 meta 里取退出码：只有数字才认，卡片据此显示 exit N */
+function readExitCode(meta: JsonValue | undefined): number | undefined {
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
+    return undefined
+  }
+  const value = meta.exitCode
+  return typeof value === 'number' ? value : undefined
 }
