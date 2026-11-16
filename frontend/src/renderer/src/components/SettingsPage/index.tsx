@@ -6,6 +6,7 @@ import FileSettings from '../FileSettings'
 import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
+import TerminalSettings from '../TerminalSettings'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,6 +26,7 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   import: '一键导入模型',
   ai: 'AI 助手',
   files: '编辑器',
+  terminal: '终端',
   about: '关于'
 }
 
@@ -65,6 +67,7 @@ export default function SettingsPage({
           {section === 'import' ? <ModelImport onOpenModels={openModels} /> : null}
           {section === 'ai' ? <AiSettings /> : null}
           {section === 'files' ? <FileSettings /> : null}
+          {section === 'terminal' ? <TerminalSettings /> : null}
           {section === 'about' ? <AboutSettings /> : null}
         </div>
       </SidebarInset>

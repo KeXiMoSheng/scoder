@@ -24,6 +24,7 @@ import type {
   ModelImportResult,
   RemoteModelListRequest
 } from './model-config/types'
+import type { TerminalSettings } from './terminal/settings'
 import type { TerminalCreateResult, TerminalDataEvent, TerminalExitEvent } from './terminal/types'
 import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
 
@@ -97,6 +98,16 @@ export interface ScoderAPI {
   onTerminalData: (callback: (event: TerminalDataEvent) => void) => () => void
   /** 订阅终端退出事件；返回取消订阅函数 */
   onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void
+  /** 读取终端设置（PowerShell 7 路径；空字符串表示使用系统自带 5.1） */
+  getTerminalSettings: () => Promise<TerminalSettings>
+  /** 保存终端设置；路径非法时整份拒绝并抛错 */
+  saveTerminalSettings: (input: TerminalSettings) => Promise<TerminalSettings>
+  /** 弹出系统文件选择框挑选 pwsh.exe；用户取消时返回 null */
+  browsePowerShellPath: () => Promise<string | null>
+  /** 实际启动选中路径的 PowerShell 并返回版本号；无法运行时抛错 */
+  testPowerShellPath: (filePath: string) => Promise<string>
+  /** 在系统浏览器中打开 PowerShell 官方下载页 */
+  openPowerShellDownload: () => Promise<void>
   /** 最小化当前窗口 */
   windowMinimize: () => void
   /** 在当前窗口的最大化/还原状态间切换 */

@@ -8,7 +8,6 @@ import {
   type MessageBoxOptions,
   type OpenDialogOptions
 } from 'electron'
-import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import type { FileHandle } from 'fs/promises'
 import { homedir } from 'os'
@@ -16,7 +15,7 @@ import { basename, join, sep } from 'path'
 import * as pty from 'node-pty'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { closeDatabase, initDatabase, registerDatabaseHandlers } from './db'
+import { closeDatabase, getTerminalSettings, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
 import { registerAppHandlers } from './app'
 import { disposeAllFileStreams, registerFileStreamHandlers } from './files/stream'
@@ -26,7 +25,7 @@ import { isTextEncodingId } from '../shared/files/encoding'
 import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
 import { registerModelImportHandlers } from './model-import'
-import { detectPowerShell } from './powershell'
+import { detectPowerShell, probePowerShellVersion } from './powershell'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
 import type { FileEntry, FileStat, SearchResult } from '../shared/files/types'
@@ -363,10 +362,11 @@ interface TerminalSession {
 const terminalSessions = new Map<number, TerminalSession>()
 let nextTerminalId = 1
 
-/** 按平台选择交互式 shell：Windows 上装了 PowerShell 7 就用 pwsh，否则回退 5.1 */
+/** 按平台选择交互式 shell：Windows 上配置了 PowerShell 7 就用 pwsh，否则回退 5.1 */
 function resolveShell(): { file: string; args: string[] } {
   if (process.platform === 'win32') {
-    return { file: detectPowerShell(), args: ['-NoLogo'] }
+    const { powershellPath } = getTerminalSettings()
+    return { file: detectPowerShell(powershellPath), args: ['-NoLogo'] }
   }
   return { file: process.env.SHELL || '/bin/bash', args: [] }
 }
@@ -393,27 +393,8 @@ function powerShellVersion(file: string): Promise<string | null> {
   if (cached !== undefined) {
     return cached
   }
-  const pending = new Promise<string | null>((resolve) => {
-    execFile(
-      file,
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '$PSVersionTable.PSVersion.ToString()'
-      ],
-      { timeout: 5000, windowsHide: true },
-      (error, stdout) => {
-        if (error) {
-          resolve(null)
-          return
-        }
-        const version = stdout.trim().split(/\r?\n/).pop()?.trim() ?? ''
-        resolve(version.length > 0 ? version : null)
-      }
-    )
-  })
+  // 探测失败只影响页签文案，不向调用方抛错
+  const pending = probePowerShellVersion(file).catch(() => null)
   shellVersionCache.set(file, pending)
   return pending
 }

@@ -1,13 +1,29 @@
-import { BrowserWindow, dialog, ipcMain, type MessageBoxOptions } from 'electron'
-import { promises as fs } from 'fs'
+import {
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  type MessageBoxOptions,
+  type OpenDialogOptions
+} from 'electron'
+import { existsSync, promises as fs } from 'fs'
+import { win32 } from 'path'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
 import { FILE_SETTINGS_CHANNELS, type FileSettings } from '../../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
+import {
+  POWERSHELL_DOWNLOAD_URL,
+  TERMINAL_SETTINGS_CHANNELS,
+  type TerminalSettings
+} from '../../shared/terminal/settings'
 import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
 import type { EditorTabsSnapshot, RecentProject } from '../../shared/workspace/types'
+import { probePowerShellVersion } from '../powershell'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
+import { DbError } from './errors'
 import { getFileSettings, saveFileSettings } from './file-settings'
+import { getTerminalSettings, saveTerminalSettings } from './terminal-settings'
 import {
   clearRestoreProject,
   getLastProjectPath,
@@ -71,7 +87,49 @@ export function registerDatabaseHandlers(): void {
     saveFileSettings(input)
   )
 
+  // 终端设置：PowerShell 7 路径由用户显式指定，没配置就使用系统自带的 5.1
+  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.get, (): TerminalSettings => getTerminalSettings())
+  ipcMain.handle(
+    TERMINAL_SETTINGS_CHANNELS.save,
+    (_event, input: TerminalSettings): TerminalSettings => saveTerminalSettings(input)
+  )
+
+  // 选择 pwsh.exe：只负责弹框取路径，是否保存由设置页决定
+  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.browse, async (event): Promise<string | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options: OpenDialogOptions = {
+      title: '选择 PowerShell 7（pwsh.exe）',
+      properties: ['openFile'],
+      filters: [{ name: 'PowerShell 7', extensions: ['exe'] }]
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  // 测试：实际启动一次进程并读版本号，保存前就能发现路径失效
+  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.test, (_event, filePath: string): Promise<string> => {
+    requirePowerShellPath(filePath)
+    return probePowerShellVersion(filePath.trim())
+  })
+
+  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.openDownload, async (): Promise<void> => {
+    await shell.openExternal(POWERSHELL_DOWNLOAD_URL)
+  })
+
   registerWorkspaceHandlers()
+}
+
+/** 测试前先校验路径形状与存在性，避免 execFile 只报一个 ENOENT */
+function requirePowerShellPath(filePath: string): void {
+  const trimmed = typeof filePath === 'string' ? filePath.trim() : ''
+  if (!win32.isAbsolute(trimmed) || !/\.exe$/i.test(trimmed)) {
+    throw new DbError('PowerShell 路径必须是 .exe 文件的绝对路径', 'INVALID_ARGUMENT')
+  }
+  if (!existsSync(trimmed)) {
+    throw new DbError('找不到该文件，请确认路径是否正确', 'INVALID_ARGUMENT')
+  }
 }
 
 /**

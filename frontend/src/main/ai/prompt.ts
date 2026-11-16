@@ -37,7 +37,7 @@ function roleSection(cwd: string): string {
 function environmentSection(platform: NodeJS.Platform): string {
   if (platform === 'win32') {
     return (
-      '运行环境：Windows，bash 工具由 PowerShell 执行（系统装了 PowerShell 7 就用 pwsh，否则用自带的 5.1），命令按 PowerShell 语法书写：' +
+      '运行环境：Windows，bash 工具由 PowerShell 执行（默认使用系统自带的 5.1；用户可在系统配置里指定 PowerShell 7 的路径），命令按 PowerShell 语法书写：' +
       '串联用 ;（不支持 &&），丢弃错误输出用 2>$null，环境变量用 $env:NAME，路径用反斜杠；' +
       'curl 需写 curl.exe（5.1 里 curl 是 Invoke-WebRequest 的别名）。'
     )

@@ -57,8 +57,11 @@ interface DiskFileMeta {
 /** 外部变更提示：内容被修改（带最新磁盘基线），或文件被删除/重命名（旧路径消失） */
 type ExternalNotice = ({ kind: 'modified' } & DiskFileMeta) | { kind: 'deleted' }
 
-/** 流式保存的单块字符数：snapshot 约 64 KB 一块，攒到 4M 字符再发一次 IPC */
-const SAVE_CHUNK_CHARS = 4 * 1024 * 1024
+/** 流式保存的单块字符数：snapshot 约 64 KB 一块，攒到 128M 字符再发一次 IPC */
+const SAVE_CHUNK_CHARS = 128 * 1024 * 1024
+
+/** 超过该体积才展示保存进度：小文件写入是瞬时的，避免提示闪烁 */
+const SAVE_PROGRESS_CHARS = 4 * 1024 * 1024
 
 /**
  * 大文件阈值（字符数）：超过后关闭需要扫描/索引全文的编辑器特性。
@@ -505,7 +508,7 @@ export default function CodeEditor({
       )
       let written = 0
       // 小文件写入是瞬时的：不显示进度，避免提示闪烁
-      const showProgress = total > SAVE_CHUNK_CHARS
+      const showProgress = total > SAVE_PROGRESS_CHARS
       try {
         let buffer = ''
         for (;;) {

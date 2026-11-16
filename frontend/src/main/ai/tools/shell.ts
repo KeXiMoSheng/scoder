@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import type { JsonValue } from '../../../shared/ai/types'
+import { getTerminalSettings } from '../../db'
 import { detectPowerShell } from '../../powershell'
 import type { ToolDefinition } from './registry'
 import { optionalInteger, optionalString, requireString } from './registry'
@@ -245,7 +246,8 @@ function resolveShell(command: string): { file: string; args: string[] } {
     'exit $global:LASTEXITCODE'
   ].join('\n')
   return {
-    file: detectPowerShell(),
+    // 与内置终端共用设置：没配置 PS7 路径时一律用系统自带的 5.1
+    file: detectPowerShell(getTerminalSettings().powershellPath),
     args: [
       '-NoLogo',
       '-NoProfile',

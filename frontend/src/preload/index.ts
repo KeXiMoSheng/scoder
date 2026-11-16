@@ -13,6 +13,7 @@ import type { FileSettings } from '../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
 import type { ModelConfigInput, RemoteModelListRequest } from '../shared/model-config/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
+import { TERMINAL_SETTINGS_CHANNELS, type TerminalSettings } from '../shared/terminal/settings'
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
 import { WORKSPACE_CHANNELS } from '../shared/workspace/events'
@@ -117,6 +118,14 @@ const api: ScoderAPI = {
     ipcRenderer.on(TERMINAL_CHANNELS.exit, listener)
     return () => ipcRenderer.removeListener(TERMINAL_CHANNELS.exit, listener)
   },
+  // 终端设置：PowerShell 7 路径由用户显式指定，选择/测试都由主进程完成
+  getTerminalSettings: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.get),
+  saveTerminalSettings: (input: TerminalSettings) =>
+    ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.save, input),
+  browsePowerShellPath: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.browse),
+  testPowerShellPath: (filePath: string) =>
+    ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.test, filePath),
+  openPowerShellDownload: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.openDownload),
   // 窗口控制：动作类走单向 send；最大化状态需回查与订阅，供无边框标题栏切换图标
   windowMinimize: () => ipcRenderer.send(WINDOW_CHANNELS.minimize),
   windowToggleMaximize: () => ipcRenderer.send(WINDOW_CHANNELS.toggleMaximize),

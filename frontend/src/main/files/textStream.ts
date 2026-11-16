@@ -22,8 +22,8 @@ import {
  * 也可由调用方指定（编辑器手动切换编码）；BOM 作为编码标记剥离，不进入文本。
  */
 
-/** 单块读取字节数：16 MB 一次，1 GB 文件约 64 块，减少 IPC 与行扫描次数 */
-export const TEXT_CHUNK_BYTES = 16 * 1024 * 1024
+/** 单块读取字节数：128 MB 一次，1 GB 文件约 8 块，减少 IPC 与行扫描次数 */
+export const TEXT_CHUNK_BYTES = 128 * 1024 * 1024
 
 /** 文本流失败原因：调用方负责把原因转成自己的提示文案 */
 export class TextStreamError extends Error {
