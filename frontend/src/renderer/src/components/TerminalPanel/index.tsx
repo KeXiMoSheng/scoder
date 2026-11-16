@@ -224,23 +224,34 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
       }
     })
 
-    // 复制/粘贴：有选区时 Ctrl+C 复制而非发送 SIGINT；Ctrl+V / Ctrl+Shift+V 粘贴
+    // 复制/粘贴统一用 Ctrl+Shift+C / Ctrl+Shift+V（macOS 为 Cmd+Shift+C / Cmd+Shift+V）：
+    // 单独的 Ctrl+C 交给 xterm 发送 SIGINT，Ctrl+V 交给 xterm 发送 \x16（转义下一个字符）。
+    // 自定义分支必须 preventDefault：返回 false 只让 xterm 跳过键盘处理，并不会阻止
+    // 浏览器默认动作 —— Ctrl+Shift+C 可能触发 DevTools 检查，Ctrl+Shift+V 的原生粘贴
+    // 会经 xterm 内部 paste 监听再写入一次，造成同一次粘贴被发送两遍。
+    // 粘贴交给 term.paste()，由 xterm 统一做换行归一化与 bracketed paste 包裹，
+    // 再经 onData 写入 pty
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown' || (!event.ctrlKey && !event.metaKey)) {
         return true
       }
-      if (event.code === 'KeyC') {
-        const selection = term.getSelection()
-        if (event.shiftKey || selection) {
-          void navigator.clipboard.writeText(selection)
-          return false
-        }
+      // 只接管 Ctrl/Cmd+Shift 组合，其余按键（含 Ctrl+C / Ctrl+V）保持 xterm 默认行为
+      if (!event.shiftKey || event.altKey) {
         return true
       }
+      if (event.code === 'KeyC') {
+        event.preventDefault()
+        const selection = term.getSelection()
+        if (selection) {
+          void navigator.clipboard.writeText(selection)
+        }
+        return false
+      }
       if (event.code === 'KeyV') {
+        event.preventDefault()
         void navigator.clipboard.readText().then((text) => {
-          if (text && session.ptyId !== null) {
-            window.api.writeTerminal(session.ptyId, text)
+          if (text) {
+            term.paste(text)
           }
         })
         return false
@@ -418,6 +429,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
         >
           {tabs.map((tab) => {
             const active = tab.uid === activeUid
+            // 悬停提示：保留页签标题（长标题被截断时可查看全名），并附上终端的复制/粘贴快捷键
             return (
               <div
                 key={tab.uid}
@@ -428,7 +440,7 @@ const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(functi
                     ? 'group inline-flex h-[22px] max-w-[160px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[3px] bg-base pl-2.5 pr-1 text-fg select-none hover:bg-hover'
                     : 'group inline-flex h-[22px] max-w-[160px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[3px] pl-2.5 pr-1 select-none hover:bg-hover'
                 }
-                title={tab.title}
+                title={`${tab.title}\n复制：Ctrl+Shift+C\n粘贴：Ctrl+Shift+V`}
                 onClick={() => activateSession(tab.uid)}
               >
                 <span className="truncate">{tab.title}</span>
