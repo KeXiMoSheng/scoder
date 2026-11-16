@@ -16,6 +16,7 @@ import SvgPreview from '../SvgPreview'
 import { Button } from '../ui/button'
 import type {
   CodeEditorProps,
+  EditorRevealRequest,
   FileLoadProgress,
   FileSaveProgress,
   LoadFailure,
@@ -175,6 +176,9 @@ export default function CodeEditor({
   onOpenEditorSettings,
   recheckToken,
   onEncodingChange,
+  workspaceRoot,
+  onOpenFile,
+  revealRequest,
   ref
 }: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -221,6 +225,8 @@ export default function CodeEditor({
   const checkQueuesRef = useRef<Map<string, Promise<void>>>(new Map())
   // 指向最新的检查函数，供队列与保存中重试调用（避免回调自引用）
   const checkExternalRef = useRef<(path: string) => Promise<void>>(async () => {})
+  // Markdown 路径跳转的目标行：目标文件可能还在加载，请求暂存到 model attach 后再消费
+  const pendingRevealRef = useRef<EditorRevealRequest | null>(null)
 
   /** 上报脏状态：仅在翻转时通知外部（避免每次击键都触发重渲染） */
   const reportDirty = useCallback(
@@ -263,6 +269,37 @@ export default function CodeEditor({
       model.onDidChangeContent(() => syncDirty(model))
     },
     [syncDirty]
+  )
+
+  /**
+   * 消费 Markdown 路径跳转请求：model 已挂载且路径匹配时定位并聚焦编辑器。
+   * 行号收敛到模型范围（路径里的行号可能来自旧版本文件）；
+   * endLine 存在时选中起始行行首到结束行行尾的整段范围。
+   */
+  const revealPendingLine = useCallback(
+    (editor: monaco.editor.IStandaloneCodeEditor, model: monaco.editor.ITextModel): void => {
+      const request = pendingRevealRef.current
+      if (!request || request.path !== model.uri.fsPath) {
+        return
+      }
+      pendingRevealRef.current = null
+      const lineNumber = Math.min(Math.max(1, request.line), model.getLineCount())
+      const endLineNumber =
+        request.endLine === undefined
+          ? lineNumber
+          : Math.min(Math.max(lineNumber, request.endLine), model.getLineCount())
+      if (endLineNumber > lineNumber) {
+        const endColumn = model.getLineMaxColumn(endLineNumber)
+        const range = new monaco.Range(lineNumber, 1, endLineNumber, endColumn)
+        editor.setSelection(new monaco.Selection(lineNumber, 1, endLineNumber, endColumn))
+        editor.revealRangeInCenter(range)
+      } else {
+        editor.revealLineInCenter(lineNumber)
+        editor.setPosition({ lineNumber, column: 1 })
+      }
+      editor.focus()
+    },
+    []
   )
 
   /**
@@ -729,6 +766,7 @@ export default function CodeEditor({
         })
         // 组件重挂载后监听集合是新的：按当前缓存的 model 集合重新同步一次
         syncWatchedFiles()
+        revealPendingLine(editor, cachedModel)
       }
       if (cachedModel.getValueLength() <= LARGE_FILE_CHARS) {
         attach()
@@ -828,6 +866,7 @@ export default function CodeEditor({
         })
         // 上限调大或选择继续打开后，同一路径的提示不再保留
         setOversize((previous) => (previous?.path === file.path ? null : previous))
+        revealPendingLine(editor, model)
       } catch (reason) {
         if (cancelled) {
           return
@@ -860,8 +899,23 @@ export default function CodeEditor({
     recheckToken,
     fillModelFromStream,
     enqueueExternalCheck,
-    onEncodingChange
+    onEncodingChange,
+    revealPendingLine
   ])
+
+  // Markdown 路径跳转：文件已挂载时立即定位到目标行；否则请求暂存，
+  // 由打开流程在 model attach 后调用 revealPendingLine 消费
+  useEffect(() => {
+    if (!revealRequest) {
+      return
+    }
+    pendingRevealRef.current = revealRequest
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (editor && model) {
+      revealPendingLine(editor, model)
+    }
+  }, [revealRequest, revealPendingLine])
 
   // 文档预览（Markdown / SVG）：预览文本由 useModelText 直接订阅当前激活的 model
   const isMarkdown = file !== null && isMarkdownFile(file.name)
@@ -1209,6 +1263,8 @@ export default function CodeEditor({
                 <MarkdownPreview
                   content={previewText}
                   basePath={file ? dirname(file.path) : undefined}
+                  workspaceRoot={workspaceRoot}
+                  onOpenFile={onOpenFile}
                   className="min-h-0 flex-1"
                 />
               )}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { renderMarkdown } from '../../lib/markdown'
 import { monaco } from '../../lib/monaco'
 import { getActiveThemeId } from '../../lib/theme'
+import { isAbsolutePath, joinPath, normalizePath, pathSeparator } from '../../lib/filePath'
 import { cn } from '../../lib/utils'
 import type { MarkdownPreviewProps } from './types'
 
@@ -76,6 +77,110 @@ function toggleCodeBlock(button: HTMLElement): void {
   button.title = collapsed ? '收起代码块' : '展开代码块'
 }
 
+/** 按基准目录补全相对路径并归一化 .. 段：分隔符风格跟随基准目录（Windows 下为反斜杠） */
+function resolveAgainstBase(path: string, base: string | null | undefined): string {
+  if (!base || isAbsolutePath(path)) {
+    return normalizePath(path)
+  }
+  return normalizePath(joinPath(base, path.split(/[\\/]/).join(pathSeparator(base))))
+}
+
+/** 候选路径：primary 按标记来源基准解析，fallback 为另一基准（没有第二基准时与 primary 相同） */
+interface FileTargetCandidates {
+  primary: string
+  fallback: string
+}
+
+/** 按元素上的 data 属性解析出两个候选绝对路径 */
+function fileTargetCandidates(
+  element: HTMLElement,
+  basePath?: string,
+  workspaceRoot?: string | null
+): FileTargetCandidates {
+  const raw = element.dataset.mdFile ?? ''
+  const documentBase = basePath ?? workspaceRoot
+  const workspaceBase = workspaceRoot ?? basePath
+  const preferDocument = element.dataset.mdBase === 'document'
+  return {
+    primary: resolveAgainstBase(raw, preferDocument ? documentBase : workspaceBase),
+    fallback: resolveAgainstBase(raw, preferDocument ? workspaceBase : documentBase)
+  }
+}
+
+/** 优先首选路径，不存在时尝试另一基准；两者都不存在时保留首选路径由编辑器提示失败 */
+async function statCandidates(
+  primary: string,
+  fallback: string
+): Promise<{ ok: boolean; path: string }> {
+  if (typeof window.api === 'undefined') {
+    // 非 Electron 环境（测试）没有 statFile：不限制候选
+    return { ok: true, path: primary }
+  }
+  const primaryStat = await window.api.statFile(primary).catch(() => null)
+  if (primaryStat !== null) {
+    return { ok: true, path: primary }
+  }
+  if (fallback !== primary) {
+    const fallbackStat = await window.api.statFile(fallback).catch(() => null)
+    if (fallbackStat !== null) {
+      return { ok: true, path: fallback }
+    }
+  }
+  return { ok: false, path: primary }
+}
+
+/**
+ * 把 Markdown 中的文件目标解析成打开用的绝对路径。
+ * 先按标记的来源基准解析（行内代码/裸文本 → 工作区根，链接 → 文档目录），
+ * 文件不存在时再尝试另一个基准，两者都不存在时仍返回首选路径，由编辑器提示打开失败。
+ */
+async function resolveFileTarget(
+  element: HTMLElement,
+  basePath?: string,
+  workspaceRoot?: string | null
+): Promise<string> {
+  const raw = element.dataset.mdFile ?? ''
+  if (!raw) {
+    return raw
+  }
+  const { primary, fallback } = fileTargetCandidates(element, basePath, workspaceRoot)
+  return (await statCandidates(primary, fallback)).path
+}
+
+/** 真实文件校验结果缓存：流式重渲染与主题重建时避免重复 stat */
+const FILE_TARGET_CACHE_TTL = 30_000
+/** 每批并发校验的文件数：避免一条消息里的候选路径集中打满 IPC */
+const FILE_TARGET_BATCH = 8
+
+interface FileTargetCheck {
+  ok: boolean
+  path: string
+  expiresAt: number
+}
+
+const fileTargetChecks = new Map<string, FileTargetCheck>()
+
+/**
+ * 校验 mention 候选是否对应真实文件（对应 deepseek-harness 由 owner 提供文件清单的思路：
+ * 渲染器只标记“形态像路径”，真实存在性由文件系统判定）。
+ */
+async function checkFileTarget(
+  element: HTMLElement,
+  basePath?: string,
+  workspaceRoot?: string | null
+): Promise<FileTargetCheck> {
+  const { primary, fallback } = fileTargetCandidates(element, basePath, workspaceRoot)
+  const key = `${primary}\u0000${fallback}`
+  const cached = fileTargetChecks.get(key)
+  if (cached !== undefined && cached.expiresAt > Date.now()) {
+    return cached
+  }
+  const result = await statCandidates(primary, fallback)
+  const entry: FileTargetCheck = { ...result, expiresAt: Date.now() + FILE_TARGET_CACHE_TTL }
+  fileTargetChecks.set(key, entry)
+  return entry
+}
+
 /** 订阅应用主题 id：主题切换后需要重建预览 DOM 并按新主题重新着色 */
 function useActiveThemeId(): string {
   const [themeId, setThemeId] = useState(getActiveThemeId)
@@ -94,17 +199,25 @@ function useActiveThemeId(): string {
 /**
  * Markdown 预览：markdown-it 负责把源文本渲染为 HTML，
  * 代码块再交给 Monaco 着色（复用编辑器已注册的 tokenizer，配色与编辑器一致）。
- * 渲染结果不可点击导航：外部链接交给系统浏览器，其余链接阻止默认跳转。
+ * 正文中的 Markdown 链接直接可点击；行内代码与裸文本路径先标记候选，
+ * 再用宿主真实文件校验（statFile）通过后才显示为可点击。外部链接交给系统浏览器。
  */
 export default function MarkdownPreview({
   content,
   basePath,
+  workspaceRoot,
+  onOpenFile,
   variant = 'document',
   className
 }: MarkdownPreviewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const themeId = useActiveThemeId()
-  const html = useMemo(() => renderMarkdown(content, basePath), [content, basePath])
+  // 只有提供了打开回调才把路径标记为可点击，避免无导航能力时出现误导性样式
+  const fileLinks = onOpenFile !== undefined
+  const html = useMemo(
+    () => renderMarkdown(content, basePath, { fileLinks }),
+    [content, basePath, fileLinks]
+  )
 
   // 代码块着色：colorizeElement 会就地改写 pre 的 innerHTML，
   // 因此每次都先把原文还原（StrictMode 下 effect 会重跑），并清掉上一次追加的主题类名
@@ -129,7 +242,65 @@ export default function MarkdownPreview({
     }
   }, [html, themeId])
 
-  /** 点击：代码块工具条优先（展开/收起、复制）；锚点阻止渲染进程内跳转，外部链接交给系统浏览器 */
+  // 行内代码/裸文本只是“形态像路径”的候选，用宿主真实文件校验后才显示为可点击；
+  // Markdown 链接是显式导航语义，不做存在性限制。主题切换会重建 DOM，因此依赖 themeId。
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) {
+      return
+    }
+    const mentions = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-md-file-kind="mention"]')
+    )
+    if (mentions.length === 0) {
+      return
+    }
+    let cancelled = false
+    void (async (): Promise<void> => {
+      for (let start = 0; start < mentions.length; start += FILE_TARGET_BATCH) {
+        const batch = mentions.slice(start, start + FILE_TARGET_BATCH)
+        const checks = await Promise.all(
+          batch.map((element) => checkFileTarget(element, basePath, workspaceRoot))
+        )
+        if (cancelled) {
+          return
+        }
+        checks.forEach((check, index) => {
+          const element = batch[index]
+          element.dataset.mdFileState = check.ok ? 'ok' : 'missing'
+          if (!check.ok) {
+            // 不存在的候选保持普通文本外观（没有可点击提示），也不再进入 Tab 序列
+            element.removeAttribute('role')
+            element.removeAttribute('tabindex')
+            element.removeAttribute('title')
+          }
+        })
+      }
+    })()
+    return (): void => {
+      cancelled = true
+    }
+  }, [html, themeId, basePath, workspaceRoot])
+
+  /** 打开正文中被标记的文件路径：行号（含范围）从 data 属性读取，缺省时只打开文件 */
+  const openFileTarget = (element: HTMLElement): void => {
+    // missing 候选已确认不是工作区文件，点击不再触发打开
+    if (!onOpenFile || element.dataset.mdFileState === 'missing') {
+      return
+    }
+    const parsedLine = Number.parseInt(element.dataset.mdLine ?? '', 10)
+    const line = Number.isInteger(parsedLine) && parsedLine > 0 ? parsedLine : undefined
+    const parsedEnd = Number.parseInt(element.dataset.mdEndLine ?? '', 10)
+    const endLine =
+      line !== undefined && Number.isInteger(parsedEnd) && parsedEnd > line ? parsedEnd : undefined
+    void resolveFileTarget(element, basePath, workspaceRoot).then((path) => {
+      if (path) {
+        onOpenFile(path, line, endLine)
+      }
+    })
+  }
+
+  /** 点击：代码块工具条优先（展开/收起、复制）；文件路径打开编辑器；其余锚点阻止渲染进程内跳转 */
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const target = event.target as HTMLElement
     const toggleButton = target.closest('[data-md-code-toggle]')
@@ -144,6 +315,12 @@ export default function MarkdownPreview({
       copyCodeBlock(copyButton)
       return
     }
+    const fileLink = target.closest<HTMLElement>('[data-md-file]')
+    if (fileLink) {
+      event.preventDefault()
+      openFileTarget(fileLink)
+      return
+    }
     const anchor = target.closest('a')
     if (!anchor) {
       return
@@ -156,6 +333,20 @@ export default function MarkdownPreview({
     }
   }
 
+  /** 键盘：行内代码不是原生可激活元素，补上 Enter / 空格；链接的 Enter 走原生 click */
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
+    const target = event.target as HTMLElement
+    const fileLink = target.closest<HTMLElement>('[data-md-file]')
+    if (!fileLink || fileLink.tagName === 'A') {
+      return
+    }
+    event.preventDefault()
+    openFileTarget(fileLink)
+  }
+
   return (
     <div
       ref={containerRef}
@@ -165,6 +356,7 @@ export default function MarkdownPreview({
         className
       )}
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
     >
       {/* key 随主题变化重建 DOM：着色结果依赖当前主题的 token 配色 */}
       <div

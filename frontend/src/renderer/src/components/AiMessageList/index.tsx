@@ -78,6 +78,8 @@ export default function AiMessageList({
                 key={message.id}
                 text={message.text}
                 interrupted={message.interrupted}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
               />
             )
           case 'tool':
@@ -178,14 +180,25 @@ function UserBubble({
  */
 function AssistantMessage({
   text,
-  interrupted
+  interrupted,
+  cwd,
+  onOpenFile
 }: {
   text: string
   interrupted?: boolean
+  /** 当前工作区根：正文里的相对文件路径按它解析 */
+  cwd: string | null
+  /** 点击正文中的文件路径：在编辑器中打开并定位到行（endLine 存在时选中行范围） */
+  onOpenFile: (path: string, line?: number, endLine?: number) => void
 }): React.JSX.Element {
   return (
     <div className="mb-3">
-      <MarkdownPreview content={text} variant="message" />
+      <MarkdownPreview
+        content={text}
+        variant="message"
+        workspaceRoot={cwd}
+        onOpenFile={onOpenFile}
+      />
       {interrupted ? (
         <p className="mt-1 mb-0 text-[11px] leading-[1.5] text-dim">
           已停止生成，以上是中断前的内容

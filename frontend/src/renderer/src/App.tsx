@@ -4,7 +4,11 @@ import type { AiAttachment } from '@shared/ai/types'
 import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
-import type { CodeEditorHandle, EditorEncodingState } from './components/CodeEditor/types'
+import type {
+  CodeEditorHandle,
+  EditorEncodingState,
+  EditorRevealRequest
+} from './components/CodeEditor/types'
 import EditorTabs from './components/EditorTabs'
 import FilePreview from './components/FilePreview'
 import FileTree from './components/FileTree'
@@ -19,7 +23,7 @@ import { useAiSessions } from './hooks/useAiSessions'
 import { useOpenedFiles } from './hooks/useOpenedFiles'
 import { useTheme } from './hooks/useTheme'
 import type { TextEncodingId } from '@shared/files/encoding'
-import { basename, isAbsolutePath, isAtOrUnder, joinPath } from './lib/filePath'
+import { basename, isAbsolutePath, isAtOrUnder, joinPath, normalizePath } from './lib/filePath'
 import { previewKindOf } from './lib/filePreview'
 import { cn } from './lib/utils'
 
@@ -90,6 +94,8 @@ function App(): React.JSX.Element {
   const [settingsVersion, setSettingsVersion] = useState(0)
   // 编辑器标签请求在文件树中定位的目标（路径 + 递增信号）：递增 nonce 保证同一路径重复请求也能触发
   const [revealRequest, setRevealRequest] = useState<{ path: string; nonce: number } | null>(null)
+  // Markdown 正文路径跳转：打开文件后定位到目标行（nonce 保证同一路径同一行重复点击也能生效）
+  const [editorRevealRequest, setEditorRevealRequest] = useState<EditorRevealRequest | null>(null)
   // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
@@ -251,20 +257,29 @@ function App(): React.JSX.Element {
   }, [files, activePath, projectPath])
 
   /**
-   * 打开文件页签的统一入口：文件树与 AI 附件共用。
+   * 打开文件页签的统一入口：文件树、AI 附件与 Markdown 正文路径共用。
    * 附件历史里是相对工作区根的路径，这里统一补全为绝对路径；已打开时只激活。
+   * line 存在时通知编辑器在打开完成后定位到该行；endLine 存在时选中行范围。
    */
   const openFileByPath = useCallback(
-    (path: string): void => {
+    (path: string, line?: number, endLine?: number): void => {
       let absolute = path
       if (!isAbsolutePath(path)) {
         if (projectPath === null) {
           return
         }
         const separator = projectPath.includes('\\') ? '\\' : '/'
-        absolute = joinPath(projectPath, path.split('/').join(separator))
+        absolute = normalizePath(joinPath(projectPath, path.split('/').join(separator)))
       }
       open({ path: absolute, name: basename(absolute) })
+      if (line !== undefined) {
+        setEditorRevealRequest((prev) => ({
+          path: absolute,
+          line,
+          endLine: endLine !== undefined && endLine > line ? endLine : undefined,
+          nonce: (prev?.nonce ?? 0) + 1
+        }))
+      }
     },
     [open, projectPath]
   )
@@ -670,6 +685,9 @@ function App(): React.JSX.Element {
                     onOpenEditorSettings={openEditorSettings}
                     recheckToken={settingsVersion}
                     onEncodingChange={setEncodingState}
+                    workspaceRoot={projectPath}
+                    onOpenFile={openFileByPath}
+                    revealRequest={editorRevealRequest}
                   />
                 </div>
                 {previewKind !== null && activeFile !== null ? (

@@ -323,6 +323,30 @@ body.is-resizing-row * {
   font-size: 0.92em;
 }
 
+/* 可跳转的文件路径：行内代码/裸文本通过真实文件校验后才显示链接色；
+   Markdown 链接（<a>）由 a 规则提供样式，不依赖校验状态 */
+.markdown-content .md-file-link[data-md-file-state='ok'] {
+  cursor: pointer;
+}
+
+.markdown-content :is(code, span).md-file-link[data-md-file-state='ok'] {
+  color: var(--link);
+}
+
+.markdown-content :is(code, span).md-file-link[data-md-file-state='ok']:hover {
+  text-decoration: underline;
+}
+
+.markdown-content .md-file-link[data-md-file-state='ok']:focus-visible {
+  outline: 1px solid var(--link);
+  outline-offset: 1px;
+}
+
+/* 未通过校验的候选保持正文样式，title 说明未找到文件 */
+.markdown-content .md-file-link[data-md-file-state='missing'] {
+  cursor: default;
+}
+
 /* 代码块容器：工具条在顶部、正文在下方，边框与圆角由容器统一承担 */
 .markdown-content .md-code-block {
   margin: 0.9em 0;

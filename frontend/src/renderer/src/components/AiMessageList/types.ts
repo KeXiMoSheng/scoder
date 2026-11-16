@@ -13,6 +13,9 @@ export interface AiMessageListProps {
   emptyHint: string
   /** 当前工作区根：工具调用行里的绝对路径转成相对路径展示 */
   cwd: string | null
-  /** 点击消息里的附件或工具路径打开对应文件 */
-  onOpenFile: (path: string) => void
+  /**
+   * 点击消息里的附件或工具路径打开对应文件。
+   * line / endLine 为正文路径解析出的目标行与行范围（endLine 存在时选中整段）。
+   */
+  onOpenFile: (path: string, line?: number, endLine?: number) => void
 }

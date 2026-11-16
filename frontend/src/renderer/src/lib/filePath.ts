@@ -43,6 +43,44 @@ export function joinPath(dir: string, name: string): string {
   return dir.endsWith(separator) ? dir + name : dir + separator + name
 }
 
+/**
+ * 归一化路径中的 . 与 .. 段（保留路径自身的分隔符风格）。
+ * Markdown 链接（../src/a.ts）拼出的路径必须与其他入口一致，
+ * 否则同一文件会因路径字符串不同而被当成两个标签。UNC 前缀原样返回。
+ */
+export function normalizePath(path: string): string {
+  if (path.startsWith('\\\\')) {
+    return path
+  }
+  const separator = pathSeparator(path)
+  const drive = path.match(/^[A-Za-z]:[\\/]?/)?.[0] ?? ''
+  const absolute = drive !== '' || isAbsolutePath(path)
+  const segments: string[] = []
+  for (const segment of path.slice(drive.length).split(/[\\/]+/)) {
+    if (!segment || segment === '.') {
+      continue
+    }
+    if (segment === '..') {
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!absolute) {
+        segments.push('..')
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+  const joined = segments.join(separator)
+  if (drive) {
+    // 盘符后带分隔符的是绝对路径；C:foo 这类盘符相对路径保持原含义，直接拼接
+    return joined === '' ? drive : drive + joined
+  }
+  if (absolute) {
+    return separator + joined
+  }
+  return joined === '' ? '.' : joined
+}
+
 /** child 是否为 base 本身或其子路径 */
 export function isAtOrUnder(child: string, base: string): boolean {
   if (child === base) {

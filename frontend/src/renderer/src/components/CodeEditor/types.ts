@@ -24,6 +24,18 @@ export interface CodeEditorHandle {
   reopenWithEncoding: (encoding: TextEncodingId) => void
 }
 
+/** 打开文件后定位到指定行（Markdown 正文里的路径跳转） */
+export interface EditorRevealRequest {
+  /** 目标文件绝对路径 */
+  path: string
+  /** 目标行号（1 起；越界时收敛到首/末行） */
+  line: number
+  /** 行号范围的结束行（包含）：存在时选中 line-endLine，缺省时只定位单行 */
+  endLine?: number
+  /** 递增信号：同一文件同一行重复请求也能再次定位 */
+  nonce: number
+}
+
 export interface CodeEditorProps {
   /** 当前激活的标签文件（由标签栏切换）；null 表示没有打开任何文件 */
   file: OpenedFile | null
@@ -39,6 +51,12 @@ export interface CodeEditorProps {
   recheckToken?: number
   /** 当前激活文件的编码变化（自动识别或手动切换）；没有文本文件时回传 null */
   onEncodingChange?: (state: EditorEncodingState | null) => void
+  /** 工作区根目录：Markdown 预览里相对路径的解析基准 */
+  workspaceRoot?: string | null
+  /** Markdown 预览里点击文件路径：打开对应文件并定位到目标行（endLine 存在时选中行范围） */
+  onOpenFile?: (path: string, line?: number, endLine?: number) => void
+  /** 打开文件后定位到指定行（App 在点击 Markdown 路径后设置） */
+  revealRequest?: EditorRevealRequest | null
   ref?: Ref<CodeEditorHandle>
 }
 
