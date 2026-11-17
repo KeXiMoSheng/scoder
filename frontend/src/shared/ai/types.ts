@@ -73,6 +73,26 @@ export interface AiFileChangeBaseline {
   before: string | null
   /** A 本轮新建，M 本轮修改 */
   status: 'A' | 'M'
+  /** 该文件已保存的审查进度；从未打开过审查时为 null */
+  review: AiFileReview | null
+}
+
+/**
+ * 一个文件的审查进度。
+ * 以 hunk 为计数单位：接受/拒绝各累加，remaining 是当前还没处理的 hunk 数。
+ * 会话级面板据此显示「已接受 / 部分接受 / 已拒绝 / 待确认」。
+ */
+export interface AiFileReview {
+  /** 相对工作区根的路径 */
+  path: string
+  /** 已采纳的 hunk 数 */
+  accepted: number
+  /** 已拒绝的 hunk 数 */
+  rejected: number
+  /** 当前仍待处理的 hunk 数 */
+  remaining: number
+  /** 最近一次更新时间（毫秒） */
+  updatedAt: number
 }
 
 /**
@@ -199,12 +219,21 @@ export type AiEvent =
    * 即将执行哪个工具。callId 与随后的 tool-call 一致，后者把同一行升级为执行中。
    */
   | { type: 'tool-preparing'; callId: string; name: string }
-  | { type: 'tool-call'; callId: string; name: string; args: unknown; card?: ToolCardView }
+  | {
+      type: 'tool-call'
+      callId: string
+      name: string
+      args: unknown
+      turn: number
+      card?: ToolCardView
+    }
   | {
       type: 'tool-result'
       callId: string
       ok: boolean
       text: string
+      /** 所属轮次：界面据此自动打开本轮的改动审查（与日志里的轮次一致） */
+      turn: number
       /** 用户中止本轮对话导致这次调用没有完成：行状态展示为「已停止」 */
       stopped?: true
       card?: ToolCardView
@@ -249,6 +278,8 @@ export type AiMessageView =
       kind: 'assistant'
       id: string
       time: number
+      /** 所属轮次：回合结束页脚按轮次汇总 AI 文本，旧日志也可能缺省 */
+      turn?: number
       text: string
       /**
        * 这段回复是被用户中止打断的：文本只保留中断前已流出的前缀。
@@ -256,6 +287,8 @@ export type AiMessageView =
        */
       interrupted?: boolean
     }
+  /** 每一轮结束的页脚：当前时间 + 复制本轮 AI 文本（Markdown） */
+  | { kind: 'turn-footer'; id: string; time: number; turn: number; text: string }
   | {
       kind: 'tool'
       id: string
@@ -365,6 +398,10 @@ export interface AiAPI {
     path: string,
     before: string
   ) => Promise<void>
+  /** 读取一个会话里所有文件的审查进度 */
+  readReviews: (cwd: string, sessionId: string) => Promise<AiFileReview[]>
+  /** 保存一个文件的审查进度（会话级面板与 diff 视图共用） */
+  saveReview: (cwd: string, sessionId: string, review: AiFileReview) => Promise<void>
   /** 列出某个项目下的全部会话（按最后活动时间倒序） */
   listSessions: (cwd: string) => Promise<AiSessionSummary[]>
   /** 删除一个会话日志；返回 false 表示用户取消了确认 */

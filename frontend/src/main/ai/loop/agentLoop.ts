@@ -386,6 +386,7 @@ function emitToolCall(call: ChatToolCall, context: CallContext): void {
     callId: call.id,
     name: call.function.name,
     args,
+    turn: context.turn,
     ...(card ? { card } : {})
   })
 }
@@ -486,6 +487,7 @@ async function writeToolResult(
     callId: call.id,
     ok: result.ok,
     text: result.text,
+    turn,
     ...(stopped ? { stopped: true as const } : {}),
     ...(result.card ? { card: result.card } : {})
   })

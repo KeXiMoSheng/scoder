@@ -60,6 +60,7 @@ export function toMessageViews(
             kind: 'assistant',
             id: `assistant-${event.seq}`,
             time: event.time,
+            turn: event.data.turn,
             text,
             // 被用户中止打断的消息：内容只是中断前已流出的前缀
             ...(event.data.interrupted ? { interrupted: true } : {})
@@ -128,6 +129,14 @@ export function toMessageViews(
             files: [...files.values()]
           })
         }
+        // 每轮结束的页脚：展示结束时间，并提供本轮 AI 文本的 Markdown 复制
+        views.push({
+          kind: 'turn-footer',
+          id: `turn-footer-${event.seq}`,
+          time: event.time,
+          turn: event.data.turn,
+          text: assistantTextOfTurn(views, event.data.turn)
+        })
         break
       }
       default:
@@ -135,6 +144,17 @@ export function toMessageViews(
     }
   }
   return views
+}
+
+/** 某一轮的 AI 文本：只取该轮 assistant 片段，按出现顺序用空行连接 */
+function assistantTextOfTurn(views: readonly AiMessageView[], turn: number): string {
+  return views
+    .filter(
+      (view): view is Extract<AiMessageView, { kind: 'assistant' }> =>
+        view.kind === 'assistant' && view.turn === turn
+    )
+    .map((view) => view.text)
+    .join('\n\n')
 }
 
 /**

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../shared/ai/settings'
-import type { AiAPI, AiEventEnvelope, AiSendRequest } from '../shared/ai/types'
+import type { AiAPI, AiEventEnvelope, AiFileReview, AiSendRequest } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
@@ -43,6 +43,10 @@ const ai: AiAPI = {
     path: string,
     before: string
   ) => ipcRenderer.invoke(AI_CHANNELS.saveChangeBaseline, cwd, sessionId, turn, path, before),
+  readReviews: (cwd: string, sessionId: string) =>
+    ipcRenderer.invoke(AI_CHANNELS.readReviews, cwd, sessionId),
+  saveReview: (cwd: string, sessionId: string, review: AiFileReview) =>
+    ipcRenderer.invoke(AI_CHANNELS.saveReview, cwd, sessionId, review),
   deleteSession: (cwd: string, id: string) =>
     ipcRenderer.invoke(AI_CHANNELS.deleteSession, cwd, id),
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) =>

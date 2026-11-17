@@ -17,4 +17,6 @@ export interface AiDiffViewProps {
   onClose: () => void
   /** 基线不可用或文件无法读取时，退回普通编辑器打开该文件 */
   onOpenFile: (path: string) => void
+  /** 采纳/拒绝后审查进度变化：外层据此刷新底部变更文件面板 */
+  onReviewChange?: () => void
 }

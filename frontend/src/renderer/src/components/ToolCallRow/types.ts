@@ -9,9 +9,4 @@ export interface ToolCallRowProps {
   cwd?: string | null
   /** 点击摘要里的文件路径：打开该文件 */
   onOpenFile: (path: string) => void
-  /**
-   * 点击本次改动过的文件：打开本轮的行内 diff（Monaco）。
-   * path 相对工作区根，turn 为所属轮次。
-   */
-  onOpenChange: (path: string, turn: number) => void
 }

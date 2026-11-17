@@ -6,6 +6,7 @@ import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
   AiEvent,
   AiFileChangeBaseline,
+  AiFileReview,
   AiLoadedSession,
   AiSendRequest,
   AiSessionExportResult,
@@ -20,7 +21,7 @@ import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
 import type { OpenAiConfig } from './llm/openai'
 import { runTurn } from './loop/agentLoop'
-import { SESSIONS_DIR_NAME } from './session/jsonl'
+import { assertSessionId, SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
 import type { SessionEvent } from './session/types'
 import { toMessageViews } from './session/view'
@@ -268,13 +269,14 @@ export function registerAiHandlers(): void {
       }
       // 新建文件的初始基线是空串；接受过部分改动后快照里会保存已接受的内容
       const snapshot = await changeSnapshots.readBaseline(project, id, turn, path)
+      const review = await changeSnapshots.readReview(project, id, path)
       if (status === 'A') {
-        return { path, before: snapshot ?? '', status }
+        return { path, before: snapshot ?? '', status, review }
       }
       if (snapshot === null) {
         return null
       }
-      return { path, before: snapshot, status }
+      return { path, before: snapshot, status, review }
     }
   )
 
@@ -311,6 +313,40 @@ export function registerAiHandlers(): void {
         throw new Error('该文件在本轮没有记录改动基线')
       }
       await changeSnapshots.saveBaseline(project, id, turn, path, before)
+    }
+  )
+
+  // 会话级审查进度：底部变更文件面板与 diff 视图共用
+  ipcMain.handle(
+    AI_CHANNELS.readReviews,
+    async (_event, cwd: string, id: string): Promise<AiFileReview[]> => {
+      const project = requireProjectPath(cwd)
+      assertSessionId(id)
+      return changeSnapshots.readReviews(project, id)
+    }
+  )
+
+  ipcMain.handle(
+    AI_CHANNELS.saveReview,
+    async (_event, cwd: string, id: string, review: AiFileReview): Promise<void> => {
+      const project = requireProjectPath(cwd)
+      assertSessionId(id)
+      if (typeof review !== 'object' || review === null) {
+        throw new Error('审查进度无效')
+      }
+      const { path, accepted, rejected, remaining, updatedAt } = review
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('审查进度文件路径无效')
+      }
+      for (const count of [accepted, rejected, remaining]) {
+        if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
+          throw new Error('审查进度计数无效')
+        }
+      }
+      if (typeof updatedAt !== 'number') {
+        throw new Error('审查进度时间无效')
+      }
+      await changeSnapshots.saveReview(project, id, review)
     }
   )
 }

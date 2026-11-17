@@ -9,10 +9,14 @@
 import { createHash } from 'crypto'
 import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
+import type { AiFileReview } from '../../../shared/ai/types'
 import { projectKey } from '../session/jsonl'
 
 /** 快照根目录名：位于 Electron userData 之下 */
 export const CHANGE_SNAPSHOT_DIR_NAME = 'ai-change-snapshots'
+
+/** 会话审查进度文件名：与各轮的基线快照放在同一会话目录下 */
+const REVIEWS_FILE = 'reviews.json'
 
 /** 改动基线快照仓库 */
 export class ChangeSnapshotStore {
@@ -58,6 +62,36 @@ export class ChangeSnapshotStore {
     }
   }
 
+  /** 读取一个会话的全部文件审查进度；文件不存在或损坏时返回空数组 */
+  async readReviews(cwd: string, sessionId: string): Promise<AiFileReview[]> {
+    try {
+      const text = await readFile(this.reviewsFile(cwd, sessionId), 'utf8')
+      const parsed: unknown = JSON.parse(text)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return []
+      }
+      return Object.values(parsed).filter(isAiFileReview)
+    } catch {
+      return []
+    }
+  }
+
+  /** 读取一个文件的审查进度；没有记录时返回 null */
+  async readReview(cwd: string, sessionId: string, path: string): Promise<AiFileReview | null> {
+    const reviews = await this.readReviews(cwd, sessionId)
+    return reviews.find((review) => review.path === path) ?? null
+  }
+
+  /** 覆盖一个文件的审查进度（整个会话共用一个 reviews.json） */
+  async saveReview(cwd: string, sessionId: string, review: AiFileReview): Promise<void> {
+    const reviews = await this.readReviews(cwd, sessionId)
+    const byPath = new Map(reviews.map((entry) => [entry.path, entry]))
+    byPath.set(review.path, review)
+    const file = this.reviewsFile(cwd, sessionId)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify(Object.fromEntries(byPath), null, 2), 'utf8')
+  }
+
   /** 删除一个会话的全部快照（会话日志被删除时调用，避免快照目录残留） */
   async removeSession(cwd: string, sessionId: string): Promise<void> {
     await rm(join(this.resolveRoot(), projectKey(cwd), sessionId), {
@@ -74,4 +108,30 @@ export class ChangeSnapshotStore {
     const digest = createHash('sha256').update(path, 'utf8').digest('hex')
     return join(this.resolveRoot(), projectKey(cwd), sessionId, String(turn), `${digest}.before`)
   }
+
+  /** 审查进度文件路径 */
+  private reviewsFile(cwd: string, sessionId: string): string {
+    return join(this.resolveRoot(), projectKey(cwd), sessionId, REVIEWS_FILE)
+  }
+}
+
+/** 判定一个值是否是合法的审查进度记录 */
+function isAiFileReview(value: unknown): value is AiFileReview {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const { path, accepted, rejected, remaining, updatedAt } = value as Record<string, unknown>
+  return (
+    typeof path === 'string' &&
+    typeof accepted === 'number' &&
+    Number.isInteger(accepted) &&
+    accepted >= 0 &&
+    typeof rejected === 'number' &&
+    Number.isInteger(rejected) &&
+    rejected >= 0 &&
+    typeof remaining === 'number' &&
+    Number.isInteger(remaining) &&
+    remaining >= 0 &&
+    typeof updatedAt === 'number'
+  )
 }

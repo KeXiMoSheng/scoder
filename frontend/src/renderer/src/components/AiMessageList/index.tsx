@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import { FileDiff, Folder, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Check, Copy, FileDiff, Folder, Loader2 } from 'lucide-react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachmentView, ToolFileChange } from '@shared/ai/types'
 import FileRow from '../FileRow'
@@ -23,8 +23,7 @@ export default function AiMessageList({
   error,
   emptyHint,
   cwd,
-  onOpenFile,
-  onOpenChange
+  onOpenFile
 }: AiMessageListProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // 用户向上翻看历史时不要被新内容拽回底部
@@ -85,24 +84,12 @@ export default function AiMessageList({
             )
           case 'tool':
             return (
-              <ToolCallRow
-                key={message.id}
-                message={message}
-                cwd={cwd}
-                onOpenFile={onOpenFile}
-                onOpenChange={onOpenChange}
-              />
+              <ToolCallRow key={message.id} message={message} cwd={cwd} onOpenFile={onOpenFile} />
             )
           case 'changes':
-            return (
-              <ChangesSummary
-                key={message.id}
-                files={message.files}
-                turn={message.turn}
-                onOpenFile={onOpenFile}
-                onOpenChange={onOpenChange}
-              />
-            )
+            return <ChangesSummary key={message.id} files={message.files} onOpenFile={onOpenFile} />
+          case 'turn-footer':
+            return <TurnFooter key={message.id} time={message.time} text={message.text} />
         }
       })}
       {running ? (
@@ -223,21 +210,23 @@ function AssistantMessage({
   )
 }
 
+/** 本地时间：YYYY-MM-DD HH:mm:ss */
+function formatTime(time: number): string {
+  const date = new Date(time)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 /**
- * 本轮改动清单：一轮对话结束后附着在消息末尾。
- * 复用文件树的 FileRow（图标 + 文件名 + 行尾插槽），保证与左侧列表同一套视觉；
- * 点击文件打开本轮的行内 diff（有轮次时），旧日志没有轮次则退回普通打开。
+ * 本轮改动清单：每轮结束后的文件列表，显示新增/删除行数与 A/M 状态。
+ * 点击某一行只打开对应文件；diff 审查只由底部的会话变更文件面板触发。
  */
 function ChangesSummary({
   files,
-  turn,
-  onOpenFile,
-  onOpenChange
+  onOpenFile
 }: {
   files: readonly ToolFileChange[]
-  turn?: number
   onOpenFile: (path: string) => void
-  onOpenChange: (path: string, turn: number) => void
 }): React.JSX.Element {
   const added = files.reduce((total, file) => total + file.added, 0)
   const removed = files.reduce((total, file) => total + file.removed, 0)
@@ -255,10 +244,8 @@ function ChangesSummary({
             <button
               type="button"
               className="flex w-full cursor-pointer items-center border-none bg-transparent px-2 py-1 text-left text-[12px] transition-colors hover:bg-hover/60"
-              title={turn !== undefined ? `查看本轮改动 ${file.path}` : `打开 ${file.path}`}
-              onClick={() =>
-                turn !== undefined ? onOpenChange(file.path, turn) : onOpenFile(file.path)
-              }
+              title={`打开 ${file.path}`}
+              onClick={() => onOpenFile(file.path)}
             >
               <FileRow
                 name={basename(file.path)}
@@ -267,7 +254,6 @@ function ChangesSummary({
                   <span className="flex items-center gap-1.5 text-[11px]">
                     <span className="text-link">+{file.added}</span>
                     <span className="text-danger">-{file.removed}</span>
-                    {/* git 风格的标记：A 本轮新建，M 本轮修改 */}
                     <span
                       className={cn('font-medium', file.status === 'A' ? 'text-link' : 'text-dim')}
                     >
@@ -280,6 +266,60 @@ function ChangesSummary({
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+/**
+ * 每轮对话底部的结束页脚：复制本轮 AI 文本（Markdown）+ 本轮结束时间。
+ * 复制按钮只在有 AI 文本时出现；复制反馈短暂显示“已复制”。
+ */
+function TurnFooter({ time, text }: { time: number; text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current)
+      }
+    }
+  }, [])
+
+  const handleCopy = (): void => {
+    if (text.length === 0) {
+      return
+    }
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true)
+        if (timerRef.current !== null) {
+          window.clearTimeout(timerRef.current)
+        }
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null
+          setCopied(false)
+        }, 1500)
+      },
+      () => undefined
+    )
+  }
+
+  return (
+    <div className="mb-3 flex items-center gap-2 px-1 text-[11px] text-dim">
+      {text.length > 0 ? (
+        <button
+          type="button"
+          className="flex cursor-pointer items-center gap-1 rounded-[3px] border-none bg-transparent px-1 py-0.5 text-[11px] text-dim transition-colors hover:bg-hover/60 hover:text-fg"
+          title="复制本轮 AI 回复为 Markdown"
+          aria-label="复制本轮 AI 回复为 Markdown"
+          onClick={handleCopy}
+        >
+          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+          {copied ? '已复制' : '复制 Markdown'}
+        </button>
+      ) : null}
+      <span className="ml-auto font-mono text-[10px] text-dim/80">{formatTime(time)}</span>
     </div>
   )
 }

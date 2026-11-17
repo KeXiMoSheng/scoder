@@ -24,5 +24,9 @@ export const AI_CHANNELS = {
   /** 渲染进程 → 主进程：读取某轮某文件的改动基线（invoke） */
   readChangeBaseline: 'ai:changes:baseline',
   /** 渲染进程 → 主进程：覆盖某轮某文件的改动基线（invoke，接受改动后调用） */
-  saveChangeBaseline: 'ai:changes:baseline-save'
+  saveChangeBaseline: 'ai:changes:baseline-save',
+  /** 渲染进程 → 主进程：读取一个会话的全部文件审查进度（invoke） */
+  readReviews: 'ai:changes:reviews',
+  /** 渲染进程 → 主进程：保存一个文件的审查进度（invoke） */
+  saveReview: 'ai:changes:review-save'
 } as const

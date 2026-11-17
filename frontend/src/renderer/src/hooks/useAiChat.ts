@@ -12,9 +12,6 @@ import { toAttachmentView } from '../lib/aiAttachment'
 /** 实时条目的 id 计数器：与历史条目的 seq 前缀区分，重开会话后整表重建不影响 */
 let liveId = 0
 
-/** 进行中的改动清单条目 id：turn-end 时替换成正式条目并移到末尾 */
-const PENDING_CHANGES_ID = 'live-changes-pending'
-
 /** 生成一个渲染期唯一的条目 id */
 function nextLiveId(prefix: string): string {
   liveId += 1
@@ -26,12 +23,39 @@ function nextLiveId(prefix: string): string {
  * 规则：始终接在列表最后一条助手消息后面，除非最后一条不是助手消息
  * （工具卡片之后的新文本、以及每一步的新文本都自然另起一段）。
  */
-function appendText(previous: AiMessageView[], text: string): AiMessageView[] {
+function appendText(previous: AiMessageView[], text: string, turn: number | null): AiMessageView[] {
   const last = previous[previous.length - 1]
   if (last?.kind === 'assistant') {
-    return [...previous.slice(0, -1), { ...last, text: last.text + text }]
+    return [
+      ...previous.slice(0, -1),
+      {
+        ...last,
+        text: last.text + text,
+        ...(last.turn === undefined && turn !== null ? { turn } : {})
+      }
+    ]
   }
-  return [...previous, { kind: 'assistant', id: nextLiveId('assistant'), time: Date.now(), text }]
+  return [
+    ...previous,
+    {
+      kind: 'assistant',
+      id: nextLiveId('assistant'),
+      time: Date.now(),
+      ...(turn !== null ? { turn } : {}),
+      text
+    }
+  ]
+}
+
+/** 某一轮的 AI 文本：只取该轮 assistant 片段，按出现顺序用空行连接 */
+function assistantTextOfTurn(previous: readonly AiMessageView[], turn: number): string {
+  return previous
+    .filter(
+      (view): view is Extract<AiMessageView, { kind: 'assistant' }> =>
+        view.kind === 'assistant' && view.turn === turn
+    )
+    .map((view) => view.text)
+    .join('\n\n')
 }
 
 /**
@@ -47,41 +71,15 @@ function markLastAssistantInterrupted(previous: AiMessageView[]): AiMessageView[
   return [...previous.slice(0, -1), { ...last, interrupted: true }]
 }
 
-/** 更新/插入"进行中"的改动清单：位置保持在它第一次出现的地方 */
-function upsertPendingChanges(
-  previous: AiMessageView[],
-  files: ToolFileChange[],
-  turn: number | null
-): AiMessageView[] {
-  const entry: AiMessageView = {
-    kind: 'changes',
-    id: PENDING_CHANGES_ID,
-    time: Date.now(),
-    ...(turn !== null ? { turn } : {}),
-    files
-  }
-  const index = previous.findIndex(
-    (view) => view.kind === 'changes' && view.id === PENDING_CHANGES_ID
-  )
-  if (index === -1) {
-    return [...previous, entry]
-  }
-  const next = [...previous]
-  next[index] = entry
-  return next
-}
-
 /**
  * 清掉不该留在列表里的临时行：
- * - 进行中的改动清单（结束时会换成正式条目，异常中断时直接丢弃）；
- * - 停在「准备中」的工具行——中止发生在派发之前，这条调用没有落盘，
- *   界面也不该留下一个永远不会前进的行。
+ * 停在「准备中」的工具行——中止发生在派发之前，这条调用没有落盘，
+ * 界面也不该留下一个永远不会前进的行。
  * 没有可清理项时返回原数组，避免无意义的重渲染。
  */
 function dropTransientRows(previous: AiMessageView[]): AiMessageView[] {
   const stale = (view: AiMessageView): boolean =>
-    (view.kind === 'changes' && view.id === PENDING_CHANGES_ID) ||
-    (view.kind === 'tool' && view.status === 'preparing')
+    view.kind === 'tool' && view.status === 'preparing'
   return previous.some(stale) ? previous.filter((view) => !stale(view)) : previous
 }
 
@@ -246,7 +244,7 @@ function applyEvent(
       break
     }
     case 'text-delta': {
-      setMessages((previous) => appendText(previous, event.text))
+      setMessages((previous) => appendText(previous, event.text, currentTurnRef.current))
       break
     }
     case 'tool-preparing': {
@@ -272,12 +270,12 @@ function applyEvent(
       break
     }
     case 'tool-call': {
-      const turn = currentTurnRef.current
+      const turn = event.turn
       const message: AiMessageView = {
         kind: 'tool',
         id: nextLiveId('tool'),
         time: Date.now(),
-        ...(turn !== null ? { turn } : {}),
+        turn,
         callId: event.callId,
         name: event.name,
         arguments: stringifyArguments(event.args),
@@ -315,12 +313,11 @@ function applyEvent(
             : message
         )
       )
-      // 累积本轮改动；一旦有文件被改就立刻显示，不依赖 turn-end（结束事件缺失时也能看到）
+      // 只累积本轮改动；清单在 turn-end 时一次性追加到本轮末尾，
+      // 不在 AI 改完第一个文件时就提前出现。
       const change = event.card?.change
       if (change) {
         turnChanges.set(change.path, mergeFileChange(turnChanges.get(change.path), change))
-        const files = [...turnChanges.values()]
-        setMessages((previous) => upsertPendingChanges(previous, files, currentTurnRef.current))
       }
       break
     }
@@ -342,11 +339,13 @@ function applyEvent(
       setMessages((previous) => {
         // 中止时停在「准备中」的行尚未派发、日志里不存在，随本轮一起清掉
         const rest = dropTransientRows(previous)
-        const settled: AiMessageView[] =
+        // 用户中止：先给被打断的那段回复打上标记，再追加变更清单与结束页脚
+        const base = event.reason === 'aborted' ? markLastAssistantInterrupted(rest) : rest
+        const withChanges: AiMessageView[] =
           files.length === 0
-            ? rest
+            ? base
             : [
-                ...rest,
+                ...base,
                 {
                   kind: 'changes',
                   id: nextLiveId('changes'),
@@ -355,8 +354,16 @@ function applyEvent(
                   files
                 }
               ]
-        // 用户中止：给被打断的那段回复打上标记，与磁盘上的 interrupted 语义一致
-        return event.reason === 'aborted' ? markLastAssistantInterrupted(settled) : settled
+        return [
+          ...withChanges,
+          {
+            kind: 'turn-footer',
+            id: nextLiveId('turn-footer'),
+            time: Date.now(),
+            turn: turn ?? 0,
+            text: turn === null ? '' : assistantTextOfTurn(withChanges, turn)
+          }
+        ]
       })
       break
     }

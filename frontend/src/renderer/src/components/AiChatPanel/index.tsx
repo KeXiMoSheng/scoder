@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import type { AiAttachment } from '@shared/ai/types'
 import AiComposer from '../AiComposer'
 import AiMessageList from '../AiMessageList'
+import SessionChangesPanel from '../SessionChangesPanel'
 import { useAiChat } from '../../hooks/useAiChat'
 import type { AiChatPanelProps } from './types'
 
@@ -22,7 +23,8 @@ export default function AiChatPanel({
   onRemoveAttachment,
   onAttachmentsSent,
   onOpenFile,
-  onOpenChange
+  onOpenChange,
+  reviewsVersion
 }: AiChatPanelProps): React.JSX.Element {
   const { messages, running, error, usage, send, abort } = useAiChat(sessionId, cwd)
 
@@ -44,6 +46,12 @@ export default function AiChatPanel({
         emptyHint={emptyHint}
         cwd={cwd}
         onOpenFile={onOpenFile}
+      />
+      <SessionChangesPanel
+        messages={messages}
+        cwd={cwd}
+        sessionId={sessionId}
+        reviewsVersion={reviewsVersion}
         onOpenChange={onOpenChange}
       />
       <AiComposer

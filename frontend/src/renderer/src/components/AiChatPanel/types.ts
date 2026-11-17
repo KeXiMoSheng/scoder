@@ -22,6 +22,8 @@ export interface AiChatPanelProps {
   onAttachmentsSent: () => void
   /** 点击附件打开对应文件 */
   onOpenFile: (path: string) => void
-  /** 点击 AI 改动过的文件：打开本轮行内 diff（path 相对工作区根） */
+  /** 点击底部变更文件面板里的文件：打开该文件在本会话最早一轮的 diff 审查 */
   onOpenChange: (path: string, turn: number) => void
+  /** 审查进度变更信号：变化时底部面板重新读取文件状态 */
+  reviewsVersion: number
 }

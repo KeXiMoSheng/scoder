@@ -107,6 +107,8 @@ function App(): React.JSX.Element {
   const [editorRevealRequest, setEditorRevealRequest] = useState<EditorRevealRequest | null>(null)
   // 正在查看的 AI 改动 diff：覆盖在编辑器区上方，关闭后回到普通编辑
   const [diffView, setDiffView] = useState<DiffViewTarget | null>(null)
+  // 审查进度变更信号：diff 视图采纳/拒绝后递增，底部变更文件面板据此重新读取状态
+  const [reviewsVersion, setReviewsVersion] = useState(0)
   // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
@@ -404,8 +406,8 @@ function App(): React.JSX.Element {
     })
   }, [])
 
-  // 模型润色完标题后同步标签。
-  // 磁盘改动不再由 AI 事件专门刷新：文件树与编辑器缓冲区统一由文件监听驱动。
+  // 模型润色完标题后同步标签。变更审查只由对话底部的变更文件面板触发，
+  // 不在 AI 写入后自动打开。
   useEffect(() => {
     if (projectPath === null) {
       return
@@ -763,6 +765,7 @@ function App(): React.JSX.Element {
                       dirty={dirtyPaths.has(diffView.absolutePath)}
                       onClose={() => setDiffView(null)}
                       onOpenFile={openFileByPath}
+                      onReviewChange={() => setReviewsVersion((version) => version + 1)}
                     />
                   </div>
                 ) : null}
@@ -801,6 +804,7 @@ function App(): React.JSX.Element {
               onAttachmentsSent={clearAiAttachments}
               onOpenFile={openFileByPath}
               onOpenChange={handleOpenChange}
+              reviewsVersion={reviewsVersion}
             />
           ) : null}
         </div>

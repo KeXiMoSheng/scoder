@@ -48,8 +48,7 @@ type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 export default function ToolCallRow({
   message,
   cwd,
-  onOpenFile,
-  onOpenChange
+  onOpenFile
 }: ToolCallRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const model = toolRowModel(message, cwd)
@@ -64,25 +63,14 @@ export default function ToolCallRow({
     model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped'
       ? model.filePath
       : undefined
-  // 成功的写/编辑行：点击路径查看本轮 diff，而不是打开普通编辑器
-  const openableChange =
-    openableFile !== undefined && model.diffStat !== undefined && message.turn !== undefined
-      ? { path: openableFile, turn: message.turn }
-      : undefined
   const fileAction =
-    openableChange !== undefined
+    openableFile !== undefined
       ? {
-          path: openableChange.path,
-          title: `查看本轮改动 ${openableChange.path}`,
-          run: (): void => onOpenChange(openableChange.path, openableChange.turn)
+          path: openableFile,
+          title: `打开 ${openableFile}`,
+          run: (): void => onOpenFile(openableFile)
         }
-      : openableFile !== undefined
-        ? {
-            path: openableFile,
-            title: `打开 ${openableFile}`,
-            run: (): void => onOpenFile(openableFile)
-          }
-        : undefined
+      : undefined
   const summaryClassName = cn(
     'min-w-0 truncate text-[12px] leading-6',
     failed ? 'text-danger' : 'text-dim',

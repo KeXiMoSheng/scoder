@@ -503,3 +503,31 @@ body.is-resizing-row * {
 .markdown-content .md-code > br:last-child {
   display: none;
 }
+
+/* AI 变更审查：遵循 Git diff 的红删/绿增约定，与 Monaco 主题的插入/删除色解耦 */
+.ai-diff-surface .monaco-editor .line-insert,
+.ai-diff-surface .monaco-editor .char-insert {
+  background-color: rgba(46, 160, 67, 0.18);
+  border-color: transparent;
+}
+
+.ai-diff-surface .monaco-editor .line-delete,
+.ai-diff-surface .monaco-editor .char-delete,
+.ai-diff-surface .monaco-editor .inline-deleted-text {
+  background-color: rgba(248, 81, 73, 0.18);
+  border-color: transparent;
+}
+
+.ai-diff-surface .monaco-editor .inline-deleted-margin-view-zone,
+.ai-diff-surface .monaco-editor .gutter-delete {
+  background-color: rgba(248, 81, 73, 0.1);
+}
+
+.ai-diff-surface .monaco-editor .gutter-insert {
+  background-color: rgba(46, 160, 67, 0.12);
+}
+
+/* 当前正在审查的 hunk：在 Git 红绿之外加一条左侧强调线 */
+.ai-diff-surface .ai-diff-active-hunk {
+  box-shadow: inset 2px 0 0 var(--link);
+}
