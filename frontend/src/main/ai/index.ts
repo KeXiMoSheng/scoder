@@ -5,6 +5,7 @@ import { DEFAULT_CONTEXT_WINDOW } from '../../shared/ai/context'
 import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
   AiEvent,
+  AiFileChangeBaseline,
   AiLoadedSession,
   AiSendRequest,
   AiSessionExportResult,
@@ -13,6 +14,7 @@ import type {
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById, getAiRuntimeSettings } from '../db'
+import { CHANGE_SNAPSHOT_DIR_NAME, ChangeSnapshotStore } from './changes/snapshots'
 import { lastContextUsage } from './context'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
@@ -36,6 +38,11 @@ function sessionsRoot(): string {
 /** 会话历史：每个会话一个追加式 JSONL 文件（重启后仍在） */
 const sessions = new SessionStore(sessionsRoot)
 
+/** 改动基线快照：会话日志之外的一份文件内容副本，供 Monaco 行内 diff 使用 */
+const changeSnapshots = new ChangeSnapshotStore(() =>
+  join(app.getPath('userData'), CHANGE_SNAPSHOT_DIR_NAME)
+)
+
 /** 工具注册表：工具本身无状态，整个进程共享一份 */
 const registry = createToolRegistry()
 
@@ -47,6 +54,9 @@ const running = new Map<string, AbortController>()
 
 /** 单轮请求允许附加的文件数量上限：防止渲染进程一次塞入过多内容 */
 const MAX_ATTACHMENTS = 20
+
+/** 改动基线快照的内容上限（字符）：AI 写文件本身有 2 MB 限制，这里只做异常保护 */
+const MAX_CHANGE_BASELINE_CHARS = 8 * 1024 * 1024
 
 /**
  * 注册 AI 相关的 IPC 通道。
@@ -130,6 +140,10 @@ export function registerAiHandlers(): void {
         return false
       }
       await sessions.remove(project, id)
+      // 会话日志没了，它名下那些文件基线快照也没有了归属
+      await changeSnapshots.removeSession(project, id).catch((error: unknown) => {
+        console.warn('清理改动快照失败', error)
+      })
       return true
     }
   )
@@ -226,6 +240,79 @@ export function registerAiHandlers(): void {
 
   // 写操作审批通道保留但当前不接线：写工具的安全性由“先读后改”保证
   ipcMain.on(AI_CHANNELS.approval, (): void => {})
+
+  // 某个文件在本轮对话里的 diff 基线：先查日志确认状态，再读独立快照。
+  // 旧会话没有基线事件 → 返回 null，由界面提示“该轮没有可用的 diff 基线”。
+  ipcMain.handle(
+    AI_CHANNELS.readChangeBaseline,
+    async (
+      _event,
+      cwd: string,
+      id: string,
+      turn: number,
+      path: string
+    ): Promise<AiFileChangeBaseline | null> => {
+      const project = requireProjectPath(cwd)
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      if (typeof turn !== 'number' || !Number.isInteger(turn) || turn < 1) {
+        throw new Error('轮次无效')
+      }
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('文件路径无效')
+      }
+      const status = await sessions.changeBaselineStatus(project, id, turn, path)
+      if (status === null) {
+        return null
+      }
+      // 新建文件的初始基线是空串；接受过部分改动后快照里会保存已接受的内容
+      const snapshot = await changeSnapshots.readBaseline(project, id, turn, path)
+      if (status === 'A') {
+        return { path, before: snapshot ?? '', status }
+      }
+      if (snapshot === null) {
+        return null
+      }
+      return { path, before: snapshot, status }
+    }
+  )
+
+  // 接受一处改动后覆盖基线：把已接受内容并进基线，重新打开时不再重复展示
+  ipcMain.handle(
+    AI_CHANNELS.saveChangeBaseline,
+    async (
+      _event,
+      cwd: string,
+      id: string,
+      turn: number,
+      path: string,
+      before: string
+    ): Promise<void> => {
+      const project = requireProjectPath(cwd)
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      if (typeof turn !== 'number' || !Number.isInteger(turn) || turn < 1) {
+        throw new Error('轮次无效')
+      }
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('文件路径无效')
+      }
+      // 渲染进程传来的内容按不可信处理：只允许覆盖本轮确实记录过基线的文件
+      if (typeof before !== 'string') {
+        throw new Error('改动基线内容无效')
+      }
+      if (before.length > MAX_CHANGE_BASELINE_CHARS) {
+        throw new Error('改动基线内容过大')
+      }
+      const status = await sessions.changeBaselineStatus(project, id, turn, path)
+      if (status === null) {
+        throw new Error('该文件在本轮没有记录改动基线')
+      }
+      await changeSnapshots.saveBaseline(project, id, turn, path, before)
+    }
+  )
 }
 
 /** 执行一轮对话；工作区文件系统在每轮开始时按 cwd 创建 */
@@ -244,6 +331,7 @@ async function startTurn(
       observation: observations,
       registry,
       sessions,
+      changes: changeSnapshots,
       // 每轮开始时现读：用户在设置页改完，下一条消息立即生效
       settings: getAiRuntimeSettings(),
       emit,

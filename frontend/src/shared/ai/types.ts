@@ -59,6 +59,23 @@ export type ToolFileChange = {
 }
 
 /**
+ * 本轮某个文件的改动基线：第一次被 AI 写入/编辑之前的文件内容。
+ * 由主进程在首次改动时落盘为快照（不写进会话日志，避免整份文件撑大 jsonl），
+ * 点击对话里的改动文件时按 会话 + 轮次 + 路径 取回，交给 Monaco 做行内 diff。
+ */
+export interface AiFileChangeBaseline {
+  /** 相对工作区根的路径 */
+  path: string
+  /**
+   * 改动前内容（LF 换行）；新建文件为 ''。
+   * null 表示当时文件太大/不是文本，无法作为 diff 基线。
+   */
+  before: string | null
+  /** A 本轮新建，M 本轮修改 */
+  status: 'A' | 'M'
+}
+
+/**
  * 工具调用行的生命周期状态（对齐 deepseek-harness 的 ToolRowState）：
  * 参数流式生成中 → 执行中 → 成功 / 失败 / 被用户中止。
  * 状态只影响行的视觉与无障碍文案，不改变工具结果本身。
@@ -174,7 +191,7 @@ export interface AiSendRequest {
  * 两者用 callId 关联，UI 据此把挂起卡片替换为完成卡片。
  */
 export type AiEvent =
-  | { type: 'turn-start'; sessionId: string }
+  | { type: 'turn-start'; sessionId: string; turn: number }
   | { type: 'step-start'; step: number }
   | { type: 'text-delta'; text: string }
   /**
@@ -243,6 +260,8 @@ export type AiMessageView =
       kind: 'tool'
       id: string
       time: number
+      /** 所属轮次：点击改动文件时据此取回本轮基线；旧日志或准备中的行可能缺省 */
+      turn?: number
       callId: string
       name: string
       /** 模型给出的原始参数 JSON 字符串；参数尚未生成完时为空串 */
@@ -255,7 +274,14 @@ export type AiMessageView =
       card?: ToolCardView
     }
   /** 本轮改动清单：一轮对话结束时附着在消息末尾 */
-  | { kind: 'changes'; id: string; time: number; files: ToolFileChange[] }
+  | {
+      kind: 'changes'
+      id: string
+      time: number
+      /** 所属轮次：点击文件时据此取回本轮基线；旧日志可能缺省 */
+      turn?: number
+      files: ToolFileChange[]
+    }
 
 /** 打开会话时载入的内容：磁盘历史 + 执行状态 + 按日志重放出的上下文用量 */
 export interface AiLoadedSession {
@@ -318,6 +344,27 @@ export interface AiAPI {
   onEvent: (listener: (payload: AiEventEnvelope) => void) => () => void
   /** 读取一个会话的历史消息（从 jsonl 日志重放）与执行状态 */
   loadMessages: (cwd: string, sessionId: string) => Promise<AiLoadedSession>
+  /**
+   * 读取某轮对话中某个文件的改动基线（本轮第一次改动前的内容）。
+   * 没有记录（旧会话、通过 bash 等工具改动）时返回 null。
+   */
+  readChangeBaseline: (
+    cwd: string,
+    sessionId: string,
+    turn: number,
+    path: string
+  ) => Promise<AiFileChangeBaseline | null>
+  /**
+   * 覆盖某轮某文件的 diff 基线。
+   * 「接受」一处改动时调用：把已接受的内容并进基线，重新打开 diff 时不再重复展示。
+   */
+  saveChangeBaseline: (
+    cwd: string,
+    sessionId: string,
+    turn: number,
+    path: string,
+    before: string
+  ) => Promise<void>
   /** 列出某个项目下的全部会话（按最后活动时间倒序） */
   listSessions: (cwd: string) => Promise<AiSessionSummary[]>
   /** 删除一个会话日志；返回 false 表示用户取消了确认 */

@@ -18,4 +18,9 @@ export interface AiMessageListProps {
    * line / endLine 为正文路径解析出的目标行与行范围（endLine 存在时选中整段）。
    */
   onOpenFile: (path: string, line?: number, endLine?: number) => void
+  /**
+   * 点击 AI 改动过的文件：在 Monaco 中打开本轮的行内 diff。
+   * path 相对工作区根，turn 为所属轮次。
+   */
+  onOpenChange: (path: string, turn: number) => void
 }

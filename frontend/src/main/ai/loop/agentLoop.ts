@@ -2,6 +2,7 @@ import type { AiRuntimeSettings } from '../../../shared/ai/settings'
 import type { AiEvent, AiSendRequest, AiTurnEndReason } from '../../../shared/ai/types'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
+import type { ChangeSnapshotStore } from '../changes/snapshots'
 import { toContextUsage } from '../context'
 import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../llm/openai'
 import { streamChat, toOpenAiTools } from '../llm/openai'
@@ -30,6 +31,8 @@ export interface RunTurnOptions {
   observation: ObservationStore
   registry: ToolRegistry
   sessions: SessionStore
+  /** 本轮改动的 diff 基线快照：首次改动时保存，供界面按需查看 */
+  changes: ChangeSnapshotStore
   /** 本轮使用的运行参数：由调用方从设置读取，循环本身不碰数据库 */
   settings: AiRuntimeSettings
   /** 事件出口：主进程里是 webContents.send，测试里可以直接收集 */
@@ -44,7 +47,8 @@ export interface RunTurnOptions {
  * @param options 注入的依赖与本轮请求
  */
 export async function runTurn(options: RunTurnOptions): Promise<void> {
-  const { request, model, fs, observation, registry, sessions, emit, signal, settings } = options
+  const { request, model, fs, observation, registry, sessions, changes, emit, signal, settings } =
+    options
   // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
   const state = await sessions.ensure(request.cwd, request.sessionId)
   await sessions.settle(request.cwd, request.sessionId)
@@ -61,7 +65,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
     void refineTitle(request, model, sessions, emit, signal)
   }
 
-  emit({ type: 'turn-start', sessionId: request.sessionId })
+  emit({ type: 'turn-start', sessionId: request.sessionId, turn })
   await sessions.record(request.cwd, request.sessionId, [
     { type: 'turn/start', data: { turn, cwd: request.cwd, modelConfigId: request.modelConfigId } },
     {
@@ -69,6 +73,8 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
       data: { content: [{ type: 'text', text: request.prompt }, ...attachments] }
     }
   ])
+  // 本轮已经保存过基线的文件：同一文件改多次只记录第一次改动前的内容
+  const recordedChanges = new Set<string>()
   // 重复调用守卫：整轮对话共用一个实例，只有用户发新消息才会重置
   const guard = new RepeatCallGuard({
     thresholds: settings.repeatRemindThresholds,
@@ -110,6 +116,8 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         registry,
         request,
         sessions,
+        changes,
+        recordedChanges,
         turn,
         step,
         emit,
@@ -322,6 +330,9 @@ interface CallContext {
   registry: ToolRegistry
   request: AiSendRequest
   sessions: SessionStore
+  changes: ChangeSnapshotStore
+  /** 本轮已保存基线的文件路径：每个文件只记第一次改动前的内容 */
+  recordedChanges: Set<string>
   turn: number
   step: number
   emit: (event: AiEvent) => void
@@ -468,6 +479,8 @@ async function writeToolResult(
   stopped = false
 ): Promise<void> {
   const { request, sessions, turn, step, emit } = context
+  // 本轮第一次改这个文件：先保存改动前快照，界面上的改动行一出现就可以点开 diff
+  await recordChangeBaseline(result, context)
   emit({
     type: 'tool-result',
     callId: call.id,
@@ -497,6 +510,44 @@ async function writeToolResult(
     }
   ])
   messages.push({ role: 'tool', tool_call_id: call.id, content: result.text })
+}
+
+/**
+ * 记录本轮某个文件的改动基线。
+ *
+ * 只改第一次：同一文件后续再改，基线仍然是本轮开始时的内容，
+ * 因此界面上看到的是「本轮全部改动」而不是最后一次编辑的片段。
+ * 快照写入失败不影响本轮对话本身，只是这个文件暂时没有 diff 可看。
+ */
+async function recordChangeBaseline(
+  result: ToolExecutionResult,
+  context: CallContext
+): Promise<void> {
+  const change = result.change
+  if (!result.ok || !change || context.recordedChanges.has(change.path)) {
+    return
+  }
+  context.recordedChanges.add(change.path)
+  try {
+    const saved = await context.changes.saveBaseline(
+      context.request.cwd,
+      context.request.sessionId,
+      context.turn,
+      change.path,
+      change.before
+    )
+    // 新建文件的基线是空串（无需快照）；修改文件必须有快照才记事件
+    if (change.status === 'A' || saved) {
+      await context.sessions.record(context.request.cwd, context.request.sessionId, [
+        {
+          type: 'file/baseline',
+          data: { turn: context.turn, path: change.path, status: change.status }
+        }
+      ])
+    }
+  } catch (error) {
+    console.warn(`保存改动基线失败：${change.path}`, error)
+  }
 }
 
 /**

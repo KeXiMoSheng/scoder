@@ -21,7 +21,8 @@ export default function AiChatPanel({
   attachments,
   onRemoveAttachment,
   onAttachmentsSent,
-  onOpenFile
+  onOpenFile,
+  onOpenChange
 }: AiChatPanelProps): React.JSX.Element {
   const { messages, running, error, usage, send, abort } = useAiChat(sessionId, cwd)
 
@@ -43,6 +44,7 @@ export default function AiChatPanel({
         emptyHint={emptyHint}
         cwd={cwd}
         onOpenFile={onOpenFile}
+        onOpenChange={onOpenChange}
       />
       <AiComposer
         disabled={disabled}

@@ -34,6 +34,15 @@ const ai: AiAPI = {
   listSessions: (cwd: string) => ipcRenderer.invoke(AI_CHANNELS.listSessions, cwd),
   loadMessages: (cwd: string, sessionId: string) =>
     ipcRenderer.invoke(AI_CHANNELS.loadMessages, cwd, sessionId),
+  readChangeBaseline: (cwd: string, sessionId: string, turn: number, path: string) =>
+    ipcRenderer.invoke(AI_CHANNELS.readChangeBaseline, cwd, sessionId, turn, path),
+  saveChangeBaseline: (
+    cwd: string,
+    sessionId: string,
+    turn: number,
+    path: string,
+    before: string
+  ) => ipcRenderer.invoke(AI_CHANNELS.saveChangeBaseline, cwd, sessionId, turn, path, before),
   deleteSession: (cwd: string, id: string) =>
     ipcRenderer.invoke(AI_CHANNELS.deleteSession, cwd, id),
   updateSessionTitle: (cwd: string, id: string, title: string, autoTitle: boolean) =>

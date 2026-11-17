@@ -18,4 +18,6 @@ export interface AiSidebarProps {
   onAttachmentsSent: () => void
   /** 点击附件打开对应文件；path 可能是绝对路径（待发送）或相对工作区根（历史消息） */
   onOpenFile: (path: string) => void
+  /** 点击 AI 改动过的文件：打开本轮行内 diff（path 相对工作区根） */
+  onOpenChange: (path: string, turn: number) => void
 }

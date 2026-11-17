@@ -23,7 +23,8 @@ export default function AiMessageList({
   error,
   emptyHint,
   cwd,
-  onOpenFile
+  onOpenFile,
+  onOpenChange
 }: AiMessageListProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // 用户向上翻看历史时不要被新内容拽回底部
@@ -84,10 +85,24 @@ export default function AiMessageList({
             )
           case 'tool':
             return (
-              <ToolCallRow key={message.id} message={message} cwd={cwd} onOpenFile={onOpenFile} />
+              <ToolCallRow
+                key={message.id}
+                message={message}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onOpenChange={onOpenChange}
+              />
             )
           case 'changes':
-            return <ChangesSummary key={message.id} files={message.files} />
+            return (
+              <ChangesSummary
+                key={message.id}
+                files={message.files}
+                turn={message.turn}
+                onOpenFile={onOpenFile}
+                onOpenChange={onOpenChange}
+              />
+            )
         }
       })}
       {running ? (
@@ -210,9 +225,20 @@ function AssistantMessage({
 
 /**
  * 本轮改动清单：一轮对话结束后附着在消息末尾。
- * 复用文件树的 FileRow（图标 + 文件名 + 行尾插槽），保证与左侧列表同一套视觉。
+ * 复用文件树的 FileRow（图标 + 文件名 + 行尾插槽），保证与左侧列表同一套视觉；
+ * 点击文件打开本轮的行内 diff（有轮次时），旧日志没有轮次则退回普通打开。
  */
-function ChangesSummary({ files }: { files: readonly ToolFileChange[] }): React.JSX.Element {
+function ChangesSummary({
+  files,
+  turn,
+  onOpenFile,
+  onOpenChange
+}: {
+  files: readonly ToolFileChange[]
+  turn?: number
+  onOpenFile: (path: string) => void
+  onOpenChange: (path: string, turn: number) => void
+}): React.JSX.Element {
   const added = files.reduce((total, file) => total + file.added, 0)
   const removed = files.reduce((total, file) => total + file.removed, 0)
   return (
@@ -225,22 +251,32 @@ function ChangesSummary({ files }: { files: readonly ToolFileChange[] }): React.
       </div>
       <ul className="m-0 list-none p-0">
         {files.map((file) => (
-          <li key={file.path} className="px-2 py-1 text-[12px]" title={file.path}>
-            <FileRow
-              name={basename(file.path)}
-              trailing={
-                <span className="flex items-center gap-1.5 text-[11px]">
-                  <span className="text-link">+{file.added}</span>
-                  <span className="text-danger">-{file.removed}</span>
-                  {/* git 风格的标记：A 本轮新建，M 本轮修改 */}
-                  <span
-                    className={cn('font-medium', file.status === 'A' ? 'text-link' : 'text-dim')}
-                  >
-                    {file.status}
-                  </span>
-                </span>
+          <li key={file.path}>
+            <button
+              type="button"
+              className="flex w-full cursor-pointer items-center border-none bg-transparent px-2 py-1 text-left text-[12px] transition-colors hover:bg-hover/60"
+              title={turn !== undefined ? `查看本轮改动 ${file.path}` : `打开 ${file.path}`}
+              onClick={() =>
+                turn !== undefined ? onOpenChange(file.path, turn) : onOpenFile(file.path)
               }
-            />
+            >
+              <FileRow
+                name={basename(file.path)}
+                className="min-w-0 flex-1"
+                trailing={
+                  <span className="flex items-center gap-1.5 text-[11px]">
+                    <span className="text-link">+{file.added}</span>
+                    <span className="text-danger">-{file.removed}</span>
+                    {/* git 风格的标记：A 本轮新建，M 本轮修改 */}
+                    <span
+                      className={cn('font-medium', file.status === 'A' ? 'text-link' : 'text-dim')}
+                    >
+                      {file.status}
+                    </span>
+                  </span>
+                }
+              />
+            </button>
           </li>
         ))}
       </ul>

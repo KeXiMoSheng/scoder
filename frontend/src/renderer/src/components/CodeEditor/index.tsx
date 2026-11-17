@@ -359,7 +359,11 @@ export default function CodeEditor({
 
   /** 把编辑器缓存的全部 model 路径同步给主进程：外部改动后由主进程推送 */
   const syncWatchedFiles = useCallback((): void => {
-    const paths = monaco.editor.getModels().map((model) => model.uri.fsPath)
+    // 只同步真实文件：AI diff 视图用的是 inmemory model，不能被当成磁盘路径去监听
+    const paths = monaco.editor
+      .getModels()
+      .filter((model) => model.uri.scheme === 'file')
+      .map((model) => model.uri.fsPath)
     void window.api.setWatchedFiles(paths).catch(() => undefined)
   }, [])
 
@@ -1035,6 +1039,7 @@ export default function CodeEditor({
           .getModels()
           .filter(
             (model) =>
+              model.uri.scheme === 'file' &&
               isAtOrUnder(model.uri.fsPath, path) &&
               savedVersions.get(model) !== model.getAlternativeVersionId()
           )
@@ -1046,6 +1051,9 @@ export default function CodeEditor({
         const editor = editorRef.current
         const dropped: string[] = []
         for (const model of monaco.editor.getModels()) {
+          if (model.uri.scheme !== 'file') {
+            continue
+          }
           const modelPath = model.uri.fsPath
           if (!isAtOrUnder(modelPath, path)) {
             continue

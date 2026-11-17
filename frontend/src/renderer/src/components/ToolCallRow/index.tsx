@@ -48,7 +48,8 @@ type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 export default function ToolCallRow({
   message,
   cwd,
-  onOpenFile
+  onOpenFile,
+  onOpenChange
 }: ToolCallRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const model = toolRowModel(message, cwd)
@@ -63,6 +64,25 @@ export default function ToolCallRow({
     model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped'
       ? model.filePath
       : undefined
+  // 成功的写/编辑行：点击路径查看本轮 diff，而不是打开普通编辑器
+  const openableChange =
+    openableFile !== undefined && model.diffStat !== undefined && message.turn !== undefined
+      ? { path: openableFile, turn: message.turn }
+      : undefined
+  const fileAction =
+    openableChange !== undefined
+      ? {
+          path: openableChange.path,
+          title: `查看本轮改动 ${openableChange.path}`,
+          run: (): void => onOpenChange(openableChange.path, openableChange.turn)
+        }
+      : openableFile !== undefined
+        ? {
+            path: openableFile,
+            title: `打开 ${openableFile}`,
+            run: (): void => onOpenFile(openableFile)
+          }
+        : undefined
   const summaryClassName = cn(
     'min-w-0 truncate text-[12px] leading-6',
     failed ? 'text-danger' : 'text-dim',
@@ -122,7 +142,7 @@ export default function ToolCallRow({
         {model.summary.length > 0 ? (
           <>
             <span className="mx-0.5 size-[2px] shrink-0 rounded-full bg-dim/60" aria-hidden />
-            {openableFile !== undefined ? (
+            {fileAction !== undefined ? (
               <button
                 type="button"
                 className={cn(
@@ -131,10 +151,10 @@ export default function ToolCallRow({
                   'underline-offset-[3px] transition-colors hover:text-fg',
                   running && 'tool-row-running-text'
                 )}
-                title={`打开 ${openableFile}`}
+                title={fileAction.title}
                 onClick={(event) => {
                   event.stopPropagation()
-                  onOpenFile(openableFile)
+                  fileAction.run()
                 }}
               >
                 {model.summary}

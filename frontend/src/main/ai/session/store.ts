@@ -176,6 +176,34 @@ export class SessionStore {
   }
 
   /**
+   * 读取某个文件在某轮对话中的改动基线状态（A/M）。
+   * 只读事件元信息：文件内容存在独立的快照目录里，由调用方按路径取回。
+   * @param cwd 会话所属项目根目录
+   * @param id 会话 id
+   * @param turn 轮次
+   * @param path 相对工作区根的文件路径
+   * @returns 基线状态；该文件本轮没有记录基线时返回 null
+   */
+  async changeBaselineStatus(
+    cwd: string,
+    id: string,
+    turn: number,
+    path: string
+  ): Promise<'A' | 'M' | null> {
+    const content = await readSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
+    if (!content) {
+      return null
+    }
+    let status: 'A' | 'M' | null = null
+    for (const event of content.events) {
+      if (event.type === 'file/baseline' && event.data.turn === turn && event.data.path === path) {
+        status = event.data.status
+      }
+    }
+    return status
+  }
+
+  /**
    * 列出某个项目下的会话摘要（按最后活动时间倒序）。
    * 目录不存在（该项目还没有会话）时返回空数组；
    * 损坏的单个文件跳过而不是让整个列表失败。

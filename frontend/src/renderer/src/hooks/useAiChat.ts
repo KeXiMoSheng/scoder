@@ -48,11 +48,16 @@ function markLastAssistantInterrupted(previous: AiMessageView[]): AiMessageView[
 }
 
 /** 更新/插入"进行中"的改动清单：位置保持在它第一次出现的地方 */
-function upsertPendingChanges(previous: AiMessageView[], files: ToolFileChange[]): AiMessageView[] {
+function upsertPendingChanges(
+  previous: AiMessageView[],
+  files: ToolFileChange[],
+  turn: number | null
+): AiMessageView[] {
   const entry: AiMessageView = {
     kind: 'changes',
     id: PENDING_CHANGES_ID,
     time: Date.now(),
+    ...(turn !== null ? { turn } : {}),
     files
   }
   const index = previous.findIndex(
@@ -120,6 +125,8 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
   const [usage, setUsage] = useState<AiContextUsage | null>(null)
   // 本轮改动清单：用 ref 累积（不额外触发渲染），turn-end 时作为末尾条目落进消息列表
   const turnChangesRef = useRef<Map<string, ToolFileChange>>(new Map())
+  // 当前轮次：工具行与改动清单要带上它，点击文件时才能取回本轮的 diff 基线
+  const currentTurnRef = useRef<number | null>(null)
 
   // 载入磁盘历史：结果同时带回该会话是否仍在执行
   useEffect(() => {
@@ -156,7 +163,15 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
       if (sourceId !== sessionId) {
         return
       }
-      applyEvent(event, setMessages, setRunning, setError, setUsage, turnChangesRef.current)
+      applyEvent(
+        event,
+        setMessages,
+        setRunning,
+        setError,
+        setUsage,
+        turnChangesRef.current,
+        currentTurnRef
+      )
     })
   }, [sessionId])
 
@@ -216,12 +231,14 @@ function applyEvent(
   setRunning: React.Dispatch<React.SetStateAction<boolean>>,
   setError: React.Dispatch<React.SetStateAction<string | null>>,
   setUsage: React.Dispatch<React.SetStateAction<AiContextUsage | null>>,
-  turnChanges: Map<string, ToolFileChange>
+  turnChanges: Map<string, ToolFileChange>,
+  currentTurnRef: React.MutableRefObject<number | null>
 ): void {
   switch (event.type) {
     case 'turn-start': {
       setRunning(true)
       setError(null)
+      currentTurnRef.current = event.turn
       // 新一轮开始：上一轮的改动清单已经落成条目，这里清空累积器
       turnChanges.clear()
       // 上一轮若异常中断，可能残留进行中的清单条目与没派发出去的调用行
@@ -234,6 +251,7 @@ function applyEvent(
     }
     case 'tool-preparing': {
       // 参数还在流式生成：先摆一行「准备中」，让用户提前看到即将执行哪个工具
+      const turn = currentTurnRef.current
       setMessages((previous) =>
         previous.some((view) => view.kind === 'tool' && view.callId === event.callId)
           ? previous
@@ -243,6 +261,7 @@ function applyEvent(
                 kind: 'tool',
                 id: nextLiveId('tool'),
                 time: Date.now(),
+                ...(turn !== null ? { turn } : {}),
                 callId: event.callId,
                 name: event.name,
                 arguments: '',
@@ -253,10 +272,12 @@ function applyEvent(
       break
     }
     case 'tool-call': {
+      const turn = currentTurnRef.current
       const message: AiMessageView = {
         kind: 'tool',
         id: nextLiveId('tool'),
         time: Date.now(),
+        ...(turn !== null ? { turn } : {}),
         callId: event.callId,
         name: event.name,
         arguments: stringifyArguments(event.args),
@@ -273,7 +294,10 @@ function applyEvent(
         }
         const next = [...previous]
         const current = next[index]
-        next[index] = current.kind === 'tool' ? { ...message, id: current.id } : message
+        next[index] =
+          current.kind === 'tool'
+            ? { ...message, id: current.id, ...(current.turn ? { turn: current.turn } : {}) }
+            : message
         return next
       })
       break
@@ -296,7 +320,7 @@ function applyEvent(
       if (change) {
         turnChanges.set(change.path, mergeFileChange(turnChanges.get(change.path), change))
         const files = [...turnChanges.values()]
-        setMessages((previous) => upsertPendingChanges(previous, files))
+        setMessages((previous) => upsertPendingChanges(previous, files, currentTurnRef.current))
       }
       break
     }
@@ -312,14 +336,25 @@ function applyEvent(
       setRunning(false)
       // 本轮改动清单收尾：移除进行中的条目，把最终结果放到消息末尾
       const files = [...turnChanges.values()]
+      const turn = currentTurnRef.current
       turnChanges.clear()
+      currentTurnRef.current = null
       setMessages((previous) => {
         // 中止时停在「准备中」的行尚未派发、日志里不存在，随本轮一起清掉
         const rest = dropTransientRows(previous)
         const settled: AiMessageView[] =
           files.length === 0
             ? rest
-            : [...rest, { kind: 'changes', id: nextLiveId('changes'), time: Date.now(), files }]
+            : [
+                ...rest,
+                {
+                  kind: 'changes',
+                  id: nextLiveId('changes'),
+                  time: Date.now(),
+                  ...(turn !== null ? { turn } : {}),
+                  files
+                }
+              ]
         // 用户中止：给被打断的那段回复打上标记，与磁盘上的 interrupted 语义一致
         return event.reason === 'aborted' ? markLastAssistantInterrupted(settled) : settled
       })

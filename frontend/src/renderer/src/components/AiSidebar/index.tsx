@@ -29,7 +29,8 @@ export default function AiSidebar({
   attachments,
   onRemoveAttachment,
   onAttachmentsSent,
-  onOpenFile
+  onOpenFile,
+  onOpenChange
 }: AiSidebarProps): React.JSX.Element {
   const {
     sessions: list,
@@ -230,6 +231,7 @@ export default function AiSidebar({
         onRemoveAttachment={onRemoveAttachment}
         onAttachmentsSent={onAttachmentsSent}
         onOpenFile={onOpenFile}
+        onOpenChange={onOpenChange}
       />
       {renamingSession ? (
         <PromptDialog

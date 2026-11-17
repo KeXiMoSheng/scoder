@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachment } from '@shared/ai/types'
 import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
+import AiDiffView from './components/AiDiffView'
 import AiSidebar from './components/AiSidebar'
 import CodeEditor from './components/CodeEditor'
 import type {
@@ -47,6 +48,14 @@ const TERMINAL_HEIGHT_RATIO = 1 / 4
 const TERMINAL_HIDE_RATIO = 1 / 8
 /** 编辑器区最小保留高度（px）：把命令行面板拖大时不会把编辑器挤没 */
 const EDITOR_MIN_HEIGHT = 120
+
+/** 正在查看的 AI 改动：会话 + 轮次 + 文件（相对工作区根） */
+interface DiffViewTarget {
+  sessionId: string
+  turn: number
+  path: string
+  absolutePath: string
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -96,6 +105,8 @@ function App(): React.JSX.Element {
   const [revealRequest, setRevealRequest] = useState<{ path: string; nonce: number } | null>(null)
   // Markdown 正文路径跳转：打开文件后定位到目标行（nonce 保证同一路径同一行重复点击也能生效）
   const [editorRevealRequest, setEditorRevealRequest] = useState<EditorRevealRequest | null>(null)
+  // 正在查看的 AI 改动 diff：覆盖在编辑器区上方，关闭后回到普通编辑
+  const [diffView, setDiffView] = useState<DiffViewTarget | null>(null)
   // 等待随下一条消息发送给 AI 的上下文（路径 + 类型，选中行含内容）：面板收起再打开时保持
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
@@ -187,6 +198,8 @@ function App(): React.JSX.Element {
       setDirtyPaths(new Set())
       // 附件属于上一个项目，切换项目后不再继续待发送
       setAiAttachments([])
+      // AI 改动视图绑定上一个项目，切换后收起
+      setDiffView(null)
       // 打开新目录时确保文件树可见（之前可能被拖拽收起）
       setSidebarVisible(true)
       // 手动打开视为全新开始：立即标记已装载，随后的空标签列表会清掉该项目旧快照，
@@ -215,6 +228,7 @@ function App(): React.JSX.Element {
     closeAll()
     setDirtyPaths(new Set())
     setAiAttachments([])
+    setDiffView(null)
   }, [closeAll, projectPath])
 
   // 应用启动：读取上次未手动关闭的目录并自动打开，恢复其未关闭的编辑器页签，同时加载最近项目列表
@@ -257,20 +271,36 @@ function App(): React.JSX.Element {
   }, [files, activePath, projectPath])
 
   /**
+   * 把工作区相对路径补全为绝对路径；相对路径没有项目根时返回 null。
+   * 文件树、Markdown 正文、AI 附件与 diff 视图共用同一套路径解析。
+   */
+  const resolveWorkspacePath = useCallback(
+    (path: string): string | null => {
+      if (isAbsolutePath(path)) {
+        return normalizePath(path)
+      }
+      if (projectPath === null) {
+        return null
+      }
+      const separator = projectPath.includes('\\') ? '\\' : '/'
+      return normalizePath(joinPath(projectPath, path.split('/').join(separator)))
+    },
+    [projectPath]
+  )
+
+  /**
    * 打开文件页签的统一入口：文件树、AI 附件与 Markdown 正文路径共用。
    * 附件历史里是相对工作区根的路径，这里统一补全为绝对路径；已打开时只激活。
    * line 存在时通知编辑器在打开完成后定位到该行；endLine 存在时选中行范围。
    */
   const openFileByPath = useCallback(
     (path: string, line?: number, endLine?: number): void => {
-      let absolute = path
-      if (!isAbsolutePath(path)) {
-        if (projectPath === null) {
-          return
-        }
-        const separator = projectPath.includes('\\') ? '\\' : '/'
-        absolute = normalizePath(joinPath(projectPath, path.split('/').join(separator)))
+      const absolute = resolveWorkspacePath(path)
+      if (absolute === null) {
+        return
       }
+      // 打开普通文件时收起 AI 改动视图，避免它一直盖住刚打开的文件
+      setDiffView(null)
       open({ path: absolute, name: basename(absolute) })
       if (line !== undefined) {
         setEditorRevealRequest((prev) => ({
@@ -281,7 +311,32 @@ function App(): React.JSX.Element {
         }))
       }
     },
-    [open, projectPath]
+    [open, resolveWorkspacePath]
+  )
+
+  /**
+   * 点击 AI 改动过的文件：在编辑器区打开该文件本轮的行内 diff。
+   * path 是相对工作区根的卡片路径；轮次来自消息条目（旧日志没有轮次时该入口不可用）。
+   */
+  const handleOpenChange = useCallback(
+    (path: string, turn: number): void => {
+      const absolute = resolveWorkspacePath(path)
+      const sessionId = aiSessions.activeId
+      if (absolute === null || sessionId === null) {
+        return
+      }
+      setDiffView({ sessionId, turn, path, absolutePath: absolute })
+    },
+    [aiSessions.activeId, resolveWorkspacePath]
+  )
+
+  /** 点击编辑器标签：先收起 AI 改动视图，再激活目标文件 */
+  const handleActivateTab = useCallback(
+    (path: string): void => {
+      setDiffView(null)
+      activate(path)
+    },
+    [activate]
   )
 
   /** 把一个上下文加入待发送附件：去重，并确保右侧边栏与会话已就绪 */
@@ -396,6 +451,9 @@ function App(): React.JSX.Element {
     (path: string): void => {
       editorRef.current?.dropCachedUnder(path)
       closeUnder(path)
+      setDiffView((current) =>
+        current !== null && isAtOrUnder(current.absolutePath, path) ? null : current
+      )
       setAiAttachments((prev) =>
         prev.some((attachment) => isAtOrUnder(attachment.path, path))
           ? prev.filter((attachment) => !isAtOrUnder(attachment.path, path))
@@ -663,7 +721,7 @@ function App(): React.JSX.Element {
                   files={files}
                   activePath={activePath}
                   dirtyPaths={dirtyPaths}
-                  onActivate={activate}
+                  onActivate={handleActivateTab}
                   onClose={close}
                   onCloseOthers={closeOthers}
                   onCloseToRight={closeToRight}
@@ -692,6 +750,21 @@ function App(): React.JSX.Element {
                 </div>
                 {previewKind !== null && activeFile !== null ? (
                   <FilePreview key={activeFile.path} file={activeFile} />
+                ) : null}
+                {diffView !== null ? (
+                  <div className="absolute inset-0 z-30 flex min-h-0 min-w-0 bg-base">
+                    <AiDiffView
+                      key={`${diffView.sessionId}:${diffView.turn}:${diffView.path}`}
+                      sessionId={diffView.sessionId}
+                      turn={diffView.turn}
+                      path={diffView.path}
+                      absolutePath={diffView.absolutePath}
+                      cwd={projectPath}
+                      dirty={dirtyPaths.has(diffView.absolutePath)}
+                      onClose={() => setDiffView(null)}
+                      onOpenFile={openFileByPath}
+                    />
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -727,6 +800,7 @@ function App(): React.JSX.Element {
               onRemoveAttachment={handleRemoveAiAttachment}
               onAttachmentsSent={clearAiAttachments}
               onOpenFile={openFileByPath}
+              onOpenChange={handleOpenChange}
             />
           ) : null}
         </div>

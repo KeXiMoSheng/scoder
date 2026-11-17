@@ -22,4 +22,6 @@ export interface AiChatPanelProps {
   onAttachmentsSent: () => void
   /** 点击附件打开对应文件 */
   onOpenFile: (path: string) => void
+  /** 点击 AI 改动过的文件：打开本轮行内 diff（path 相对工作区根） */
+  onOpenChange: (path: string, turn: number) => void
 }

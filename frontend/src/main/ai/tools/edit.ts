@@ -72,7 +72,9 @@ export function createEditTool(): ToolDefinition {
           added: stat.added,
           removed: stat.removed
         },
-        changedPaths: [target.displayPath]
+        changedPaths: [target.displayPath],
+        // 本轮第一次改这个文件时，循环会把 before 存成本轮的 diff 基线
+        change: { path: target.displayPath, before: outcome.before, status: 'M' }
       }
     },
     presentCall(args) {

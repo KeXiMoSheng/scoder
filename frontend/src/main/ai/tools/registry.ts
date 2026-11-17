@@ -14,12 +14,24 @@ export interface ToolContext {
   signal: AbortSignal
 }
 
+/** 一次落盘改动的基线信息：循环据此为本轮第一次改动保存快照 */
+export interface ToolChangeRecord {
+  /** 相对工作区根的文件路径 */
+  path: string
+  /** 改动前内容（LF 换行）；新建文件或无法读取时为 null */
+  before: string | null
+  /** A 本轮新建，M 本轮修改 */
+  status: 'A' | 'M'
+}
+
 /** 工具的规范输出：text 给模型，meta 给 UI（可回放） */
 export interface ToolOutcome {
   text: string
   meta?: JsonValue
   /** 本次调用落盘的文件（相对工作区根）：循环据此通知界面刷新 */
   changedPaths?: string[]
+  /** 本次改动用于记录本轮 diff 基线；不进入日志与卡片 */
+  change?: ToolChangeRecord
 }
 
 /**
@@ -54,6 +66,8 @@ export interface ToolExecutionResult {
   card?: ToolCardView
   /** 本次调用落盘的文件（相对工作区根） */
   changedPaths?: string[]
+  /** 本次改动的基线信息：只供循环记录快照，不进入日志与卡片 */
+  change?: ToolChangeRecord
 }
 
 /** 从参数表读取必填字符串（模型偶尔传 null 或空串） */
@@ -166,7 +180,8 @@ export class ToolRegistry {
         ...(card ? { card } : {}),
         ...(outcome.changedPaths && outcome.changedPaths.length > 0
           ? { changedPaths: outcome.changedPaths }
-          : {})
+          : {}),
+        ...(outcome.change ? { change: outcome.change } : {})
       }
     } catch (error) {
       // 用户中止不是工具失败：向上传播，让循环以 aborted 收尾

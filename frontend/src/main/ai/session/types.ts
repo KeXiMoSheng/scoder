@@ -93,6 +93,12 @@ export interface SessionEventMap {
      */
     card?: ToolCardView
   }
+  /**
+   * 文件改动基线：本轮第一次写入/编辑某个文件之前的快照已落盘。
+   * 只记录轮次、路径与 A/M 状态；文件内容在独立的快照目录里，
+   * 避免整份文件内容把会话 jsonl 撑大。
+   */
+  'file/baseline': { turn: number; path: string; status: 'A' | 'M' }
   /** 一次模型调用结束（含其请求的工具执行） */
   'step/end': { turn: number; step: number; usage?: AiTokenUsage }
   /** 一轮对话结束：正常完成、用户中止、出错或上次崩溃补记 */

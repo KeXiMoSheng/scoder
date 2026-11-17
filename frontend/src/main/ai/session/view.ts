@@ -75,6 +75,7 @@ export function toMessageViews(
             kind: 'tool',
             id: `tool-${event.seq}-${block.id}`,
             time: event.time,
+            turn: event.data.turn,
             callId: block.id,
             name: block.name,
             arguments: block.arguments,
@@ -123,6 +124,7 @@ export function toMessageViews(
             kind: 'changes',
             id: `changes-${event.seq}`,
             time: event.time,
+            turn: event.data.turn,
             files: [...files.values()]
           })
         }

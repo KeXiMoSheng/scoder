@@ -74,7 +74,13 @@ export function createWriteTool(): ToolDefinition {
           added: stat.added,
           removed: stat.removed
         },
-        changedPaths: [target.displayPath]
+        changedPaths: [target.displayPath],
+        // 新建的基线是空文件；覆盖已有文件时 before 是本轮改动前的内容
+        change: {
+          path: target.displayPath,
+          before: outcome.before,
+          status: outcome.operation === 'create' ? 'A' : 'M'
+        }
       }
     },
     presentCall(args) {

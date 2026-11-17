@@ -20,5 +20,9 @@ export const AI_CHANNELS = {
   /** 渲染进程 → 主进程：批量导出多个会话日志到同一目录（invoke） */
   exportSessions: 'ai:sessions:export-many',
   /** 渲染进程 → 主进程：读取会话历史消息（invoke） */
-  loadMessages: 'ai:sessions:messages'
+  loadMessages: 'ai:sessions:messages',
+  /** 渲染进程 → 主进程：读取某轮某文件的改动基线（invoke） */
+  readChangeBaseline: 'ai:changes:baseline',
+  /** 渲染进程 → 主进程：覆盖某轮某文件的改动基线（invoke，接受改动后调用） */
+  saveChangeBaseline: 'ai:changes:baseline-save'
 } as const
