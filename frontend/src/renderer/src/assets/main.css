@@ -172,6 +172,23 @@
   }
 }
 
+/* ---------- Monaco find 小部件 ----------
+   查找框固定在编辑器右上角，其按钮的悬浮提示（如 Close (Escape)）默认向上弹出。
+   编辑器顶部/右侧空间不足时，提示框会被裁切并被压窄换行，下半部分正好盖住按钮，
+   点击落在提示框上导致关闭 / 上一个 / 下一个失效（Esc 等键盘命令仍然可用）。
+   给查找框留出提示所需的空间：提示保持单行，并完整显示在按钮上方。 */
+.monaco-editor .find-widget {
+  /* Monaco 自带 margin-top: 4px 且样式在运行时注入，选择器权重相同、加载更晚 */
+  margin-top: 30px !important;
+  margin-right: 12px;
+}
+
+/* 查找框整体下移后，Monaco 原有的隐藏位移（-100% - 10px）不足以移出视口，
+   关闭时会残留一截。补上多出来的 30px 上边距，保持完整的滑出动画。 */
+.monaco-editor .find-widget:not(.visible) {
+  transform: translateY(calc(-100% - 40px));
+}
+
 /* 拖拽期间全局保持对应方向光标并禁止选中文本（覆盖 Monaco 等内部元素）。
    这两个类由 ResizeHandle 通过 document.body.classList 命令式增删，
    作用于 body 及其全部后代，无法表达为元素上的工具类，故保留为全局规则。 */
