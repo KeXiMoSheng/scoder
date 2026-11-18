@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { CaseSensitive, Regex, Search, WholeWord } from 'lucide-react'
+import { CaseSensitive, ChevronRight, Regex, Search, WholeWord } from 'lucide-react'
 import { createSearchMatcher } from '@shared/files/types'
 import type { ContentSearchMatch, FileEntry, SearchOptions } from '@shared/files/types'
 import { extractErrorMessage } from '../../lib/errorMessage'
@@ -20,7 +20,7 @@ interface SearchPaletteProps {
   mode: SearchPaletteMode
   onClose: () => void
   onOpenFile: (path: string, line?: number) => void
-  replaceMode?: boolean
+  initialReplaceMode?: boolean
 }
 
 const DEBOUNCE_MS = 200
@@ -63,8 +63,9 @@ export default function SearchPalette({
   mode,
   onClose,
   onOpenFile,
-  replaceMode = false
+  initialReplaceMode = false
 }: SearchPaletteProps): React.JSX.Element {
+  const [replaceMode, setReplaceMode] = useState(initialReplaceMode)
   const [query, setQuery] = useState('')
   const [replacement, setReplacement] = useState('')
   const [replacing, setReplacing] = useState(false)
@@ -84,6 +85,8 @@ export default function SearchPalette({
   const requestRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const resultsRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const replacementInputRef = useRef<HTMLInputElement | null>(null)
   const trimmed = query.trim()
   const count = mode === 'files' ? files.length : matches.length
   let matcher: RegExp | null = null
@@ -218,9 +221,28 @@ export default function SearchPalette({
         aria-label={mode === 'files' ? '查找文件' : '在文件中查找'}
         className="flex max-h-[70vh] w-[min(680px,90vw)] flex-col overflow-hidden rounded-md border border-line bg-elevated shadow-[0_12px_40px_rgba(0,0,0,0.45)]"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-line px-3">
+        <div className="flex shrink-0 items-center gap-2 border-b border-line px-2">
+          {mode === 'content' ? (
+            <button
+              type="button"
+              title={replaceMode ? '收起替换' : '展开替换'}
+              aria-label={replaceMode ? '收起替换' : '展开替换'}
+              aria-expanded={replaceMode}
+              onClick={() => {
+                setReplaceMode((current) => !current)
+                setReplaceNotice(null)
+              }}
+              className="cursor-pointer rounded p-1 text-dim transition-colors hover:bg-hover hover:text-fg"
+            >
+              <ChevronRight
+                className={`size-3.5 transition-transform ${replaceMode ? 'rotate-90' : ''}`}
+                strokeWidth={1.5}
+              />
+            </button>
+          ) : null}
           <Search className="size-4 shrink-0 text-dim" />
           <input
+            ref={searchInputRef}
             autoFocus
             value={query}
             onChange={(event) => changeQuery(event.target.value)}
@@ -270,8 +292,18 @@ export default function SearchPalette({
         {replaceMode ? (
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-3">
             <input
+              ref={replacementInputRef}
               value={replacement}
               onChange={(event) => setReplacement(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  moveSelection(event.key === 'ArrowDown' ? 1 : -1)
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  searchInputRef.current?.focus()
+                }
+              }}
               placeholder="替换为…"
               aria-label="替换为"
               className="h-9 min-w-0 flex-1 bg-transparent font-[inherit] text-[13px] text-fg outline-none placeholder:text-dim"

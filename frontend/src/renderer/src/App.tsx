@@ -890,7 +890,7 @@ function App(): React.JSX.Element {
         <SearchPalette
           rootPath={projectPath}
           mode={searchPalette}
-          replaceMode={replaceMode}
+          initialReplaceMode={replaceMode}
           onClose={() => setSearchPalette(null)}
           onOpenFile={openFileByPath}
         />
