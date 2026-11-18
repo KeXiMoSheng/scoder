@@ -885,7 +885,7 @@ export default function FileTree({
       null,
       {
         id: 'copy-path',
-        label: '复制路径',
+        label: '复制绝对路径',
         onSelect: () => void navigator.clipboard.writeText(targetPath)
       },
       {
