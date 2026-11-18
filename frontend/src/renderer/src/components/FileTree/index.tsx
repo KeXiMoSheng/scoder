@@ -44,6 +44,11 @@ const OpenContextMenuContext = createContext<(event: React.MouseEvent, data: Fil
   () => {}
 )
 
+/** 根目录行的工具栏：随根目录行一起滚动，悬停该行时展示 */
+const RootToolbarContext = createContext<{ rootPath: string; toolbar: React.ReactNode } | null>(
+  null
+)
+
 /** 目录节点初始给空数组，使其保持可展开形态（react-arborist 以 children 是否为数组判定叶子） */
 function toFileNode(entry: FileEntry): FileNode {
   return { ...entry, children: entry.isDirectory ? [] : undefined }
@@ -260,10 +265,12 @@ function RenameInput({ node }: { node: NodeApi<FileNode> }): React.JSX.Element {
 function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): React.JSX.Element {
   const dirtyPaths = useContext(DirtyPathsContext)
   const openContextMenu = useContext(OpenContextMenuContext)
+  const rootToolbar = useContext(RootToolbarContext)
+  const isRoot = node.data.path === rootToolbar?.rootPath
   const isDirty = !node.data.isDirectory && dirtyPaths.has(node.data.path)
   const rowClass = node.isSelected
-    ? 'flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
-    : 'flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
+    ? 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
+    : 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
   return (
     <div
       // 编辑中不挂拖拽源，避免拖动选中重命名文本时误触发节点拖拽
@@ -303,10 +310,19 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
             />
           ) : null
         }
-        className="flex-1 gap-1"
+        className="min-w-0 flex-1 gap-1"
       >
         {node.isEditing ? <RenameInput node={node} /> : undefined}
       </FileRow>
+      {isRoot ? (
+        <div
+          className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.stopPropagation()}
+        >
+          {rootToolbar.toolbar}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -894,71 +910,49 @@ export default function FileTree({
     [rootPath, treeData]
   )
 
+  const rootToolbar = (
+    <>
+      <ToolbarButton
+        label="新建文件"
+        disabled={searchActive || rootMissing}
+        disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
+        onClick={handleNewFile}
+      >
+        <FilePlus className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="新建文件夹"
+        disabled={searchActive || rootMissing}
+        disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
+        onClick={handleNewFolder}
+      >
+        <FolderPlus className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton label="刷新文件树" disabled={refreshing} onClick={() => void handleRefresh()}>
+        <RotateCw className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="折叠所有"
+        disabled={searchActive}
+        disabledReason="搜索模式下不可用"
+        onClick={handleCollapseAll}
+      >
+        <ChevronsDownUp className="size-3.5" />
+      </ToolbarButton>
+    </>
+  )
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col border-b border-line">
-        <div className="flex items-center gap-1 px-2 py-1.5">
-          <input
-            type="text"
-            className="min-w-0 flex-1 cursor-text rounded-[3px] border border-line bg-base px-2 py-[3px] font-[inherit] text-[12px] text-fg outline-none transition-colors placeholder:text-dim focus:border-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-            value={query}
-            placeholder="搜索文件"
-            spellCheck={false}
-            aria-label="搜索文件"
-            disabled={rootMissing || loadError !== null}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                setQuery('')
-              }
-            }}
-          />
-          {query ? (
-            <button
-              type="button"
-              className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg"
-              aria-label="清空搜索"
-              title="清空搜索"
-              onClick={() => setQuery('')}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-0.5 px-2 pb-1.5">
-          <ToolbarButton
-            label="新建文件"
-            disabled={searchActive || rootMissing}
-            disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
-            onClick={handleNewFile}
-          >
-            <FilePlus className="size-3.5" />
-          </ToolbarButton>
-          <ToolbarButton
-            label="新建文件夹"
-            disabled={searchActive || rootMissing}
-            disabledReason={rootMissing ? '当前目录已不可用' : '搜索模式下不可用'}
-            onClick={handleNewFolder}
-          >
-            <FolderPlus className="size-3.5" />
-          </ToolbarButton>
-          <ToolbarButton
-            label="刷新文件树"
-            disabled={refreshing}
-            onClick={() => void handleRefresh()}
-          >
-            <RotateCw className="size-3.5" />
-          </ToolbarButton>
-          <ToolbarButton
-            label="折叠所有"
-            disabled={searchActive}
-            disabledReason="搜索模式下不可用"
-            onClick={handleCollapseAll}
-          >
-            <ChevronsDownUp className="size-3.5" />
-          </ToolbarButton>
-        </div>
-      </div>
+      {/* 搜索输入与逻辑暂时保留，仅不展示搜索入口 */}
+      <input
+        type="text"
+        className="hidden"
+        value={query}
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => setQuery(event.target.value)}
+      />
       {notice ? (
         <p className="m-0 shrink-0 border-b border-line bg-[color-mix(in_srgb,var(--error)_12%,transparent)] px-2.5 py-1 break-all text-danger">
           {notice}
@@ -1007,31 +1001,33 @@ export default function FileTree({
         ) : width > 0 && height > 0 ? (
           <DirtyPathsContext.Provider value={dirtyPaths}>
             <OpenContextMenuContext.Provider value={openContextMenu}>
-              <Tree<FileNode>
-                ref={treeRef}
-                data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
-                idAccessor="path"
-                childrenAccessor="children"
-                width={width}
-                height={height}
-                rowHeight={ROW_HEIGHT}
-                indent={INDENT}
-                // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
-                openByDefault={false}
-                initialOpenState={initialOpenState}
-                searchTerm={searchActive ? trimmedQuery : undefined}
-                disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
-                disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
-                disableMultiSelection
-                selection={selectedPath ?? undefined}
-                onMove={handleMove}
-                onRename={handleRename}
-                onToggle={handleToggle}
-                onSelect={handleSelect}
-                aria-label="项目文件树"
-              >
-                {TreeNode}
-              </Tree>
+              <RootToolbarContext.Provider value={{ rootPath, toolbar: rootToolbar }}>
+                <Tree<FileNode>
+                  ref={treeRef}
+                  data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
+                  idAccessor="path"
+                  childrenAccessor="children"
+                  width={width}
+                  height={height}
+                  rowHeight={ROW_HEIGHT}
+                  indent={INDENT}
+                  // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
+                  openByDefault={false}
+                  initialOpenState={initialOpenState}
+                  searchTerm={searchActive ? trimmedQuery : undefined}
+                  disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
+                  disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
+                  disableMultiSelection
+                  selection={selectedPath ?? undefined}
+                  onMove={handleMove}
+                  onRename={handleRename}
+                  onToggle={handleToggle}
+                  onSelect={handleSelect}
+                  aria-label="项目文件树"
+                >
+                  {TreeNode}
+                </Tree>
+              </RootToolbarContext.Provider>
             </OpenContextMenuContext.Provider>
           </DirtyPathsContext.Provider>
         ) : null}
