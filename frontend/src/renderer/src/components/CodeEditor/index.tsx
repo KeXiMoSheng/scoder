@@ -143,6 +143,16 @@ function formatSaveProgress(progress: FileSaveProgress): string {
   return `正在保存 ${mb(progress.written)} / ${mb(progress.total)} MB（${percent}%）`
 }
 
+/**
+ * 判断跳转请求是否指向已挂载的 model。
+ * 同一文件可能以不同写法出现：Windows 上 `monaco.Uri.file` 会把盘符统一成小写
+ * （`C:\a\b` → `c:\a\b`），直接比较字符串会让定位永远命中不了，因此两侧都按
+ * URI 归一后再比（POSIX 路径归一后与原文一致）。
+ */
+function sameFileTarget(requestPath: string, model: monaco.editor.ITextModel): boolean {
+  return model.uri.scheme === 'file' && model.uri.fsPath === monaco.Uri.file(requestPath).fsPath
+}
+
 /** 按 model 大小切换编辑器特性：大文件关闭全文索引类功能 */
 function applyEditorFileMode(
   editor: monaco.editor.IStandaloneCodeEditor,
@@ -279,7 +289,7 @@ export default function CodeEditor({
   const revealPendingLine = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor, model: monaco.editor.ITextModel): void => {
       const request = pendingRevealRef.current
-      if (!request || request.path !== model.uri.fsPath) {
+      if (!request || !sameFileTarget(request.path, model)) {
         return
       }
       pendingRevealRef.current = null
