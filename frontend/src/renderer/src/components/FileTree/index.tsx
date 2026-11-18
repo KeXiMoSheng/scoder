@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
-import { ChevronRight, ChevronsDownUp, FilePlus, Folder, FolderPlus, RotateCw } from 'lucide-react'
+import { ChevronRight, ChevronsDownUp, FilePlus, FolderPlus, RotateCw } from 'lucide-react'
 import type { FileEntry } from '@shared/files/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
 import { extractErrorMessage } from '../../lib/errorMessage'
@@ -293,11 +293,8 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       </span>
       <FileRow
         name={node.data.name}
-        icon={
-          node.data.isDirectory ? (
-            <Folder className="size-3.5 fill-current text-[#dcb67a]" />
-          ) : undefined
-        }
+        // 目录不展示图标，名称紧跟展开箭头，避免图标位置留下空白
+        icon={node.data.isDirectory ? null : undefined}
         trailing={
           isDirty ? (
             <span
