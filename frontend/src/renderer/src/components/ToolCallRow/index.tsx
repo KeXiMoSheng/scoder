@@ -10,7 +10,7 @@ import {
   Wrench,
   type LucideIcon
 } from 'lucide-react'
-import type { AiMessageView, TodoItem, ToolHunk, ToolRowState } from '@shared/ai/types'
+import type { AiMessageView, ToolHunk, ToolRowState } from '@shared/ai/types'
 import { toolRowModel, type ToolRowVariant } from '../../lib/toolRow'
 import { cn } from '../../lib/utils'
 import type { ToolCallRowProps } from './types'
@@ -42,7 +42,7 @@ type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
  *
  * 收起时是一行 24px 的安静摘要——[图标] [标题] · [单行摘要] [+n -n] [状态]，
  * 参数仍在流式生成时先以「准备中」出现；点击整行展开：
- * diff / 任务清单 / 带行号窗口 / 输入输出卡。
+ * diff / 带行号窗口 / 输入输出卡。
  * 文件类工具的摘要本身就是可点击的路径，点它直接打开文件，不会展开整行。
  */
 export default function ToolCallRow({
@@ -181,8 +181,9 @@ export default function ToolCallRow({
 }
 
 /**
- * 展开体：优先结构化卡片（diff / 任务清单 / 文本窗口），
+ * 展开体：优先结构化卡片（diff / 文本窗口），
  * 否则退回「输入 / 输出」卡；失败的结构化行把错误文本附在正文下方。
+ * 任务清单不在这里渲染：由 TodoPlan 用 Trace 单独展示。
  */
 function RowBody({
   message,
@@ -193,7 +194,6 @@ function RowBody({
 }): React.JSX.Element {
   const card = message.card
   const hunks: readonly ToolHunk[] = card?.kind === 'diff' ? (card.hunks ?? []) : []
-  const todos: readonly TodoItem[] = card?.kind === 'todo' ? (card.todos ?? []) : []
 
   return (
     <div className="mt-0.5 mb-1 pr-1 pl-6">
@@ -206,8 +206,6 @@ function RowBody({
             </div>
           ) : null}
         </>
-      ) : model.bodyKind === 'todo' ? (
-        <TodoBody todos={todos} />
       ) : model.bodyKind === 'text' ? (
         <TextBody text={model.textBody ?? ''} />
       ) : model.bodyKind === 'io' ? (
@@ -275,39 +273,6 @@ function TextBody({ text }: { text: string }): React.JSX.Element {
     <pre className="m-0 max-h-64 overflow-auto rounded-md border border-line bg-base/50 px-2 py-1.5 text-[11px] leading-[1.5] break-all whitespace-pre-wrap text-dim">
       {text}
     </pre>
-  )
-}
-
-/** 任务清单正文：三态图标 + 一行任务 */
-function TodoBody({ todos }: { todos: readonly TodoItem[] }): React.JSX.Element {
-  return (
-    <ul className="m-0 list-none rounded-md border border-line bg-base/50 px-2 py-1">
-      {todos.map((todo) => (
-        <li
-          key={todo.content}
-          className="flex items-start gap-1.5 py-0.5 text-[12px] leading-[1.5]"
-        >
-          <span
-            className={cn(
-              'mt-[3px] size-2 shrink-0 rounded-full',
-              todo.status === 'completed' && 'bg-link',
-              todo.status === 'in_progress' && 'bg-fg',
-              todo.status === 'pending' && 'bg-dim/50'
-            )}
-          />
-          <span
-            className={cn(
-              'min-w-0 flex-1 break-words',
-              todo.status === 'completed' && 'text-dim line-through',
-              todo.status === 'in_progress' && 'text-fg',
-              todo.status === 'pending' && 'text-dim'
-            )}
-          >
-            {todo.content}
-          </span>
-        </li>
-      ))}
-    </ul>
   )
 }
 

@@ -14,8 +14,8 @@ export type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 /** 工具族：决定行首图标与摘要来源 */
 export type ToolRowVariant = 'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'others'
 
-/** 展开体类型：结构化卡片优先，其次通用的输入/输出卡 */
-export type ToolRowBodyKind = 'diff' | 'todo' | 'text' | 'io' | 'none'
+/** 展开体类型：结构化卡片优先，其次通用的输入/输出卡（任务清单由 TodoPlan 单独展示） */
+export type ToolRowBodyKind = 'diff' | 'text' | 'io' | 'none'
 
 /**
  * 一个工具在行上的展示定义。
@@ -134,10 +134,10 @@ export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRow
   const summary =
     message.status === 'error' && output !== undefined ? firstLine(output) : baseSummary
 
-  const structured = hunks.length > 0 || todos.length > 0 || textBody !== undefined
+  const structured = hunks.length > 0 || textBody !== undefined
   // 结构化行的参数对读者没有信息量（尤其是 write 的整份内容），只保留结果
   const input = structured ? undefined : formatArguments(message.arguments, args)
-  const bodyKind = pickBodyKind(hunks.length > 0, todos.length > 0, textBody, input, output)
+  const bodyKind = pickBodyKind(hunks.length > 0, textBody, input, output)
 
   const filePath = definition.filePathSummary
     ? pickFilePath(card?.path, args, definition, cwd)
@@ -168,13 +168,11 @@ export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRow
 /** 决定展开体形态：结构化卡片 > 通用输入/输出 > 不可展开 */
 function pickBodyKind(
   hasDiff: boolean,
-  hasTodos: boolean,
   textBody: string | undefined,
   input: string | undefined,
   output: string | undefined
 ): ToolRowBodyKind {
   if (hasDiff) return 'diff'
-  if (hasTodos) return 'todo'
   if (textBody !== undefined) return 'text'
   if (input !== undefined || output !== undefined) return 'io'
   return 'none'

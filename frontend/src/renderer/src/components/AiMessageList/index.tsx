@@ -4,6 +4,7 @@ import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachmentView, ToolFileChange } from '@shared/ai/types'
 import FileRow from '../FileRow'
 import MarkdownPreview from '../MarkdownPreview'
+import TodoPlan from '../TodoPlan'
 import ToolCallRow from '../ToolCallRow'
 import { attachmentLineLabel } from '../../lib/aiAttachment'
 import { basename } from '../../lib/filePath'
@@ -53,6 +54,14 @@ export default function AiMessageList({
     )
   }
 
+  // 最后一张任务清单快照默认展开；更早的快照只留一行进度，避免同一份清单反复铺满对话
+  const latestPlanId = messages.findLast(
+    (message) =>
+      message.kind === 'tool' &&
+      message.card?.kind === 'todo' &&
+      (message.card.todos?.length ?? 0) > 0
+  )?.id
+
   return (
     <div
       ref={scrollRef}
@@ -83,7 +92,15 @@ export default function AiMessageList({
               />
             )
           case 'tool':
-            return (
+            // 任务清单换成 Trace 展示；没有清单快照（参数非法 / 失败）时仍走通用工具行
+            return message.card?.kind === 'todo' && (message.card.todos?.length ?? 0) > 0 ? (
+              <TodoPlan
+                // key 带上「是否最新」：新的快照出现时，上一份会重挂载为收起状态
+                key={`${message.id}:${message.id === latestPlanId ? 'latest' : 'history'}`}
+                message={message}
+                defaultExpanded={message.id === latestPlanId}
+              />
+            ) : (
               <ToolCallRow key={message.id} message={message} cwd={cwd} onOpenFile={onOpenFile} />
             )
           case 'changes':
