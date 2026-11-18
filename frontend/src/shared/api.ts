@@ -7,10 +7,14 @@ import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
 import type { AppInfo } from './app/types'
 import type {
+  ContentSearchMatch,
+  ContentSearchResult,
   DirectoriesChangedEvent,
   FileEntry,
   FileStat,
   FilesChangedEvent,
+  ReplaceResult,
+  SearchOptions,
   SearchResult,
   TextStreamChunk,
   TextStreamOpenResult,
@@ -69,7 +73,26 @@ export interface ScoderAPI {
   /** 在系统文件资源管理器中打开所在目录并选中该条目；路径不存在时报错 */
   revealEntry: (targetPath: string) => Promise<void>
   /** 以 rootPath 为根递归搜索名称包含关键词的条目（跳过噪音目录），最多返回 limit 条 */
-  searchFiles: (rootPath: string, query: string, limit?: number) => Promise<SearchResult>
+  searchFiles: (
+    rootPath: string,
+    query: string,
+    limit?: number,
+    options?: SearchOptions
+  ) => Promise<SearchResult>
+  /** 在项目文本文件中按固定字符串或正则表达式搜索内容。 */
+  searchFileContents: (
+    rootPath: string,
+    query: string,
+    options: SearchOptions
+  ) => Promise<ContentSearchResult>
+  /** 替换当前内容搜索结果所在行的匹配；只写入实际命中的项目文件。 */
+  replaceFileContents: (
+    rootPath: string,
+    query: string,
+    replacement: string,
+    options: SearchOptions,
+    matches: ContentSearchMatch[]
+  ) => Promise<ReplaceResult>
   /**
    * 同步需要监听的目录集合（已加载/展开的目录，全量替换）：
    * 目录内条目增删或改名时主进程通过 onDirectoriesChanged 推送该目录。

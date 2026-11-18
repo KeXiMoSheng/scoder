@@ -11,7 +11,7 @@ import {
 import { promises as fs } from 'fs'
 import type { FileHandle } from 'fs/promises'
 import { homedir } from 'os'
-import { basename, join, sep } from 'path'
+import { basename, isAbsolute, join, relative, sep } from 'path'
 import * as pty from 'node-pty'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -22,13 +22,23 @@ import { disposeAllFileStreams, registerFileStreamHandlers } from './files/strea
 import { decodeWholeText, TextStreamError } from './files/textStream'
 import { BINARY_SAMPLE_BYTES, isBinarySample } from './files/encoding'
 import { isTextEncodingId } from '../shared/files/encoding'
+import { createSearchMatcher } from '../shared/files/types'
 import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
+import { replaceFileContents, searchFileContents } from './files/search'
 import { registerModelImportHandlers } from './model-import'
 import { detectPowerShell, probePowerShellVersion } from './powershell'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
-import type { FileEntry, FileStat, SearchResult } from '../shared/files/types'
+import type {
+  ContentSearchMatch,
+  ContentSearchResult,
+  FileEntry,
+  FileStat,
+  ReplaceResult,
+  SearchOptions,
+  SearchResult
+} from '../shared/files/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
 import type {
   TerminalCreateResult,
@@ -260,17 +270,68 @@ function registerFileSystemHandlers(): void {
     shell.showItemInFolder(targetPath)
   })
 
+  ipcMain.handle(
+    FILES_CHANNELS.searchFileContents,
+    async (
+      _event,
+      rootPath: string,
+      query: string,
+      options: SearchOptions
+    ): Promise<ContentSearchResult> => {
+      if (typeof rootPath !== 'string' || !rootPath || typeof query !== 'string' || !query.trim()) {
+        return { matches: [], truncated: false }
+      }
+      return searchFileContents(rootPath, query, options)
+    }
+  )
+
+  ipcMain.handle(
+    FILES_CHANNELS.replaceFileContents,
+    async (
+      _event,
+      rootPath: string,
+      query: string,
+      replacement: string,
+      options: SearchOptions,
+      matches: ContentSearchMatch[]
+    ): Promise<ReplaceResult> => {
+      if (
+        typeof rootPath !== 'string' ||
+        typeof query !== 'string' ||
+        typeof replacement !== 'string' ||
+        !Array.isArray(matches)
+      ) {
+        throw new Error('替换参数无效')
+      }
+      return replaceFileContents(rootPath, query, replacement, options, matches)
+    }
+  )
+
   // 按名称子串递归搜索（目录在前、名称升序的广度优先），跳过噪音目录
   ipcMain.handle(
     FILES_CHANNELS.searchFiles,
-    async (_event, rootPath: string, query: string, limit?: number): Promise<SearchResult> => {
+    async (
+      _event,
+      rootPath: string,
+      query: string,
+      limit?: number,
+      options?: SearchOptions
+    ): Promise<SearchResult> => {
       if (typeof rootPath !== 'string' || typeof query !== 'string') {
         throw new Error('参数无效')
       }
-      const keyword = query.trim().toLowerCase()
-      if (!keyword) {
+      if (!query.trim()) {
         return { entries: [], truncated: false }
       }
+      const matcher = createSearchMatcher(
+        query.trim(),
+        options ?? {
+          caseSensitive: false,
+          wholeWord: false,
+          regex: false
+        }
+      )
+      const pathQuery = query.trim().replace(/[./\\]+/gu, sep)
       const requested =
         typeof limit === 'number' && limit > 0 ? Math.floor(limit) : MAX_SEARCH_RESULTS
       const maxResults = Math.min(requested, MAX_SEARCH_RESULTS)
@@ -302,7 +363,13 @@ function registerFileSystemHandlers(): void {
             break
           }
           const fullPath = join(dirPath, dirent.name)
-          if (dirent.name.toLowerCase().includes(keyword)) {
+          const searchName = isAbsolute(pathQuery)
+            ? fullPath
+            : pathQuery.includes(sep)
+              ? relative(rootPath, fullPath)
+              : dirent.name
+          matcher.lastIndex = 0
+          if (matcher.test(searchName)) {
             if (entries.length >= maxResults) {
               truncated = true
               break

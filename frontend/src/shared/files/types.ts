@@ -12,12 +12,45 @@ export interface FileEntry {
   isDirectory: boolean
 }
 
+/** 名称与内容搜索共用的匹配方式。 */
+export interface SearchOptions {
+  caseSensitive: boolean
+  wholeWord: boolean
+  regex: boolean
+}
+
+/** 构造与搜索端一致的匹配表达式；调用方需在请求前处理无效正则。 */
+export function createSearchMatcher(query: string, options: SearchOptions): RegExp {
+  const escaped = options.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const source = options.wholeWord
+    ? `(?<![\\p{L}\\p{N}_])(?:${escaped})(?![\\p{L}\\p{N}_])`
+    : escaped
+  return new RegExp(source, options.caseSensitive ? 'gu' : 'giu')
+}
+
 /** 文件搜索（按名称子串匹配）的结果 */
 export interface SearchResult {
   /** 命中的条目（目录与文件） */
   entries: FileEntry[]
   /** 结果是否因达到上限被截断 */
   truncated: boolean
+}
+
+/** 一条文件内容搜索结果。 */
+export interface ContentSearchMatch {
+  path: string
+  line: number
+  text: string
+}
+
+export interface ContentSearchResult {
+  matches: ContentSearchMatch[]
+  truncated: boolean
+}
+
+export interface ReplaceResult {
+  filesChanged: number
+  replacements: number
 }
 
 /** 打开文本读取流的结果：大文件按块拉取，避免整份内容挤进一次 IPC 消息 */

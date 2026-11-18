@@ -34,6 +34,8 @@ export type CssVarName =
   | '--accent-foreground'
   | '--selection'
   | '--error'
+  | '--search-match'
+  | '--search-match-border'
 
 export interface AppTheme {
   id: ThemeId
@@ -60,7 +62,17 @@ const VAR_COLOR_KEYS: Record<CssVarName, readonly string[]> = {
   '--accent-hover': ['button.hoverBackground'],
   '--accent-foreground': ['button.foreground'],
   '--selection': ['list.activeSelectionBackground', 'list.hoverBackground'],
-  '--error': ['errorForeground', 'chat.linesRemovedForeground']
+  '--error': ['errorForeground', 'chat.linesRemovedForeground'],
+  '--search-match': [
+    'editor.findMatchBackground',
+    'editor.selectionHighlightBackground',
+    'editor.wordHighlightStrongBackground'
+  ],
+  '--search-match-border': [
+    'editor.findMatchBorder',
+    'editor.selectionHighlightBorder',
+    'editor.wordHighlightStrongBorder'
+  ]
 }
 
 /** Monaco base 字段 → 明暗类型 */
@@ -123,7 +135,10 @@ function extractVars(
       pick('--accent-hover') ?? mixHex(accent, kind === 'dark' ? '#ffffff' : '#000000', 0.08),
     '--accent-foreground': pick('--accent-foreground') ?? '#ffffff',
     '--selection': pick('--selection') ?? pick('--bg-hover') ?? bg,
-    '--error': pick('--error') ?? '#e05561'
+    '--error': pick('--error') ?? '#e05561',
+    '--search-match': pick('--search-match') ?? (kind === 'dark' ? '#d19a6688' : '#ffd33d99'),
+    '--search-match-border':
+      pick('--search-match-border') ?? (kind === 'dark' ? '#d19a66' : '#9a6700')
   }
 }
 

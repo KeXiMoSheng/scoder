@@ -14,6 +14,8 @@ import EditorTabs from './components/EditorTabs'
 import FilePreview from './components/FilePreview'
 import FileTree from './components/FileTree'
 import ResizeHandle from './components/ResizeHandle'
+import SearchPalette from './components/SearchPalette'
+import type { SearchPaletteMode } from './components/SearchPalette'
 import SettingsPage from './components/SettingsPage'
 import type { SettingsSectionId } from './components/SettingsSidebar/types'
 import StatusBar from './components/StatusBar'
@@ -97,6 +99,8 @@ function App(): React.JSX.Element {
   const [terminalHeight, setTerminalHeight] = useState<number | null>(null)
   // 系统配置页：以覆盖层形式显示在工作区之上，工作区保持挂载（编辑/终端状态不丢失）
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [searchPalette, setSearchPalette] = useState<SearchPaletteMode | null>(null)
+  const [replaceMode, setReplaceMode] = useState(false)
   // 设置页打开时定位的分区（编辑器超限提示跳转「编辑器」用）
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('models')
   // 关闭设置页后递增：通知编辑器重新判定当前文件是否超限
@@ -196,6 +200,7 @@ function App(): React.JSX.Element {
       setProjectPath(dirPath)
       // 同一路径重新打开（例如目录被删后重建）也要让文件树重挂载、重新读盘
       setProjectEpoch((epoch) => epoch + 1)
+      setSearchPalette(null)
       closeAll()
       setDirtyPaths(new Set())
       // 附件属于上一个项目，切换项目后不再继续待发送
@@ -227,6 +232,7 @@ function App(): React.JSX.Element {
       tabsHydratedProjectRef.current = null
     }
     setProjectPath(null)
+    setSearchPalette(null)
     closeAll()
     setDirtyPaths(new Set())
     setAiAttachments([])
@@ -625,6 +631,18 @@ function App(): React.JSX.Element {
       if (!event.ctrlKey && !event.metaKey) {
         return
       }
+      if (
+        !event.altKey &&
+        event.shiftKey &&
+        (event.code === 'KeyF' || event.code === 'KeyR') &&
+        projectPath !== null
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        setReplaceMode(event.code === 'KeyR')
+        setSearchPalette('content')
+        return
+      }
       // Ctrl+Alt+B：切换 AI 侧边栏
       if (event.altKey && !event.shiftKey && event.code === 'KeyB') {
         event.preventDefault()
@@ -654,7 +672,55 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [toggleTerminal, handleNewTerminal, toggleAiPanel, settingsOpen])
+  }, [toggleTerminal, handleNewTerminal, toggleAiPanel, settingsOpen, projectPath])
+
+  // 独立 Shift 连按只打开快速查找，不阻止默认行为或传播，系统输入法切换照常接收按键。
+  useEffect(() => {
+    if (settingsOpen || searchPalette !== null || projectPath === null) return
+    let lastPress = 0
+    let otherKeyDown = false
+    const resetOnBlur = (): void => {
+      lastPress = 0
+      otherKeyDown = false
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.code !== 'ShiftLeft' && event.code !== 'ShiftRight') {
+        if (!event.shiftKey || event.key !== 'Shift') otherKeyDown = true
+        return
+      }
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        otherKeyDown ||
+        event.isComposing
+      ) {
+        otherKeyDown = true
+        lastPress = 0
+        return
+      }
+      const now = performance.now()
+      if (now - lastPress <= 350) {
+        lastPress = 0
+        setReplaceMode(false)
+        setSearchPalette('files')
+      } else {
+        lastPress = now
+      }
+    }
+    const handleKeyUp = (event: KeyboardEvent): void => {
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') otherKeyDown = false
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', resetOnBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', resetOnBlur)
+    }
+  }, [projectPath, searchPalette, settingsOpen])
 
   return (
     <div className="flex h-full flex-col">
@@ -820,6 +886,15 @@ function App(): React.JSX.Element {
         candidates={activeEncodingState?.candidates ?? []}
         onChange={handleEncodingChange}
       />
+      {searchPalette !== null && projectPath !== null ? (
+        <SearchPalette
+          rootPath={projectPath}
+          mode={searchPalette}
+          replaceMode={replaceMode}
+          onClose={() => setSearchPalette(null)}
+          onOpenFile={openFileByPath}
+        />
+      ) : null}
     </div>
   )
 }

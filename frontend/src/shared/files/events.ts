@@ -21,6 +21,8 @@ export const FILES_CHANNELS = {
   deleteEntry: 'fs:deleteEntry',
   revealEntry: 'fs:revealEntry',
   searchFiles: 'fs:searchFiles',
+  searchFileContents: 'fs:searchFileContents',
+  replaceFileContents: 'fs:replaceFileContents',
   /** 目录监听：渲染进程同步「已加载目录」，主进程挂原生 watcher 并推送条目变化 */
   setWatchedDirectories: 'fs:setWatchedDirectories',
   clearWatchedDirectories: 'fs:clearWatchedDirectories',

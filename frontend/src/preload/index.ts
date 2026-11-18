@@ -6,7 +6,12 @@ import type { AiAPI, AiEventEnvelope, AiFileReview, AiSendRequest } from '../sha
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
-import type { DirectoriesChangedEvent, FilesChangedEvent } from '../shared/files/types'
+import type {
+  DirectoriesChangedEvent,
+  FilesChangedEvent,
+  ContentSearchMatch,
+  SearchOptions
+} from '../shared/files/types'
 import type { TextEncodingId } from '../shared/files/encoding'
 import { FILE_SETTINGS_CHANNELS } from '../shared/files/settings'
 import type { FileSettings } from '../shared/files/settings'
@@ -92,8 +97,25 @@ const api: ScoderAPI = {
     ipcRenderer.invoke(FILES_CHANNELS.moveEntry, sourcePath, targetPath),
   deleteEntry: (targetPath: string) => ipcRenderer.invoke(FILES_CHANNELS.deleteEntry, targetPath),
   revealEntry: (targetPath: string) => ipcRenderer.invoke(FILES_CHANNELS.revealEntry, targetPath),
-  searchFiles: (rootPath: string, query: string, limit?: number) =>
-    ipcRenderer.invoke(FILES_CHANNELS.searchFiles, rootPath, query, limit),
+  searchFiles: (rootPath: string, query: string, limit?: number, options?: SearchOptions) =>
+    ipcRenderer.invoke(FILES_CHANNELS.searchFiles, rootPath, query, limit, options),
+  searchFileContents: (rootPath: string, query: string, options: SearchOptions) =>
+    ipcRenderer.invoke(FILES_CHANNELS.searchFileContents, rootPath, query, options),
+  replaceFileContents: (
+    rootPath: string,
+    query: string,
+    replacement: string,
+    options: SearchOptions,
+    matches: ContentSearchMatch[]
+  ) =>
+    ipcRenderer.invoke(
+      FILES_CHANNELS.replaceFileContents,
+      rootPath,
+      query,
+      replacement,
+      options,
+      matches
+    ),
   // 目录监听：同步已加载目录（全量替换），条目变化由主进程推送
   setWatchedDirectories: (dirs: string[]) =>
     ipcRenderer.invoke(FILES_CHANNELS.setWatchedDirectories, dirs),
