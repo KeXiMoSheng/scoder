@@ -17,7 +17,7 @@ export default function FileRow({
   return (
     <span className={cn('flex min-w-0 items-center gap-1.5', className)}>
       {icon === null ? null : (
-        <span className="inline-flex w-4 shrink-0 items-center justify-center">
+        <span className="inline-flex shrink-0 items-center justify-center">
           {icon ?? <FileIcon name={name} />}
         </span>
       )}

@@ -1,0 +1,41 @@
+/* 微软 VS Code 内置 Seti 文件图标主题（vs-seti）：仅字体图标，无 SVG 资源。
+   字体来自微软 VS Code vscode-theme-seti 的 seti.woff，许可见 public/file-icons/ThirdPartyNotices.txt。
+   VS Code 对字体图标使用 150% 字号，且让字形完整绘制、只向右溢出到
+   padding-right 的间距里（iconlabel.css 无 overflow 裁剪），这里保持同样做法。
+
+   Seti 是纯色字形：在 20px 左右渲染时抗锯齿会把绝大多数像素混成灰蓝色，
+   看起来「掉色/发虚」。用同色极细描边把笔画填实（纯色像素约 3% → 35%），
+   不改变字形轮廓、不改变主题配色；同时不启用 -webkit-font-smoothing:antialiased，
+   避免 macOS 上进一步把笔画变细。
+
+   官方 Seti 的暗色配色本身偏暗偏灰，整体上再提亮、加饱和：
+   brightness/saturate 只作用于字形像素（元素背景透明），色相不变。
+   觉得还不够亮就调大这两个数。 */
+@font-face {
+  font-family: 'seti';
+  src: url('./seti.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+.file-icon-glyph {
+  display: inline-block;
+  font-family: 'seti', monospace;
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+  /* 运行时由 FileIcon 按 size * 1.5 覆盖；这里保留主题的 150% 作为回退。
+     槽宽由组件按 size + 6px 写入，字形左对齐并有右侧间距，
+     不设置 overflow 裁剪，否则 Seti 字形会被截掉右半边。 */
+  font-size: 150%;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  user-select: none;
+  /* 同色极细描边：抵消小字号抗锯齿造成的发灰，不引入第二种颜色 */
+  -webkit-text-stroke: 0.35px currentColor;
+  /* 整体提亮、加饱和；要更亮就继续调大这两个数 */
+  filter: brightness(1.32) saturate(1.3);
+}
+

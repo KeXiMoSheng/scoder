@@ -191,7 +191,7 @@ export default function SessionChangesPanel({
                   title={`查看 ${file.path} 在本会话的改动 · ${REVIEW_LABEL[state]}`}
                   onClick={() => onOpenChange(file.path, file.turn)}
                 >
-                  <span className="inline-flex w-4 shrink-0 items-center justify-center">
+                  <span className="inline-flex shrink-0 items-center justify-center">
                     <FileIcon name={basename(file.path)} />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-fg">{file.path}</span>

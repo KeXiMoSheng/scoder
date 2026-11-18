@@ -1,72 +1,208 @@
 /**
- * 文件图标解析：图标资源位于 public/icons，映射清单由
- * scripts/generate-file-icons.mjs 从 vscode-icons 的关联表生成。
- * 匹配顺序：完整文件名 → 最长后缀 → 通用文件图标。
+ * 文件图标解析：直接使用微软 VS Code 内置 Seti（vs-seti）图标主题的字体与关联表。
+ *
+ * 与 VS Code 的匹配顺序保持一致：
+ *   fileNames > fileExtensions（含多段后缀，最长优先） > languageIds > 默认 file。
+ * 关联表与 iconDefinitions 均来自 assets/file-icons/vs-seti-icon-theme.json，
+ * languageIds 所需的「文件名 → 语言」识别数据见 vscodeLanguageMap.json。
+ *
+ * 参考：
+ * - https://code.visualstudio.com/api/extension-guides/file-icon-theme
+ * - https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/themes/browser/fileIconThemeData.ts
+ * - https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/services/getIconClasses.ts
  */
-import manifest from './fileIconManifest.json'
+import themeJson from '../assets/file-icons/vs-seti-icon-theme.json'
+import languageMapJson from './vscodeLanguageMap.json'
 
-/** 未匹配到类型时使用的通用文件图标 */
-const DEFAULT_FILE_ICON = 'default_file.svg'
-
-const FILE_NAMES: Readonly<Record<string, string>> = manifest.fileNames
-const FILE_EXTENSIONS: Readonly<Record<string, string>> = manifest.fileExtensions
-
-/**
- * 生成查表候选键，按优先级从高到低排列：
- * foo.test.ts → test.ts、ts；.env.local → env.local、env、local；Makefile → makefile。
- * vscode-icons 在 VS Code 里靠 languageId 区分 .env.local 这类文件，
- * 项目只能看到文件名，因此额外支持点文件的首段和无扩展名文件的整名。
- */
-function getLookupKeys(fileName: string): string[] {
-  const suffixes: string[] = []
-  for (
-    let dotIndex = fileName.indexOf('.');
-    dotIndex !== -1;
-    dotIndex = fileName.indexOf('.', dotIndex + 1)
-  ) {
-    const suffix = fileName.slice(dotIndex + 1)
-    if (suffix) {
-      suffixes.push(suffix)
-    }
-  }
-
-  if (fileName.startsWith('.')) {
-    const firstSegment = fileName.slice(1).split('.', 1)[0]
-    if (firstSegment && firstSegment !== suffixes[0]) {
-      suffixes.splice(1, 0, firstSegment)
-    }
-  } else if (suffixes.length === 0) {
-    suffixes.push(fileName)
-  }
-
-  return suffixes
+interface IconDefinition {
+  fontCharacter: string
+  fontColor?: string
 }
 
-/** 图标命中结果，matchedKey 为命中的文件名或后缀 */
+interface Associations {
+  file: string
+  fileExtensions: Record<string, string>
+  fileNames: Record<string, string>
+  languageIds: Record<string, string>
+}
+
+interface IconTheme {
+  iconDefinitions: Record<string, IconDefinition>
+  file: string
+  fileExtensions: Record<string, string>
+  fileNames: Record<string, string>
+  languageIds: Record<string, string>
+  light: Associations
+}
+
+interface LanguageAssociation {
+  extensions: string[]
+  filenames: string[]
+  filenamePatterns?: string[]
+}
+
+interface LanguageMap {
+  languages: Record<string, LanguageAssociation>
+}
+
+// JSON 模块会被推导成精确的字面量类型，这里只取需要的结构
+const THEME = themeJson as unknown as IconTheme
+const LANGUAGE_MAP = languageMapJson as unknown as LanguageMap
+
+const DEFINITIONS = THEME.iconDefinitions
+const DARK: Associations = {
+  file: THEME.file,
+  fileExtensions: THEME.fileExtensions,
+  fileNames: THEME.fileNames,
+  languageIds: THEME.languageIds
+}
+const LIGHT = THEME.light
+
+/** 应用主题的明暗类型，由 lib/theme.ts 写入 <html data-theme-kind> */
+export type ThemeKind = 'dark' | 'light'
+
+/** 图标命中结果；matchedKey 为命中的关联键，definition 为字体图标定义 id */
 export interface FileIconMatch {
-  icon: string
-  matchedBy: 'fileName' | 'extension' | 'default'
+  definition: string
+  character: string
+  color: string | undefined
+  matchedBy: 'fileName' | 'extension' | 'language' | 'default'
   matchedKey?: string
 }
 
-/** 按文件名解析图标；未匹配时回退到通用文件图标 */
-export function resolveFileIcon(fileName: string): FileIconMatch {
-  const lowerName = fileName.toLowerCase()
-  const exact = FILE_NAMES[lowerName]
-  if (exact) {
-    return { icon: exact, matchedBy: 'fileName', matchedKey: lowerName }
+/** 与 VS Code getIconClasses 一致：文件名生成 name 与逐级点分后缀 */
+function getFileAssociationKeys(fileName: string): { nameKeys: string[]; extensionKeys: string[] } {
+  const segments = fileName.split('.')
+  const extensionKeys: string[] = []
+  for (let index = 1; index < segments.length; index++) {
+    extensionKeys.push(segments.slice(index).join('.'))
   }
-  for (const key of getLookupKeys(lowerName)) {
-    const icon = FILE_EXTENSIONS[key]
-    if (icon) {
-      return { icon, matchedBy: 'extension', matchedKey: key }
-    }
-  }
-  return { icon: DEFAULT_FILE_ICON, matchedBy: 'default' }
+  return { nameKeys: [fileName], extensionKeys }
 }
 
-/** 按文件名解析图标 URL */
-export function getFileIconUrl(fileName: string): string {
-  // BASE_URL：开发环境为 /，构建后为 ./（electron-vite 的 file:// 相对路径）
-  return `${import.meta.env.BASE_URL}icons/${resolveFileIcon(fileName).icon}`
+/**
+ * glob 转正则：支持 VS Code 内置语言贡献里出现的 `*`、`?`。
+ * 带路径分隔符的 pattern 只适用于完整路径，本项目仅拿到文件名，故忽略。
+ */
+function compileFilenamePattern(pattern: string): RegExp | null {
+  if (pattern.includes('/')) {
+    return null
+  }
+  let source = ''
+  for (const char of pattern) {
+    if (char === '*') source += '.*'
+    else if (char === '?') source += '.'
+    else source += char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${source}$`, 'i')
+}
+
+interface CompiledLanguage {
+  id: string
+  filenames: Set<string>
+  patterns: { regex: RegExp; length: number }[]
+  extensions: { value: string; length: number }[]
+}
+
+/** 预编译语言关联，按 VS Code languagesAssociations 的优先级复刻「文件名/模式/最长后缀」 */
+const LANGUAGES: CompiledLanguage[] = Object.entries(LANGUAGE_MAP.languages).map(([id, assoc]) => ({
+  id,
+  filenames: new Set(assoc.filenames),
+  patterns: (assoc.filenamePatterns ?? []).flatMap((pattern) => {
+    const regex = compileFilenamePattern(pattern)
+    return regex ? [{ regex, length: pattern.length }] : []
+  }),
+  extensions: assoc.extensions.map((value) => ({ value, length: value.length }))
+}))
+
+/** VS Code 的 getAssociationByPath：精确文件名 > 最长 filenamePattern > 最长后缀 */
+function detectLanguageId(fileName: string): string | undefined {
+  let filenameMatch: string | undefined
+  let patternMatch: { id: string; length: number } | undefined
+  let extensionMatch: { id: string; length: number } | undefined
+
+  for (const language of LANGUAGES) {
+    if (language.filenames.has(fileName)) {
+      filenameMatch = language.id
+      break
+    }
+    for (const pattern of language.patterns) {
+      if (
+        pattern.regex.test(fileName) &&
+        (!patternMatch || pattern.length >= patternMatch.length)
+      ) {
+        patternMatch = { id: language.id, length: pattern.length }
+      }
+    }
+    for (const extension of language.extensions) {
+      if (
+        fileName.endsWith(`.${extension.value}`) &&
+        (!extensionMatch || extension.length >= extensionMatch.length)
+      ) {
+        extensionMatch = { id: language.id, length: extension.length }
+      }
+    }
+  }
+
+  return filenameMatch ?? patternMatch?.id ?? extensionMatch?.id
+}
+
+/** 按 VS Code 优先级匹配图标定义 id。
+ * VS Code 会把 light 的关联生成 `.vs ...` 选择器覆盖基础选择器；
+ * 因此浅色主题下优先取 light 的定义，light 未定义时回落到基础（暗色）定义。
+ */
+function resolveDefinitionId(
+  fileName: string,
+  kind: ThemeKind
+): { id: string; matchedBy: FileIconMatch['matchedBy']; matchedKey?: string } {
+  const base = kind === 'light' ? LIGHT : null
+  const { nameKeys, extensionKeys } = getFileAssociationKeys(fileName)
+
+  // 先按 VS Code 的关联优先级找键，再决定该键用哪套定义：
+  // 文件名的优先级高于后缀，后缀高于语言，不能用 light 的后缀抢掉基础的文件名。
+  type TableName = 'fileNames' | 'fileExtensions' | 'languageIds'
+  const candidates: { table: TableName; key: string; matchedBy: FileIconMatch['matchedBy'] }[] = []
+  for (const key of nameKeys) {
+    if (key in DARK.fileNames) {
+      candidates.push({ table: 'fileNames', key, matchedBy: 'fileName' })
+    }
+  }
+  for (const key of extensionKeys) {
+    if (key in DARK.fileExtensions) {
+      candidates.push({ table: 'fileExtensions', key, matchedBy: 'extension' })
+    }
+  }
+  const languageId = detectLanguageId(fileName)
+  if (languageId && languageId in DARK.languageIds) {
+    candidates.push({ table: 'languageIds', key: languageId, matchedBy: 'language' })
+  }
+
+  for (const { table, key, matchedBy } of candidates) {
+    const id = base?.[table]?.[key] ?? DARK[table][key]
+    if (id in DEFINITIONS) {
+      return { id, matchedBy, matchedKey: key }
+    }
+  }
+
+  const defaultId = base?.file ?? DARK.file
+  return { id: defaultId, matchedBy: 'default' }
+}
+
+/** 把主题里的 "\\E051" 转成可渲染的 Unicode 字符 */
+function toFontCharacter(escape: string): string {
+  return String.fromCodePoint(Number.parseInt(escape.slice(1), 16))
+}
+
+/** 按文件名解析 VS Code Seti 字体图标；kind 由当前应用主题明暗决定 */
+export function resolveFileIcon(fileName: string, kind: ThemeKind = 'dark'): FileIconMatch {
+  const lowerName = fileName.toLowerCase()
+  const { id, matchedBy, matchedKey } = resolveDefinitionId(lowerName, kind)
+  const definition = DEFINITIONS[id]
+  return {
+    definition: id,
+    character: definition ? toFontCharacter(definition.fontCharacter) : '',
+    color: definition?.fontColor,
+    matchedBy,
+    matchedKey
+  }
 }

@@ -56,8 +56,8 @@ scoder/
 │   ├── src/preload/         # 白名单 IPC 桥
 │   ├── src/shared/          # 主进程与渲染进程共享的类型与通道常量
 │   ├── src/renderer/        # React 界面（Monaco、xterm、Tailwind）
-│   ├── build/               # 打包资源（图标、NSIS 安装脚本、entitlements）
-│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验）
+│   ├── build/               # 打包资源（应用图标、NSIS 安装脚本、entitlements）
+│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询）
 ├── Makefile                 # 开发、构建、打包的统一入口
 └── README.md
 ```

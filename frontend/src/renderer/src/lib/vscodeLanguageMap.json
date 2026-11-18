@@ -1,0 +1,902 @@
+{
+  "information_for_contributors": [
+    "Generated from microsoft/vscode main branch built-in extension contributes.languages",
+    "plus vscode-theme-seti/build/update-icon-theme.js nonBuiltInLanguages.",
+    "The generator's inheritIconFromLanguage only affects theme icon mapping, not language detection.",
+    "Used to reproduce VS Code languageIds file icon associations from a file name only.",
+    "https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/services/languagesAssociations.ts"
+  ],
+  "languages": {
+    "argdown": {
+      "extensions": [
+        "ad",
+        "adown",
+        "argdn",
+        "argdown"
+      ],
+      "filenames": []
+    },
+    "bat": {
+      "extensions": [
+        "bat",
+        "cmd"
+      ],
+      "filenames": []
+    },
+    "bicep": {
+      "extensions": [
+        "bicep"
+      ],
+      "filenames": []
+    },
+    "blade": {
+      "extensions": [],
+      "filenames": []
+    },
+    "c": {
+      "extensions": [
+        "c",
+        "i"
+      ],
+      "filenames": []
+    },
+    "chatagent": {
+      "extensions": [
+        "agent.md",
+        "chatmode.md"
+      ],
+      "filenames": [],
+      "filenamePatterns": [
+        "**/.claude/agents/*.md",
+        "**/.github/agents/*.md"
+      ]
+    },
+    "clojure": {
+      "extensions": [
+        "clj",
+        "cljc",
+        "cljs",
+        "cljx",
+        "clojure",
+        "edn"
+      ],
+      "filenames": []
+    },
+    "coffeescript": {
+      "extensions": [
+        "coffee",
+        "cson",
+        "iced"
+      ],
+      "filenames": []
+    },
+    "cpp": {
+      "extensions": [
+        "c++",
+        "c++m",
+        "cc",
+        "ccm",
+        "cpp",
+        "cppm",
+        "cxx",
+        "cxxm",
+        "h",
+        "h++",
+        "h.in",
+        "hh",
+        "hpp",
+        "hpp.in",
+        "hxx",
+        "ii",
+        "inl",
+        "ino",
+        "ipp",
+        "ixx",
+        "mpp",
+        "mxx",
+        "tpp",
+        "txx"
+      ],
+      "filenames": []
+    },
+    "csharp": {
+      "extensions": [
+        "cake",
+        "cs",
+        "csx"
+      ],
+      "filenames": []
+    },
+    "css": {
+      "extensions": [
+        "css"
+      ],
+      "filenames": []
+    },
+    "cuda-cpp": {
+      "extensions": [
+        "cu",
+        "cuh"
+      ],
+      "filenames": []
+    },
+    "dart": {
+      "extensions": [
+        "dart"
+      ],
+      "filenames": []
+    },
+    "django-html": {
+      "extensions": [],
+      "filenames": []
+    },
+    "dockercompose": {
+      "extensions": [],
+      "filenames": [],
+      "filenamePatterns": [
+        "*docker*compose*.yaml",
+        "*docker*compose*.yml",
+        "compose.*.yaml",
+        "compose.*.yml",
+        "compose.yaml",
+        "compose.yml"
+      ]
+    },
+    "dockerfile": {
+      "extensions": [
+        "containerfile",
+        "dockerfile"
+      ],
+      "filenames": [
+        "containerfile",
+        "dockerfile"
+      ],
+      "filenamePatterns": [
+        "containerfile.*",
+        "dockerfile.*"
+      ]
+    },
+    "dotenv": {
+      "extensions": [
+        "env"
+      ],
+      "filenames": [
+        ".env",
+        ".flaskenv",
+        "user-dirs.dirs"
+      ],
+      "filenamePatterns": [
+        ".env.*"
+      ]
+    },
+    "elixir": {
+      "extensions": [
+        "ex"
+      ],
+      "filenames": []
+    },
+    "elm": {
+      "extensions": [
+        "elm"
+      ],
+      "filenames": []
+    },
+    "erb": {
+      "extensions": [
+        "erb",
+        "html.erb",
+        "rhtml"
+      ],
+      "filenames": []
+    },
+    "fsharp": {
+      "extensions": [
+        "fs",
+        "fsi",
+        "fsscript",
+        "fsx"
+      ],
+      "filenames": []
+    },
+    "git-commit": {
+      "extensions": [],
+      "filenames": [
+        "commit_editmsg",
+        "merge_msg"
+      ]
+    },
+    "github-issues": {
+      "extensions": [
+        "github-issues"
+      ],
+      "filenames": []
+    },
+    "go": {
+      "extensions": [
+        "go"
+      ],
+      "filenames": []
+    },
+    "godot": {
+      "extensions": [
+        "gd",
+        "godot",
+        "tres",
+        "tscn"
+      ],
+      "filenames": []
+    },
+    "gradle": {
+      "extensions": [
+        "gradle"
+      ],
+      "filenames": []
+    },
+    "groovy": {
+      "extensions": [
+        "gradle",
+        "groovy",
+        "gvy",
+        "jenkinsfile",
+        "nf"
+      ],
+      "filenames": [
+        "jenkinsfile"
+      ],
+      "filenamePatterns": [
+        "jenkinsfile*"
+      ]
+    },
+    "haml": {
+      "extensions": [
+        "haml"
+      ],
+      "filenames": []
+    },
+    "handlebars": {
+      "extensions": [
+        "handlebars",
+        "hbs",
+        "hjs"
+      ],
+      "filenames": []
+    },
+    "haskell": {
+      "extensions": [
+        "hs"
+      ],
+      "filenames": []
+    },
+    "haxe": {
+      "extensions": [
+        "hx"
+      ],
+      "filenames": []
+    },
+    "html": {
+      "extensions": [
+        "asp",
+        "aspx",
+        "ejs",
+        "htm",
+        "html",
+        "jshtm",
+        "jsp",
+        "mdoc",
+        "rhtml",
+        "shtml",
+        "volt",
+        "xht",
+        "xhtml"
+      ],
+      "filenames": []
+    },
+    "ignore": {
+      "extensions": [
+        "git-blame-ignore-revs",
+        "gitignore",
+        "gitignore_global",
+        "npmignore"
+      ],
+      "filenames": [
+        ".vscodeignore"
+      ],
+      "filenamePatterns": [
+        ".copilotignore"
+      ]
+    },
+    "instructions": {
+      "extensions": [
+        "copilot-instructions.md",
+        "instructions.md"
+      ],
+      "filenames": [],
+      "filenamePatterns": [
+        "**/.claude/rules/**/*.md"
+      ]
+    },
+    "jade": {
+      "extensions": [
+        "jade",
+        "pug"
+      ],
+      "filenames": []
+    },
+    "java": {
+      "extensions": [
+        "jav",
+        "java"
+      ],
+      "filenames": []
+    },
+    "javascript": {
+      "extensions": [
+        "cjs",
+        "es6",
+        "js",
+        "mjs",
+        "pac"
+      ],
+      "filenames": [
+        "jakefile"
+      ]
+    },
+    "javascriptreact": {
+      "extensions": [
+        "jsx"
+      ],
+      "filenames": []
+    },
+    "jinja": {
+      "extensions": [
+        "jinja"
+      ],
+      "filenames": []
+    },
+    "json": {
+      "extensions": [
+        "bowerrc",
+        "code-profile",
+        "css.map",
+        "geojson",
+        "har",
+        "ipynb",
+        "js.map",
+        "jscsrc",
+        "jslintrc",
+        "json",
+        "jsonld",
+        "ts.map",
+        "tsbuildinfo",
+        "vuerc",
+        "webmanifest"
+      ],
+      "filenames": [
+        ".watchmanconfig",
+        "composer.lock"
+      ]
+    },
+    "jsonc": {
+      "extensions": [
+        "babelrc",
+        "code-workspace",
+        "color-theme.json",
+        "eslintrc",
+        "eslintrc.json",
+        "hintrc",
+        "icon-theme.json",
+        "jsfmtrc",
+        "jshintrc",
+        "jsonc",
+        "language-configuration.json",
+        "swcrc",
+        "toolset.jsonc"
+      ],
+      "filenames": [
+        ".babelrc.json",
+        ".devcontainer.json",
+        ".ember-cli",
+        "argv.json",
+        "babel.config.json",
+        "bun.lock",
+        "devcontainer.json",
+        "extensions.json",
+        "jsconfig.json",
+        "keybindings.json",
+        "launch.json",
+        "mcp.json",
+        "profiles.json",
+        "settings.json",
+        "tasks.json",
+        "tsconfig.json",
+        "typedoc.json"
+      ],
+      "filenamePatterns": [
+        "**/.github/hooks/*.json",
+        "jsconfig-*.json",
+        "jsconfig.*.json",
+        "tsconfig-*.json",
+        "tsconfig.*.json"
+      ]
+    },
+    "jsonl": {
+      "extensions": [
+        "jsonl",
+        "ndjson"
+      ],
+      "filenames": []
+    },
+    "julia": {
+      "extensions": [
+        "jl"
+      ],
+      "filenames": []
+    },
+    "kotlin": {
+      "extensions": [
+        "kt"
+      ],
+      "filenames": []
+    },
+    "latex": {
+      "extensions": [
+        "ctx",
+        "ltx",
+        "tex"
+      ],
+      "filenames": []
+    },
+    "less": {
+      "extensions": [
+        "less"
+      ],
+      "filenames": []
+    },
+    "lua": {
+      "extensions": [
+        "lua"
+      ],
+      "filenames": []
+    },
+    "makefile": {
+      "extensions": [
+        "mak",
+        "mk"
+      ],
+      "filenames": [
+        "gnumakefile",
+        "makefile",
+        "ocamlmakefile"
+      ]
+    },
+    "markdown": {
+      "extensions": [
+        "copilotmd",
+        "litcoffee",
+        "markdn",
+        "markdown",
+        "md",
+        "mdown",
+        "mdtext",
+        "mdtxt",
+        "mdwn",
+        "mkd",
+        "mkdn",
+        "ron",
+        "ronn",
+        "workbook"
+      ],
+      "filenames": [],
+      "filenamePatterns": [
+        "**/.cursor/**/*.mdc"
+      ]
+    },
+    "mustache": {
+      "extensions": [
+        "mst",
+        "mu",
+        "mustache",
+        "stache"
+      ],
+      "filenames": []
+    },
+    "nunjucks": {
+      "extensions": [
+        "nj",
+        "njk",
+        "nunj",
+        "nunjs",
+        "nunjucks",
+        "tmpl",
+        "tpl"
+      ],
+      "filenames": []
+    },
+    "objective-c": {
+      "extensions": [
+        "m"
+      ],
+      "filenames": []
+    },
+    "objective-cpp": {
+      "extensions": [
+        "mm"
+      ],
+      "filenames": []
+    },
+    "ocaml": {
+      "extensions": [
+        "eliom",
+        "eliomi",
+        "ml",
+        "mli",
+        "mll",
+        "mly"
+      ],
+      "filenames": []
+    },
+    "perl": {
+      "extensions": [
+        "pl",
+        "pm",
+        "pod",
+        "psgi",
+        "t"
+      ],
+      "filenames": []
+    },
+    "php": {
+      "extensions": [
+        "ctp",
+        "php",
+        "php4",
+        "php5",
+        "phtml"
+      ],
+      "filenames": []
+    },
+    "postcss": {
+      "extensions": [],
+      "filenames": []
+    },
+    "powershell": {
+      "extensions": [
+        "ps1",
+        "psd1",
+        "psm1",
+        "psrc",
+        "pssc"
+      ],
+      "filenames": []
+    },
+    "prompt": {
+      "extensions": [
+        "prompt.md"
+      ],
+      "filenames": []
+    },
+    "properties": {
+      "extensions": [
+        "cfg",
+        "conf",
+        "directory",
+        "editorconfig",
+        "gitattributes",
+        "gitconfig",
+        "gitmodules",
+        "npmrc",
+        "properties",
+        "repo"
+      ],
+      "filenames": [
+        "gitconfig"
+      ],
+      "filenamePatterns": [
+        "**/.config/git/config",
+        "**/.git/config"
+      ]
+    },
+    "python": {
+      "extensions": [
+        "cpy",
+        "gyp",
+        "gypi",
+        "ipy",
+        "py",
+        "pyi",
+        "pyt",
+        "pyw",
+        "rpy"
+      ],
+      "filenames": [
+        "sconscript",
+        "sconstruct"
+      ]
+    },
+    "r": {
+      "extensions": [
+        "r",
+        "rhistory",
+        "rprofile",
+        "rt"
+      ],
+      "filenames": []
+    },
+    "razor": {
+      "extensions": [
+        "cshtml",
+        "razor"
+      ],
+      "filenames": []
+    },
+    "rescript": {
+      "extensions": [
+        "res",
+        "resi"
+      ],
+      "filenames": []
+    },
+    "ruby": {
+      "extensions": [
+        "erb",
+        "gemspec",
+        "podspec",
+        "rake",
+        "rb",
+        "rbi",
+        "rbx",
+        "rjs",
+        "ru"
+      ],
+      "filenames": [
+        "appfile",
+        "appraisals",
+        "berksfile",
+        "berksfile.lock",
+        "brewfile",
+        "capfile",
+        "cheffile",
+        "dangerfile",
+        "deliverfile",
+        "fastfile",
+        "gemfile",
+        "guardfile",
+        "gymfile",
+        "hobofile",
+        "matchfile",
+        "podfile",
+        "puppetfile",
+        "rakefile",
+        "rantfile",
+        "scanfile",
+        "snapfile",
+        "thorfile",
+        "vagrantfile"
+      ]
+    },
+    "rust": {
+      "extensions": [
+        "rs"
+      ],
+      "filenames": []
+    },
+    "sass": {
+      "extensions": [
+        "sass"
+      ],
+      "filenames": []
+    },
+    "scss": {
+      "extensions": [
+        "scss"
+      ],
+      "filenames": []
+    },
+    "search-result": {
+      "extensions": [
+        "code-search"
+      ],
+      "filenames": []
+    },
+    "shellscript": {
+      "extensions": [
+        "bash",
+        "bash_aliases",
+        "bash_login",
+        "bash_logout",
+        "bash_profile",
+        "bashrc",
+        "csh",
+        "cshrc",
+        "ebuild",
+        "eclass",
+        "fish",
+        "ksh",
+        "profile",
+        "sh",
+        "tcshrc",
+        "xprofile",
+        "xsession",
+        "xsessionrc",
+        "yash_profile",
+        "yashrc",
+        "zlogin",
+        "zlogout",
+        "zprofile",
+        "zsh",
+        "zsh-theme",
+        "zshenv",
+        "zshrc"
+      ],
+      "filenames": [
+        ".envrc",
+        ".hushlogin",
+        "apkbuild",
+        "bashrc_apple_terminal",
+        "pkgbuild",
+        "zlogin",
+        "zlogout",
+        "zprofile",
+        "zshenv",
+        "zshrc",
+        "zshrc_apple_terminal"
+      ]
+    },
+    "skill": {
+      "extensions": [],
+      "filenames": [
+        "skill.md"
+      ]
+    },
+    "sql": {
+      "extensions": [
+        "dsql",
+        "sql"
+      ],
+      "filenames": []
+    },
+    "stylus": {
+      "extensions": [
+        "styl"
+      ],
+      "filenames": []
+    },
+    "swift": {
+      "extensions": [
+        "swift"
+      ],
+      "filenames": []
+    },
+    "terraform": {
+      "extensions": [
+        "hcl",
+        "tf",
+        "tfvars"
+      ],
+      "filenames": []
+    },
+    "tex": {
+      "extensions": [
+        "bbx",
+        "cbx",
+        "cls",
+        "sty"
+      ],
+      "filenames": []
+    },
+    "todo": {
+      "extensions": [],
+      "filenames": [
+        "todo"
+      ]
+    },
+    "typescript": {
+      "extensions": [
+        "cts",
+        "mts",
+        "ts"
+      ],
+      "filenames": []
+    },
+    "typescriptreact": {
+      "extensions": [
+        "tsx"
+      ],
+      "filenames": []
+    },
+    "vala": {
+      "extensions": [
+        "vala"
+      ],
+      "filenames": []
+    },
+    "vue": {
+      "extensions": [
+        "vue"
+      ],
+      "filenames": []
+    },
+    "xml": {
+      "extensions": [
+        "ascx",
+        "atom",
+        "axaml",
+        "axml",
+        "bpmn",
+        "cpt",
+        "csl",
+        "csproj",
+        "csproj.user",
+        "dita",
+        "ditamap",
+        "dtd",
+        "dtml",
+        "ent",
+        "fsproj",
+        "fxml",
+        "iml",
+        "isml",
+        "jmx",
+        "launch",
+        "menu",
+        "mod",
+        "mxml",
+        "nuspec",
+        "opml",
+        "owl",
+        "proj",
+        "props",
+        "pt",
+        "publishsettings",
+        "pubxml",
+        "pubxml.user",
+        "rbxlx",
+        "rbxmx",
+        "rdf",
+        "rng",
+        "rss",
+        "shproj",
+        "slnx",
+        "storyboard",
+        "svg",
+        "targets",
+        "tld",
+        "tmx",
+        "vbproj",
+        "vbproj.user",
+        "vcxproj",
+        "vcxproj.filters",
+        "wixproj",
+        "wsdl",
+        "wxi",
+        "wxl",
+        "wxs",
+        "xaml",
+        "xbl",
+        "xib",
+        "xlf",
+        "xliff",
+        "xml",
+        "xoml",
+        "xpdl",
+        "xsd",
+        "xul"
+      ],
+      "filenames": []
+    },
+    "yaml": {
+      "extensions": [
+        "cff",
+        "eyaml",
+        "eyml",
+        "winget",
+        "yaml",
+        "yaml-tmlanguage",
+        "yaml-tmpreferences",
+        "yaml-tmtheme",
+        "yml"
+      ],
+      "filenames": []
+    }
+  }
+}
