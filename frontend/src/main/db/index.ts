@@ -8,6 +8,7 @@
  * - model-import-settings：一键导入的连接信息
  * - app-settings：应用设置仓储
  * - terminal-settings：终端设置（PowerShell 7 路径）
+ * - git-settings：Git 设置（可执行文件路径）
  * - ipc：渲染进程通道
  */
 export { closeDatabase, initDatabase } from './connection'
@@ -18,3 +19,4 @@ export { findModelConfigById, createModelConfigs } from './model-configs'
 export { getModelImportForm, saveModelImportForm } from './model-import-settings'
 export { getAiRuntimeSettings } from './app-settings'
 export { getTerminalSettings } from './terminal-settings'
+export { getGitSettings } from './git-settings'

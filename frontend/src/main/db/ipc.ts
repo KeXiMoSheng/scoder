@@ -7,10 +7,12 @@ import {
   type OpenDialogOptions
 } from 'electron'
 import { existsSync, promises as fs } from 'fs'
-import { win32 } from 'path'
+import { isAbsolute, win32 } from 'path'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
 import { FILE_SETTINGS_CHANNELS, type FileSettings } from '../../shared/files/settings'
+import { GIT_SETTINGS_CHANNELS, type GitSettings } from '../../shared/git/settings'
 import { MODEL_CONFIG_CHANNELS } from '../../shared/model-config/events'
+import type { GitVersionInfo } from '../../shared/git/types'
 import type { ModelConfig, ModelConfigInput } from '../../shared/model-config/types'
 import {
   POWERSHELL_DOWNLOAD_URL,
@@ -19,10 +21,12 @@ import {
 } from '../../shared/terminal/settings'
 import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
 import type { EditorTabsSnapshot, RecentProject } from '../../shared/workspace/types'
+import { nudgeGitStatusMonitors, probeGitVersion } from '../git'
 import { probePowerShellVersion } from '../powershell'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
 import { DbError } from './errors'
 import { getFileSettings, saveFileSettings } from './file-settings'
+import { getGitSettings, saveGitSettings } from './git-settings'
 import { getTerminalSettings, saveTerminalSettings } from './terminal-settings'
 import {
   clearRestoreProject,
@@ -118,7 +122,60 @@ export function registerDatabaseHandlers(): void {
     await shell.openExternal(POWERSHELL_DOWNLOAD_URL)
   })
 
+  registerGitSettingsHandlers()
+
   registerWorkspaceHandlers()
+}
+
+/**
+ * Git 设置：文件树的状态标记用同一个可执行文件。
+ * 保存后立即让运行中的订阅用新路径重读一次，不必等下一个轮询周期。
+ */
+function registerGitSettingsHandlers(): void {
+  ipcMain.handle(GIT_SETTINGS_CHANNELS.get, (): GitSettings => getGitSettings())
+  ipcMain.handle(GIT_SETTINGS_CHANNELS.save, (_event, input: GitSettings): GitSettings => {
+    const saved = saveGitSettings(input)
+    nudgeGitStatusMonitors()
+    return saved
+  })
+
+  // 选择 git 可执行文件：只负责弹框取路径，是否保存由设置页决定
+  ipcMain.handle(GIT_SETTINGS_CHANNELS.browse, async (event): Promise<string | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options: OpenDialogOptions = {
+      title: '选择 git 可执行文件',
+      properties: ['openFile'],
+      // Windows 的 git 是 .exe；macOS / Linux 的可执行文件没有扩展名，不加过滤器
+      ...(process.platform === 'win32' ? { filters: [{ name: 'Git', extensions: ['exe'] }] } : {})
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  // 测试：真的执行一次 `git --version`，保存前就能发现路径失效
+  ipcMain.handle(
+    GIT_SETTINGS_CHANNELS.test,
+    (_event, filePath: string): Promise<GitVersionInfo> => {
+      requireGitPath(filePath)
+      return probeGitVersion(filePath.trim())
+    }
+  )
+}
+
+/** 测试前先校验路径形状与存在性，避免 execFile 只报一个 ENOENT；空字符串表示测试自动探测 */
+function requireGitPath(filePath: string): void {
+  const trimmed = typeof filePath === 'string' ? filePath.trim() : ''
+  if (trimmed.length === 0) {
+    return
+  }
+  if (!isAbsolute(trimmed)) {
+    throw new DbError('Git 路径必须是可执行文件的绝对路径', 'INVALID_ARGUMENT')
+  }
+  if (!existsSync(trimmed)) {
+    throw new DbError('找不到该文件，请确认路径是否正确', 'INVALID_ARGUMENT')
+  }
 }
 
 /** 测试前先校验路径形状与存在性，避免 execFile 只报一个 ENOENT */

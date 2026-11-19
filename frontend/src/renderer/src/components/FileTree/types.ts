@@ -6,6 +6,8 @@ import type { FileEntry } from '@shared/files/types'
 /** 文件树节点：以绝对路径为唯一标识；目录的 children 初始为空数组表示尚未加载 */
 export interface FileNode extends FileEntry {
   children?: FileNode[]
+  /** 由 Git 状态补出的节点：磁盘上已删除，但仓库里仍记录着它，需要继续显示 */
+  gitDeleted?: boolean
 }
 
 export interface FileTreeProps {

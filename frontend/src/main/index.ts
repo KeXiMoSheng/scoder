@@ -27,6 +27,7 @@ import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
 import { replaceFileContents, searchFileContents } from './files/search'
 import { registerModelImportHandlers } from './model-import'
+import { disposeAllGitStatusMonitors, registerGitStatusHandlers } from './git'
 import { detectPowerShell, probePowerShellVersion } from './powershell'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
@@ -656,6 +657,8 @@ app.whenReady().then(() => {
   registerFileSystemHandlers()
   // 目录监听：渲染进程同步已加载目录，主进程在条目变化时推送，供文件树自动刷新
   registerDirectoryWatchHandlers()
+  // Git 状态：文件树打开项目后按固定间隔自动检测，只在变化时推送
+  registerGitStatusHandlers()
   // 文本流：大文件按块读取并增量灌入编辑器，句柄由主进程按窗口回收
   registerFileStreamHandlers()
   // 写入流：超大文本按块保存到临时文件，完成后原子替换目标
@@ -725,6 +728,7 @@ app.on('before-quit', () => {
   disposeAllFileStreams()
   disposeAllFileWrites()
   disposeAllDirectoryWatchers()
+  disposeAllGitStatusMonitors()
   for (const session of terminalSessions.values()) {
     session.process.kill()
   }

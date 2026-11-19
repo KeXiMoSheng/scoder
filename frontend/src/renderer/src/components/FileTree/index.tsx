@@ -2,8 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import { ChevronRight, ChevronsDownUp, FilePlus, FolderPlus, RotateCw } from 'lucide-react'
 import type { FileEntry } from '@shared/files/types'
+import type { GitFileStatus } from '@shared/git/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
+import { useGitStatus } from '../../hooks/useGitStatus'
 import { extractErrorMessage } from '../../lib/errorMessage'
+import { cn } from '../../lib/utils'
 import {
   basename,
   dirname,
@@ -26,6 +29,14 @@ import type {
   RenameArgs,
   SearchState
 } from './types'
+import {
+  applyDeleted,
+  buildDeletedIndex,
+  injectChildren,
+  mergeFileNodes,
+  NO_DELETED,
+  sortFileNodes
+} from './treeData'
 
 const ROW_HEIGHT = 24
 const INDENT = 14
@@ -44,97 +55,13 @@ const OpenContextMenuContext = createContext<(event: React.MouseEvent, data: Fil
   () => {}
 )
 
+/** 通过 context 传递 Git 状态：状态每次刷新都换新 Map，但要保持 TreeNode 组件标识稳定 */
+const GitStatusContext = createContext<ReadonlyMap<string, GitFileStatus>>(new Map())
+
 /** 根目录行的工具栏：随根目录行一起滚动，悬停该行时展示 */
 const RootToolbarContext = createContext<{ rootPath: string; toolbar: React.ReactNode } | null>(
   null
 )
-
-/** 目录节点初始给空数组，使其保持可展开形态（react-arborist 以 children 是否为数组判定叶子） */
-function toFileNode(entry: FileEntry): FileNode {
-  return { ...entry, children: entry.isDirectory ? [] : undefined }
-}
-
-/**
- * 目录条目与当前节点列表是否完全一致（名称、类型、顺序）：
- * 一致时保留原引用，避免保存文件等「只有内容变化」的事件引发整树重渲染。
- */
-function sameEntries(nodes: FileNode[], entries: FileEntry[]): boolean {
-  if (nodes.length !== entries.length) {
-    return false
-  }
-  for (let index = 0; index < entries.length; index++) {
-    const node = nodes[index]
-    const entry = entries[index]
-    if (
-      node.path !== entry.path ||
-      node.name !== entry.name ||
-      node.isDirectory !== entry.isDirectory
-    ) {
-      return false
-    }
-  }
-  return true
-}
-
-/**
- * 把目录最新条目合并为节点数组：路径未变的节点保留原对象（含已加载的深层子项），
- * 避免刷新后已展开的目录丢失内容；新增/类型变化的条目重建节点。
- * 条目完全一致时返回原数组，让上游的不可变更新能提前短路。
- */
-function mergeFileNodes(prevNodes: FileNode[], entries: FileEntry[]): FileNode[] {
-  if (sameEntries(prevNodes, entries)) {
-    return prevNodes
-  }
-  const prevByPath = new Map(prevNodes.map((node) => [node.path, node]))
-  return entries.map((entry) => {
-    const existing = prevByPath.get(entry.path)
-    if (existing && existing.isDirectory === entry.isDirectory) {
-      return existing
-    }
-    return toFileNode(entry)
-  })
-}
-
-/** 在树数据中定位目录并按最新条目替换其 children（不可变更新；未命中分支保持原引用避免整树重渲染） */
-function injectChildren(nodes: FileNode[], dirPath: string, entries: FileEntry[]): FileNode[] {
-  let changed = false
-  const next = nodes.map((node) => {
-    if (node.path === dirPath) {
-      const prevChildren = node.children ?? []
-      const nextChildren = mergeFileNodes(prevChildren, entries)
-      if (nextChildren === prevChildren) {
-        return node
-      }
-      changed = true
-      return { ...node, children: nextChildren }
-    }
-    if (!node.children || node.children.length === 0) {
-      return node
-    }
-    const nextChildren = injectChildren(node.children, dirPath, entries)
-    if (nextChildren === node.children) {
-      return node
-    }
-    changed = true
-    return { ...node, children: nextChildren }
-  })
-  return changed ? next : nodes
-}
-
-/** 目录在前、名称不区分大小写升序（与主进程 readDirectory 的排序一致） */
-function sortFileNodes(nodes: FileNode[]): void {
-  nodes.sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) {
-      return a.isDirectory ? -1 : 1
-    }
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-  })
-  for (const node of nodes) {
-    if (node.children && node.children.length > 0) {
-      sortFileNodes(node.children)
-    }
-  }
-}
 
 /** 由搜索结果构造仅含命中条目及其全部祖先目录的子树（搜索模式下的树数据） */
 function buildSearchTree(rootPath: string, entries: FileEntry[]): FileNode[] {
@@ -262,12 +189,42 @@ function RenameInput({ node }: { node: NodeApi<FileNode> }): React.JSX.Element {
   )
 }
 
+/** Git 状态标记：沿用「变更文件」面板的字母写法，只标状态，不展开增删行数 */
+const GIT_STATUS_MARK: Record<GitFileStatus, { letter: string; label: string; className: string }> =
+  {
+    added: { letter: 'A', label: '新增文件', className: 'text-link' },
+    modified: { letter: 'M', label: '已修改', className: 'text-dim' },
+    deleted: { letter: 'D', label: '已删除', className: 'text-danger' }
+  }
+
+/** 文件行最右边的 Git 状态标记 */
+function GitStatusBadge({ status }: { status: GitFileStatus }): React.JSX.Element {
+  const mark = GIT_STATUS_MARK[status]
+  return (
+    <span
+      className={cn(
+        'ml-1 w-3 shrink-0 text-center font-mono text-[10px] font-medium',
+        mark.className
+      )}
+      title={mark.label}
+    >
+      {mark.letter}
+    </span>
+  )
+}
+
 function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): React.JSX.Element {
   const dirtyPaths = useContext(DirtyPathsContext)
   const openContextMenu = useContext(OpenContextMenuContext)
   const rootToolbar = useContext(RootToolbarContext)
+  const gitStatuses = useContext(GitStatusContext)
   const isRoot = node.data.path === rootToolbar?.rootPath
   const isDirty = !node.data.isDirectory && dirtyPaths.has(node.data.path)
+  // 由 Git 状态补出的已删除目录没有自己的状态记录，按「已删除」展示
+  const gitStatus = isRoot
+    ? undefined
+    : (gitStatuses.get(node.data.path) ??
+      (node.data.gitDeleted === true ? ('deleted' as const) : undefined))
   const rowClass = node.isSelected
     ? 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
     : 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
@@ -314,6 +271,7 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       >
         {node.isEditing ? <RenameInput node={node} /> : undefined}
       </FileRow>
+      {gitStatus !== undefined ? <GitStatusBadge status={gitStatus} /> : null}
       {isRoot ? (
         <div
           className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
@@ -344,6 +302,19 @@ export default function FileTree({
   const treeRef = useRef<TreeApi<FileNode> | null>(null)
 
   const [treeData, setTreeData] = useState<FileNode[]>([])
+  // Git 状态由主进程自动检测：收到推送时把「已删除但仍在仓库里」的条目补进树
+  const deletedRef = useRef(NO_DELETED)
+  const git = useGitStatus(
+    rootPath,
+    useCallback(
+      (statuses: ReadonlyMap<string, GitFileStatus>) => {
+        const index = buildDeletedIndex(rootPath, statuses)
+        deletedRef.current = index
+        setTreeData((prev) => applyDeleted(prev, rootPath, index))
+      },
+      [rootPath]
+    )
+  )
   const [loadError, setLoadError] = useState<string | null>(null)
   // 根目录已被外部删除/重命名：树失效，展示提示并允许重试或重新打开文件夹
   const [rootMissing, setRootMissing] = useState(false)
@@ -398,7 +369,7 @@ export default function FileTree({
           return
         }
         loadedDirsRef.current.add(rootPath)
-        setTreeData(entries.map(toFileNode))
+        setTreeData((prev) => mergeFileNodes(prev, entries, deletedRef.current, rootPath))
         setLoadError(null)
         setRootMissing(false)
         syncWatchedDirectories()
@@ -428,7 +399,7 @@ export default function FileTree({
       loaded.add(dirPath)
       try {
         const entries = await window.api.readDirectory(dirPath)
-        setTreeData((prev) => injectChildren(prev, dirPath, entries))
+        setTreeData((prev) => injectChildren(prev, dirPath, entries, deletedRef.current))
         syncWatchedDirectories()
       } catch (reason) {
         loaded.delete(dirPath)
@@ -512,9 +483,9 @@ export default function FileTree({
       const entries = await window.api.readDirectory(dirPath)
       // 根目录不是树数据中的节点（树数据即根目录的子项），需直接合并到顶层
       if (dirPath === rootPath) {
-        setTreeData((prev) => mergeFileNodes(prev, entries))
+        setTreeData((prev) => mergeFileNodes(prev, entries, deletedRef.current, rootPath))
       } else {
-        setTreeData((prev) => injectChildren(prev, dirPath, entries))
+        setTreeData((prev) => injectChildren(prev, dirPath, entries, deletedRef.current))
       }
       syncWatchedDirectories()
     },
@@ -562,7 +533,9 @@ export default function FileTree({
             continue
           }
           next =
-            dir === rootPath ? mergeFileNodes(next, entries) : injectChildren(next, dir, entries)
+            dir === rootPath
+              ? mergeFileNodes(next, entries, deletedRef.current, rootPath)
+              : injectChildren(next, dir, entries, deletedRef.current)
         }
         return next
       })
@@ -583,7 +556,7 @@ export default function FileTree({
         try {
           const entries = await window.api.readDirectory(rootPath)
           loadedDirsRef.current.add(rootPath)
-          setTreeData(entries.map(toFileNode))
+          setTreeData((prev) => mergeFileNodes(prev, entries, deletedRef.current, rootPath))
           setRootMissing(false)
           setLoadError(null)
           syncWatchedDirectories()
@@ -598,6 +571,8 @@ export default function FileTree({
         return
       }
       await refreshDirectories(Array.from(loadedDirsRef.current))
+      // Git 标记与磁盘内容一起刷新，不必等下一个自动检测周期
+      void window.api.refreshGitStatus().catch(() => undefined)
     } finally {
       setRefreshing(false)
     }
@@ -616,6 +591,8 @@ export default function FileTree({
       const targets = dirs.filter((dir) => isAtOrUnder(dir, rootPath))
       if (targets.length > 0) {
         void autoRefreshRef.current(targets)
+        // 外部写入（终端、其他编辑器）同样会改变 Git 状态，立即重新检测一次
+        void window.api.refreshGitStatus().catch(() => undefined)
       }
     })
     return () => {
@@ -1002,31 +979,33 @@ export default function FileTree({
           <DirtyPathsContext.Provider value={dirtyPaths}>
             <OpenContextMenuContext.Provider value={openContextMenu}>
               <RootToolbarContext.Provider value={{ rootPath, toolbar: rootToolbar }}>
-                <Tree<FileNode>
-                  ref={treeRef}
-                  data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
-                  idAccessor="path"
-                  childrenAccessor="children"
-                  width={width}
-                  height={height}
-                  rowHeight={ROW_HEIGHT}
-                  indent={INDENT}
-                  // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
-                  openByDefault={false}
-                  initialOpenState={initialOpenState}
-                  searchTerm={searchActive ? trimmedQuery : undefined}
-                  disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
-                  disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
-                  disableMultiSelection
-                  selection={selectedPath ?? undefined}
-                  onMove={handleMove}
-                  onRename={handleRename}
-                  onToggle={handleToggle}
-                  onSelect={handleSelect}
-                  aria-label="项目文件树"
-                >
-                  {TreeNode}
-                </Tree>
+                <GitStatusContext.Provider value={git.statuses}>
+                  <Tree<FileNode>
+                    ref={treeRef}
+                    data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
+                    idAccessor="path"
+                    childrenAccessor="children"
+                    width={width}
+                    height={height}
+                    rowHeight={ROW_HEIGHT}
+                    indent={INDENT}
+                    // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
+                    openByDefault={false}
+                    initialOpenState={initialOpenState}
+                    searchTerm={searchActive ? trimmedQuery : undefined}
+                    disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
+                    disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
+                    disableMultiSelection
+                    selection={selectedPath ?? undefined}
+                    onMove={handleMove}
+                    onRename={handleRename}
+                    onToggle={handleToggle}
+                    onSelect={handleSelect}
+                    aria-label="项目文件树"
+                  >
+                    {TreeNode}
+                  </Tree>
+                </GitStatusContext.Provider>
               </RootToolbarContext.Provider>
             </OpenContextMenuContext.Provider>
           </DirtyPathsContext.Provider>

@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 import AboutSettings from '../AboutSettings'
 import AiSettings from '../AiSettings'
 import FileSettings from '../FileSettings'
+import GitSettings from '../GitSettings'
 import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
@@ -27,6 +28,7 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   ai: 'AI 助手',
   files: '编辑器',
   terminal: '终端',
+  git: 'Git',
   about: '关于'
 }
 
@@ -68,6 +70,7 @@ export default function SettingsPage({
           {section === 'ai' ? <AiSettings /> : null}
           {section === 'files' ? <FileSettings /> : null}
           {section === 'terminal' ? <TerminalSettings /> : null}
+          {section === 'git' ? <GitSettings /> : null}
           {section === 'about' ? <AboutSettings /> : null}
         </div>
       </SidebarInset>

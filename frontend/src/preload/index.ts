@@ -6,6 +6,10 @@ import type { AiAPI, AiEventEnvelope, AiFileReview, AiSendRequest } from '../sha
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
+import { GIT_CHANNELS } from '../shared/git/events'
+import { GIT_SETTINGS_CHANNELS } from '../shared/git/settings'
+import type { GitSettings } from '../shared/git/settings'
+import type { GitStatusSnapshot } from '../shared/git/types'
 import type {
   DirectoriesChangedEvent,
   FilesChangedEvent,
@@ -161,6 +165,21 @@ const api: ScoderAPI = {
   testPowerShellPath: (filePath: string) =>
     ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.test, filePath),
   openPowerShellDownload: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.openDownload),
+  // Git 设置：默认自动探测 PATH 上的 git，用户可指定可执行文件并测试版本
+  getGitSettings: () => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.get),
+  saveGitSettings: (input: GitSettings) => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.save, input),
+  browseGitPath: () => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.browse),
+  testGitPath: (filePath: string) => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.test, filePath),
+  // Git 状态：主进程按固定间隔自动检测，只在变化时推送
+  watchGitStatus: (root: string) => ipcRenderer.invoke(GIT_CHANNELS.watchStatus, root),
+  refreshGitStatus: () => ipcRenderer.invoke(GIT_CHANNELS.refreshStatus),
+  unwatchGitStatus: () => ipcRenderer.invoke(GIT_CHANNELS.unwatchStatus),
+  onGitStatusChanged: (callback: (event: GitStatusSnapshot) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: GitStatusSnapshot): void =>
+      callback(payload)
+    ipcRenderer.on(GIT_CHANNELS.statusChanged, listener)
+    return () => ipcRenderer.removeListener(GIT_CHANNELS.statusChanged, listener)
+  },
   // 窗口控制：动作类走单向 send；最大化状态需回查与订阅，供无边框标题栏切换图标
   windowMinimize: () => ipcRenderer.send(WINDOW_CHANNELS.minimize),
   windowToggleMaximize: () => ipcRenderer.send(WINDOW_CHANNELS.toggleMaximize),

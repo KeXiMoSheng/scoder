@@ -1,4 +1,13 @@
-import { Bot, Download, FileText, Info, Settings2, Sparkles, SquareTerminal } from 'lucide-react'
+import {
+  Bot,
+  Download,
+  FileText,
+  GitBranch,
+  Info,
+  Settings2,
+  Sparkles,
+  SquareTerminal
+} from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +29,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'ai', label: 'AI 助手', icon: Sparkles },
   { id: 'files', label: '编辑器', icon: FileText },
   { id: 'terminal', label: '终端', icon: SquareTerminal },
+  { id: 'git', label: 'Git', icon: GitBranch },
   { id: 'about', label: '关于', icon: Info }
 ]
 

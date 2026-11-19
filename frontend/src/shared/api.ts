@@ -22,6 +22,8 @@ import type {
 } from './files/types'
 import type { TextEncodingId } from './files/encoding'
 import type { FileSettings } from './files/settings'
+import type { GitSettings } from './git/settings'
+import type { GitStatusSnapshot, GitVersionInfo } from './git/types'
 import type {
   ModelConfig,
   ModelConfigInput,
@@ -131,6 +133,26 @@ export interface ScoderAPI {
   testPowerShellPath: (filePath: string) => Promise<string>
   /** 在系统浏览器中打开 PowerShell 官方下载页 */
   openPowerShellDownload: () => Promise<void>
+
+  /** 读取 Git 设置（可执行文件路径；空字符串表示自动使用 PATH 上的 git） */
+  getGitSettings: () => Promise<GitSettings>
+  /** 保存 Git 设置；路径非法时整份拒绝并抛错 */
+  saveGitSettings: (input: GitSettings) => Promise<GitSettings>
+  /** 弹出系统文件选择框挑选 git 可执行文件；用户取消时返回 null */
+  browseGitPath: () => Promise<string | null>
+  /** 实际运行 `git --version` 并返回版本号；空路径测试自动探测的 git */
+  testGitPath: (filePath: string) => Promise<GitVersionInfo>
+  /**
+   * 开始自动检测某个工作区的 Git 状态（重复调用即切换目标）：
+   * 主进程按固定间隔运行 `git status`，只在状态变化时通过 onGitStatusChanged 推送。
+   */
+  watchGitStatus: (root: string) => Promise<void>
+  /** 立即重新检测一次（手动刷新文件树、收到磁盘变更时使用） */
+  refreshGitStatus: () => Promise<void>
+  /** 停止自动检测（关闭或切换项目时调用） */
+  unwatchGitStatus: () => Promise<void>
+  /** 订阅工作区 Git 状态变化；返回取消订阅函数 */
+  onGitStatusChanged: (callback: (event: GitStatusSnapshot) => void) => () => void
   /** 最小化当前窗口 */
   windowMinimize: () => void
   /** 在当前窗口的最大化/还原状态间切换 */
