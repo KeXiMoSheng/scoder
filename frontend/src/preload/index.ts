@@ -21,6 +21,8 @@ import { FILE_SETTINGS_CHANNELS } from '../shared/files/settings'
 import type { FileSettings } from '../shared/files/settings'
 import { MODEL_CONFIG_CHANNELS } from '../shared/model-config/events'
 import type { ModelConfigInput, RemoteModelListRequest } from '../shared/model-config/types'
+import { MCP_CHANNELS } from '../shared/mcp/events'
+import type { McpServerInput, McpServerView } from '../shared/mcp/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
 import { TERMINAL_SETTINGS_CHANNELS, type TerminalSettings } from '../shared/terminal/settings'
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
@@ -215,6 +217,22 @@ const api: ScoderAPI = {
   getAiRuntimeSettings: () => ipcRenderer.invoke(AI_RUNTIME_CHANNELS.get),
   saveAiRuntimeSettings: (input: AiRuntimeSettings) =>
     ipcRenderer.invoke(AI_RUNTIME_CHANNELS.save, input),
+  // MCP 服务端：配置落在主进程 SQLite，连接与工具由主进程持有
+  listMcpServers: () => ipcRenderer.invoke(MCP_CHANNELS.list),
+  createMcpServer: (input: McpServerInput) => ipcRenderer.invoke(MCP_CHANNELS.create, input),
+  updateMcpServer: (id: number, input: McpServerInput) =>
+    ipcRenderer.invoke(MCP_CHANNELS.update, id, input),
+  deleteMcpServer: (id: number) => ipcRenderer.invoke(MCP_CHANNELS.delete, id),
+  setMcpServerEnabled: (id: number, enabled: boolean) =>
+    ipcRenderer.invoke(MCP_CHANNELS.setEnabled, id, enabled),
+  probeMcpServer: (id: number) => ipcRenderer.invoke(MCP_CHANNELS.probe, id),
+  restartMcpServer: (id: number) => ipcRenderer.invoke(MCP_CHANNELS.restart, id),
+  // 状态推送：连接中/已连接/重试中/失败，单条服务端粒度
+  onMcpServerStatus: (callback: (view: McpServerView) => void) => {
+    const listener = (_event: IpcRendererEvent, view: McpServerView): void => callback(view)
+    ipcRenderer.on(MCP_CHANNELS.status, listener)
+    return () => ipcRenderer.removeListener(MCP_CHANNELS.status, listener)
+  },
   // 应用信息与官方仓库跳转：关于页展示版本号，点击地址交给系统浏览器
   getAppInfo: () => ipcRenderer.invoke(APP_CHANNELS.getInfo),
   openRepository: () => ipcRenderer.invoke(APP_CHANNELS.openRepository),

@@ -16,6 +16,13 @@ scoder（全称 **Super Coder**）是一款本地运行的 AI 编码桌面应用
 - 多会话：以 JSONL 持久化，支持标签页、历史列表、自动生成标题、单条 / 批量导出
 - 上下文用量展示；单段步数用满后自动续接，连续重复调用会提醒直至中止；可随时中断本轮
 
+### MCP 扩展工具
+
+- 接入 Model Context Protocol 服务端：`stdio`（本机子进程）与 `streamable-http`（远程端点）两种连接方式
+- 服务端工具以 `mcp__服务名__工具名` 注册给模型，服务端自述的使用说明随系统提示一起下发；断线按指数退避自动重连，重试预算耗尽后注销该服务端的工具
+- 设置页「MCP 服务」支持增删改、启用/停用、测试连接与手动重连；可配置启动命令与参数、环境变量、请求头、工具调用超时与重连策略
+- 当前只接入 MCP 的工具（tools）能力；resources、prompts、elicitation 与 OAuth 授权暂未支持
+
 ### 代码编辑
 
 - Monaco 编辑器，多标签页，语法高亮，启动时恢复上次未关闭的页签
@@ -59,7 +66,7 @@ scoder/
 │   ├── src/shared/          # 主进程与渲染进程共享的类型与通道常量
 │   ├── src/renderer/        # React 界面（Monaco、xterm、Tailwind）
 │   ├── build/               # 打包资源（应用图标、NSIS 安装脚本、entitlements）
-│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询）
+│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询 / MCP 冒烟）
 ├── Makefile                 # 开发、构建、打包的统一入口
 └── README.md
 ```

@@ -16,6 +16,8 @@ export type DbErrorCode =
   | 'INVALID_ARGUMENT'
   /** 按主键查不到记录 */
   | 'MODEL_CONFIG_NOT_FOUND'
+  /** 按主键查不到 MCP 服务端配置 */
+  | 'MCP_SERVER_NOT_FOUND'
 
 /** 带稳定错误码的数据库异常 */
 export class DbError extends Error {

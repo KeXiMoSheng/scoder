@@ -4,6 +4,7 @@ import {
   FileText,
   GitBranch,
   Info,
+  Plug,
   Settings2,
   Sparkles,
   SquareTerminal
@@ -27,6 +28,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'models', label: '模型', icon: Bot },
   { id: 'import', label: '一键导入模型', icon: Download },
   { id: 'ai', label: 'AI 助手', icon: Sparkles },
+  { id: 'mcp', label: 'MCP 服务', icon: Plug },
   { id: 'files', label: '编辑器', icon: FileText },
   { id: 'terminal', label: '终端', icon: SquareTerminal },
   { id: 'git', label: 'Git', icon: GitBranch },

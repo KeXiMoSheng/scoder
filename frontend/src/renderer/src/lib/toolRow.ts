@@ -34,8 +34,8 @@ export interface ToolRowDefinition {
 
 /**
  * 工具名 → 行定义。
- * 未登记的工具回退为「工具名 + 参数里第一个短字符串」的通用行，
- * 因此新增工具不登记也能正常展示，只是摘要质量差一些。
+ * 未登记的工具回退为通用行：标题优先用主进程给出的卡片标题，摘要取参数里第一个短字符串，
+ * 因此新增工具（例如 MCP 工具）不登记也能正常展示，只是摘要质量差一些。
  */
 export const TOOL_ROW_DEFINITIONS: Record<string, ToolRowDefinition> = {
   read: {
@@ -114,9 +114,11 @@ export interface ToolRowModel {
  * @param cwd 当前工作区根；摘要里的绝对路径转成相对路径展示
  */
 export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRowModel {
+  // 未登记的工具（例如 MCP 工具）用主进程推导的卡片标题：MCP 工具名带命名空间，
+  // 直接把 mcp__服务名__工具名 当标题太技术化，卡片标题已经写成「服务名 · 工具名」
   const definition = TOOL_ROW_DEFINITIONS[message.name] ?? {
     variant: 'others' as const,
-    title: message.name
+    title: message.card?.title ?? message.name
   }
   const args = parseArguments(message.arguments)
   const card = message.card

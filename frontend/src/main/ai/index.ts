@@ -15,17 +15,18 @@ import type {
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById, getAiRuntimeSettings } from '../db'
+import { mcpManager } from '../mcp/manager'
 import { CHANGE_SNAPSHOT_DIR_NAME, ChangeSnapshotStore } from './changes/snapshots'
 import { lastContextUsage } from './context'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
 import type { OpenAiConfig } from './llm/openai'
 import { runTurn } from './loop/agentLoop'
+import { toolRegistry as registry } from './registry'
 import { assertSessionId, SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
 import type { SessionEvent } from './session/types'
 import { toMessageViews } from './session/view'
-import { createToolRegistry } from './tools'
 import { errorMessage } from './tools/registry'
 
 /**
@@ -43,9 +44,6 @@ const sessions = new SessionStore(sessionsRoot)
 const changeSnapshots = new ChangeSnapshotStore(() =>
   join(app.getPath('userData'), CHANGE_SNAPSHOT_DIR_NAME)
 )
-
-/** 工具注册表：工具本身无状态，整个进程共享一份 */
-const registry = createToolRegistry()
 
 /** 会话级“已读”观测：先读后改策略的状态，按 sessionId 隔离 */
 const observations = new ObservationStore()
@@ -370,6 +368,8 @@ async function startTurn(
       changes: changeSnapshots,
       // 每轮开始时现读：用户在设置页改完，下一条消息立即生效
       settings: getAiRuntimeSettings(),
+      // 已连接的 MCP 服务端同样现读：刚连上的工具这一轮就能用，说明文字进系统提示
+      mcpServers: mcpManager.promptServers(),
       emit,
       signal
     })

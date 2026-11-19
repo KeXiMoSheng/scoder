@@ -4,6 +4,7 @@ import AboutSettings from '../AboutSettings'
 import AiSettings from '../AiSettings'
 import FileSettings from '../FileSettings'
 import GitSettings from '../GitSettings'
+import McpSettings from '../McpSettings'
 import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
@@ -26,6 +27,7 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   models: '模型',
   import: '一键导入模型',
   ai: 'AI 助手',
+  mcp: 'MCP 服务',
   files: '编辑器',
   terminal: '终端',
   git: 'Git',
@@ -68,6 +70,7 @@ export default function SettingsPage({
           {section === 'models' ? <ModelSettings onOpenImport={openImport} /> : null}
           {section === 'import' ? <ModelImport onOpenModels={openModels} /> : null}
           {section === 'ai' ? <AiSettings /> : null}
+          {section === 'mcp' ? <McpSettings /> : null}
           {section === 'files' ? <FileSettings /> : null}
           {section === 'terminal' ? <TerminalSettings /> : null}
           {section === 'git' ? <GitSettings /> : null}

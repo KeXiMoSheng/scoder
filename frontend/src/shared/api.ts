@@ -30,6 +30,7 @@ import type {
   ModelImportResult,
   RemoteModelListRequest
 } from './model-config/types'
+import type { McpProbeResult, McpServerConfig, McpServerInput, McpServerView } from './mcp/types'
 import type { TerminalSettings } from './terminal/settings'
 import type { TerminalCreateResult, TerminalDataEvent, TerminalExitEvent } from './terminal/types'
 import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
@@ -133,7 +134,6 @@ export interface ScoderAPI {
   testPowerShellPath: (filePath: string) => Promise<string>
   /** 在系统浏览器中打开 PowerShell 官方下载页 */
   openPowerShellDownload: () => Promise<void>
-
   /** 读取 Git 设置（可执行文件路径；空字符串表示自动使用 PATH 上的 git） */
   getGitSettings: () => Promise<GitSettings>
   /** 保存 Git 设置；路径非法时整份拒绝并抛错 */
@@ -192,6 +192,22 @@ export interface ScoderAPI {
   getAiRuntimeSettings: () => Promise<AiRuntimeSettings>
   /** 保存 AI 运行参数，返回校验并落库后的结果 */
   saveAiRuntimeSettings: (input: AiRuntimeSettings) => Promise<AiRuntimeSettings>
+  /** 读取全部 MCP 服务端配置及其当前连接状态 */
+  listMcpServers: () => Promise<McpServerView[]>
+  /** 新建 MCP 服务端配置；保存后立即尝试连接 */
+  createMcpServer: (input: McpServerInput) => Promise<McpServerConfig>
+  /** 更新 MCP 服务端配置；连接会按新配置重建 */
+  updateMcpServer: (id: number, input: McpServerInput) => Promise<McpServerConfig>
+  /** 删除 MCP 服务端配置（主进程弹确认框）；用户取消时返回 false */
+  deleteMcpServer: (id: number) => Promise<boolean>
+  /** 启用/停用一条 MCP 服务端配置；停用即断开并注销其工具 */
+  setMcpServerEnabled: (id: number, enabled: boolean) => Promise<McpServerConfig>
+  /** 测试连接：临时连接并列出工具后断开，不影响正在运行的实例 */
+  probeMcpServer: (id: number) => Promise<McpProbeResult>
+  /** 重建连接（重置重试预算） */
+  restartMcpServer: (id: number) => Promise<void>
+  /** 订阅 MCP 服务端状态变化；返回取消订阅函数 */
+  onMcpServerStatus: (callback: (view: McpServerView) => void) => () => void
   /** 读取应用基础信息（版本号与官方仓库地址），供设置页「关于」展示 */
   getAppInfo: () => Promise<AppInfo>
   /** 在系统浏览器中打开官方 GitHub 仓库 */

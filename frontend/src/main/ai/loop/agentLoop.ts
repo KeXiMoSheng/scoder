@@ -13,6 +13,7 @@ import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
 import { modelTextOf } from '../session/view'
 import { errorMessage, type ToolExecutionResult, type ToolRegistry } from '../tools/registry'
+import type { McpPromptServer } from '../../../shared/mcp/types'
 import { RepeatCallGuard } from './repeatGuard'
 
 /** 流式累积中的工具调用（同一 index 的片段合并成一次调用） */
@@ -35,6 +36,8 @@ export interface RunTurnOptions {
   changes: ChangeSnapshotStore
   /** 本轮使用的运行参数：由调用方从设置读取，循环本身不碰数据库 */
   settings: AiRuntimeSettings
+  /** 当前已连接的 MCP 服务端：进入系统提示，为空时提示词里没有 MCP 段落 */
+  mcpServers?: readonly McpPromptServer[]
   /** 事件出口：主进程里是 webContents.send，测试里可以直接收集 */
   emit: (event: AiEvent) => void
   /** 用户中止信号 */
@@ -56,7 +59,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   const turn = state.turnCount + 1
   // 附件在落盘前整理成内容块：只有选中行带文本，文件/目录只记录路径与类型
   const attachments = await toAttachmentBlocks(fs, request.attachments)
-  const messages = await initialMessages(sessions, request, attachments)
+  const messages = await initialMessages(sessions, request, attachments, options.mcpServers ?? [])
   const tools = toOpenAiTools(registry.list())
   let reason: AiTurnEndReason = 'done'
 
@@ -252,10 +255,14 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
 async function initialMessages(
   sessions: SessionStore,
   request: AiSendRequest,
-  attachments: readonly SessionBlock[]
+  attachments: readonly SessionBlock[],
+  mcpServers: readonly McpPromptServer[]
 ): Promise<ChatMessage[]> {
   const history = await sessions.history(request.cwd, request.sessionId)
-  const systemMessage: ChatMessage = { role: 'system', content: buildSystemPrompt(request.cwd) }
+  const systemMessage: ChatMessage = {
+    role: 'system',
+    content: buildSystemPrompt(request.cwd, process.platform, mcpServers)
+  }
   const userMessage: ChatMessage = {
     role: 'user',
     content: modelTextOf([{ type: 'text', text: request.prompt }, ...attachments])

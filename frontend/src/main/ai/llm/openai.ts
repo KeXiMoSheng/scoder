@@ -1,4 +1,4 @@
-import type { AiTokenUsage, JsonSchemaObject } from '../../../shared/ai/types'
+import type { AiTokenUsage, ToolParameterSchema } from '../../../shared/ai/types'
 import type { ModelReasoningEffort } from '../../../shared/model-config/types'
 import type { ToolDefinition } from '../tools/registry'
 
@@ -31,7 +31,7 @@ export interface ChatMessage {
 /** 提供给模型的工具声明 */
 export interface OpenAiToolSpec {
   type: 'function'
-  function: { name: string; description: string; parameters: JsonSchemaObject }
+  function: { name: string; description: string; parameters: ToolParameterSchema }
 }
 
 /** 流式增量：文本片段、工具调用参数片段或最终 usage（工具调用按 index 合并） */

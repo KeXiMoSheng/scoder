@@ -9,6 +9,7 @@
  * - app-settings：应用设置仓储
  * - terminal-settings：终端设置（PowerShell 7 路径）
  * - git-settings：Git 设置（可执行文件路径）
+ * - mcp-servers：MCP 服务端配置
  * - ipc：渲染进程通道
  */
 export { closeDatabase, initDatabase } from './connection'
@@ -20,3 +21,11 @@ export { getModelImportForm, saveModelImportForm } from './model-import-settings
 export { getAiRuntimeSettings } from './app-settings'
 export { getTerminalSettings } from './terminal-settings'
 export { getGitSettings } from './git-settings'
+export {
+  createMcpServer,
+  deleteMcpServer,
+  findMcpServer,
+  listMcpServers,
+  setMcpServerEnabled,
+  updateMcpServer
+} from './mcp-servers'
