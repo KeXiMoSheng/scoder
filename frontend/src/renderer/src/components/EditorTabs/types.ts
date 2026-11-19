@@ -1,6 +1,7 @@
 /** EditorTabs 组件的对外类型定义 */
 
 import type { OpenedFile } from '../../hooks/useOpenedFiles'
+import type { GitFileStatus } from '@shared/git/types'
 
 export interface EditorTabsProps {
   /** 已打开的文件（按打开顺序） */
@@ -9,6 +10,8 @@ export interface EditorTabsProps {
   activePath: string | null
   /** 有未保存修改的文件路径集合（显示脏标记） */
   dirtyPaths: ReadonlySet<string>
+  /** 工作区 Git 状态（绝对路径 → 状态），与文件树共用 App 的同一份快照 */
+  gitStatuses: ReadonlyMap<string, GitFileStatus>
   onActivate: (path: string) => void
   onClose: (path: string) => void
   onCloseOthers: (path: string) => void

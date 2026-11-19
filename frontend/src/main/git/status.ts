@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { existsSync, realpathSync } from 'fs'
-import { isAbsolute, join, relative, sep } from 'path'
+import { isAbsolute, join, relative, sep, win32 } from 'path'
+import { findExecutable } from '../executable'
 import type {
   GitFileStatus,
   GitStatusEntry,
@@ -43,6 +44,31 @@ export function detectGit(configuredPath: string): string {
     return trimmed
   }
   return 'git'
+}
+
+/**
+ * 自动探测 git 可执行文件的绝对路径，供设置页预先填入。
+ *
+ * 先按当前平台的 PATH 规则查找，再尝试 Git for Windows 与 POSIX 的常见安装目录；
+ * 返回的路径使用当前系统的目录分隔符（Windows 为 `\`，POSIX 为 `/`）。
+ * @returns 找到的绝对路径；系统里没有可用的 git 时为 null
+ */
+export function detectGitPath(): string | null {
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files'
+    const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'
+    const localAppData = process.env.LOCALAPPDATA
+    return findExecutable(
+      ['git.exe'],
+      [
+        win32.join(programFiles, 'Git', 'cmd', 'git.exe'),
+        win32.join(programFiles, 'Git', 'bin', 'git.exe'),
+        win32.join(programFilesX86, 'Git', 'cmd', 'git.exe'),
+        localAppData ? win32.join(localAppData, 'Programs', 'Git', 'cmd', 'git.exe') : null
+      ]
+    )
+  }
+  return findExecutable(['git'], ['/usr/bin/git', '/usr/local/bin/git', '/opt/homebrew/bin/git'])
 }
 
 /**

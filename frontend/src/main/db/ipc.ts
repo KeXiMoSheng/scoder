@@ -1,11 +1,4 @@
-import {
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  shell,
-  type MessageBoxOptions,
-  type OpenDialogOptions
-} from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell, type MessageBoxOptions } from 'electron'
 import { existsSync, promises as fs } from 'fs'
 import { isAbsolute, win32 } from 'path'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../../shared/ai/settings'
@@ -21,8 +14,8 @@ import {
 } from '../../shared/terminal/settings'
 import { WORKSPACE_CHANNELS } from '../../shared/workspace/events'
 import type { EditorTabsSnapshot, RecentProject } from '../../shared/workspace/types'
-import { nudgeGitStatusMonitors, probeGitVersion } from '../git'
-import { probePowerShellVersion } from '../powershell'
+import { detectGitPath, nudgeGitStatusMonitors, probeGitVersion } from '../git'
+import { detectPowerShell7Path, probePowerShellVersion } from '../powershell'
 import { getAiRuntimeSettings, saveAiRuntimeSettings } from './app-settings'
 import { DbError } from './errors'
 import { getFileSettings, saveFileSettings } from './file-settings'
@@ -98,19 +91,8 @@ export function registerDatabaseHandlers(): void {
     (_event, input: TerminalSettings): TerminalSettings => saveTerminalSettings(input)
   )
 
-  // 选择 pwsh.exe：只负责弹框取路径，是否保存由设置页决定
-  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.browse, async (event): Promise<string | null> => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const options: OpenDialogOptions = {
-      title: '选择 PowerShell 7（pwsh.exe）',
-      properties: ['openFile'],
-      filters: [{ name: 'PowerShell 7', extensions: ['exe'] }]
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
+  // 自动探测 pwsh.exe：设置页首屏据此预先填入路径（不落库）
+  ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.detect, (): string | null => detectPowerShell7Path())
 
   // 测试：实际启动一次进程并读版本号，保存前就能发现路径失效
   ipcMain.handle(TERMINAL_SETTINGS_CHANNELS.test, (_event, filePath: string): Promise<string> => {
@@ -139,20 +121,8 @@ function registerGitSettingsHandlers(): void {
     return saved
   })
 
-  // 选择 git 可执行文件：只负责弹框取路径，是否保存由设置页决定
-  ipcMain.handle(GIT_SETTINGS_CHANNELS.browse, async (event): Promise<string | null> => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const options: OpenDialogOptions = {
-      title: '选择 git 可执行文件',
-      properties: ['openFile'],
-      // Windows 的 git 是 .exe；macOS / Linux 的可执行文件没有扩展名，不加过滤器
-      ...(process.platform === 'win32' ? { filters: [{ name: 'Git', extensions: ['exe'] }] } : {})
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
+  // 自动探测 git：设置页首屏据此预先填入路径（不落库）
+  ipcMain.handle(GIT_SETTINGS_CHANNELS.detect, (): string | null => detectGitPath())
 
   // 测试：真的执行一次 `git --version`，保存前就能发现路径失效
   ipcMain.handle(

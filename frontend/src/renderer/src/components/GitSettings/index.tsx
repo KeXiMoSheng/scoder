@@ -17,39 +17,46 @@ interface TestResult {
 /**
  * Git 设置分区：指定 git 可执行文件，并提供版本测试。
  *
- * 与终端设置一样不做猜测：留空即使用 PATH 上的 git，装了 Git 的机器开箱可用；
- * 只有 PATH 里没有 git（或想固定某个版本）时，才需要手动指定路径。
+ * 打开本页时会自动探测系统中的 git 并预填路径；留空仍表示使用 PATH 上的 git，
+ * 只有想固定某个版本（或 PATH 里没有 git）时才需要手动指定。
  */
 export default function GitSettings(): React.JSX.Element {
   const [path, setPath] = useState(DEFAULT_GIT_SETTINGS.gitPath)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [browsing, setBrowsing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
 
-  // 首屏加载：在异步回调里更新状态，避免 effect 内同步触发级联渲染
+  // 首屏加载：没有保存路径时用自动探测结果预填，方便用户看到实际使用的 git
   useEffect(() => {
     let active = true
-    window.api
-      .getGitSettings()
-      .then((settings) => {
-        if (active) {
-          setPath(settings.gitPath)
+    void (async () => {
+      try {
+        const settings = await window.api.getGitSettings()
+        if (!active) {
+          return
         }
-      })
-      .catch((reason) => {
+        if (settings.gitPath.trim().length > 0) {
+          setPath(settings.gitPath)
+          return
+        }
+        // 探测只是辅助：失败时保持留空，仍可在 PATH 上自动使用 git
+        const detected = await window.api.detectGitPath().catch(() => null)
+        if (active) {
+          setPath(detected ?? '')
+        }
+      } catch (reason) {
         if (active) {
           setError(extractErrorMessage(reason))
         }
-      })
-      .finally(() => {
+      } finally {
         if (active) {
           setLoading(false)
         }
-      })
+      }
+    })()
     return () => {
       active = false
     }
@@ -61,25 +68,20 @@ export default function GitSettings(): React.JSX.Element {
     setTestResult(null)
   }, [])
 
+  // 与文件树的「在文件资源管理器中显示」共用 revealEntry：
+  // 浏览按钮直接打开系统文件管理器并选中当前路径
   const browse = useCallback(async (): Promise<void> => {
-    if (browsing) {
+    const target = path.trim()
+    if (target.length === 0) {
       return
     }
-    setBrowsing(true)
     setError(null)
     try {
-      const picked = await window.api.browseGitPath()
-      if (picked !== null) {
-        setPath(picked)
-        setSaved(false)
-        setTestResult(null)
-      }
+      await window.api.revealEntry(target)
     } catch (reason) {
       setError(extractErrorMessage(reason))
-    } finally {
-      setBrowsing(false)
     }
-  }, [browsing])
+  }, [path])
 
   // 测试不要求先保存：输入框里的路径直接拿去运行，方便边选边试；留空时测试自动探测的 git
   const test = useCallback(async (): Promise<void> => {
@@ -141,8 +143,8 @@ export default function GitSettings(): React.JSX.Element {
       <div>
         <h1 className="text-lg font-semibold text-fg">Git</h1>
         <p className="mt-1 leading-[1.6] text-dim">
-          文件树会用 Git 标记新增、修改与删除的文件。默认使用系统 PATH 上的 git；如果 git 没有加进
-          PATH，可以在这里指定可执行文件。
+          文件树会用 Git 标记新增、修改与删除的文件。打开本页时会自动探测系统中的 git
+          并填入路径；留空仍表示使用 PATH 上的 git，也可以手动指定可执行文件。
         </p>
       </div>
 
@@ -157,7 +159,7 @@ export default function GitSettings(): React.JSX.Element {
           <CardHeader>
             <CardTitle className="text-sm">Git 可执行文件</CardTitle>
             <CardDescription className="text-[12px]">
-              指定后，文件树的状态标记都会使用这个 git；留空则自动探测。
+              自动探测到的路径会预先填入；留空则使用 PATH 上的 git。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -175,14 +177,17 @@ export default function GitSettings(): React.JSX.Element {
                   <Button
                     type="button"
                     variant="outline"
+                    title="在文件资源管理器中显示并选中当前路径"
+                    disabled={path.trim().length === 0}
                     onClick={() => void browse()}
-                    disabled={browsing}
                   >
-                    {browsing ? '选择中…' : '浏览…'}
+                    浏览…
                   </Button>
                 </div>
                 <FieldDescription>
-                  留空表示使用 PATH 上的 git。修改后，文件树的 Git 标记会在下一次自动检测时生效。
+                  留空表示使用 PATH 上的 git；打开本页时会自动填入探测到的路径。「浏览…」会在系统
+                  文件管理器中显示并选中当前路径。修改后，文件树的 Git
+                  标记会在下一次自动检测时生效。
                 </FieldDescription>
               </Field>
 

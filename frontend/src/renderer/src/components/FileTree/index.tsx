@@ -6,7 +6,7 @@ import type { GitFileStatus } from '@shared/git/types'
 import { useContainerSize } from '../../hooks/useContainerSize'
 import { useGitStatus } from '../../hooks/useGitStatus'
 import { extractErrorMessage } from '../../lib/errorMessage'
-import { cn } from '../../lib/utils'
+import { buildDirectoryGitStatuses, GIT_STATUS_TEXT_CLASS } from '../../lib/gitStatus'
 import {
   basename,
   dirname,
@@ -19,6 +19,7 @@ import {
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
+import GitStatusBadge from '../GitStatusBadge'
 import PromptDialog from '../PromptDialog'
 import { Button } from '../ui/button'
 import type {
@@ -57,6 +58,9 @@ const OpenContextMenuContext = createContext<(event: React.MouseEvent, data: Fil
 
 /** 通过 context 传递 Git 状态：状态每次刷新都换新 Map，但要保持 TreeNode 组件标识稳定 */
 const GitStatusContext = createContext<ReadonlyMap<string, GitFileStatus>>(new Map())
+
+/** 由文件状态聚合出的目录状态：目录行按子孙的变化着色（新增 / 修改） */
+const DirectoryGitStatusContext = createContext<ReadonlyMap<string, GitFileStatus>>(new Map())
 
 /** 根目录行的工具栏：随根目录行一起滚动，悬停该行时展示 */
 const RootToolbarContext = createContext<{ rootPath: string; toolbar: React.ReactNode } | null>(
@@ -189,42 +193,22 @@ function RenameInput({ node }: { node: NodeApi<FileNode> }): React.JSX.Element {
   )
 }
 
-/** Git 状态标记：沿用「变更文件」面板的字母写法，只标状态，不展开增删行数 */
-const GIT_STATUS_MARK: Record<GitFileStatus, { letter: string; label: string; className: string }> =
-  {
-    added: { letter: 'A', label: '新增文件', className: 'text-link' },
-    modified: { letter: 'M', label: '已修改', className: 'text-dim' },
-    deleted: { letter: 'D', label: '已删除', className: 'text-danger' }
-  }
-
-/** 文件行最右边的 Git 状态标记 */
-function GitStatusBadge({ status }: { status: GitFileStatus }): React.JSX.Element {
-  const mark = GIT_STATUS_MARK[status]
-  return (
-    <span
-      className={cn(
-        'ml-1 w-3 shrink-0 text-center font-mono text-[10px] font-medium',
-        mark.className
-      )}
-      title={mark.label}
-    >
-      {mark.letter}
-    </span>
-  )
-}
-
 function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): React.JSX.Element {
   const dirtyPaths = useContext(DirtyPathsContext)
   const openContextMenu = useContext(OpenContextMenuContext)
   const rootToolbar = useContext(RootToolbarContext)
   const gitStatuses = useContext(GitStatusContext)
+  const directoryGitStatuses = useContext(DirectoryGitStatusContext)
   const isRoot = node.data.path === rootToolbar?.rootPath
   const isDirty = !node.data.isDirectory && dirtyPaths.has(node.data.path)
-  // 由 Git 状态补出的已删除目录没有自己的状态记录，按「已删除」展示
-  const gitStatus = isRoot
-    ? undefined
-    : (gitStatuses.get(node.data.path) ??
-      (node.data.gitDeleted === true ? ('deleted' as const) : undefined))
+  // 目录本身没有 Git 条目时按子孙聚合（单一状态沿用、混合状态归为修改）；
+  // 未跟踪目录会被 git 合并成一条目录记录，此时直接采用该记录的状态。
+  // 文件直接取自己的状态，并在行尾展示 A/M/D。由 Git 状态补出的已删除文件
+  // 没有额外状态记录时按「已删除」展示。
+  const directGitStatus = gitStatuses.get(node.data.path)
+  const gitStatus = node.data.isDirectory
+    ? (directGitStatus ?? directoryGitStatuses.get(node.data.path))
+    : (directGitStatus ?? (node.data.gitDeleted === true ? 'deleted' : undefined))
   const rowClass = node.isSelected
     ? 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
     : 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
@@ -259,6 +243,7 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
         name={node.data.name}
         // 目录不展示图标，名称紧跟展开箭头，避免图标位置留下空白
         icon={node.data.isDirectory ? null : undefined}
+        nameClassName={gitStatus !== undefined ? GIT_STATUS_TEXT_CLASS[gitStatus] : undefined}
         trailing={
           isDirty ? (
             <span
@@ -295,6 +280,7 @@ export default function FileTree({
   onEntryMoved,
   onEntryDeleted,
   onSendToAi,
+  onGitStatusesChange,
   onReopenProject
 }: FileTreeProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -302,7 +288,8 @@ export default function FileTree({
   const treeRef = useRef<TreeApi<FileNode> | null>(null)
 
   const [treeData, setTreeData] = useState<FileNode[]>([])
-  // Git 状态由主进程自动检测：收到推送时把「已删除但仍在仓库里」的条目补进树
+  // Git 状态由主进程自动检测：收到推送时把「已删除但仍在仓库里」的条目补进树，
+  // 同时上报给 App，让编辑器页签等其它界面复用同一份快照
   const deletedRef = useRef(NO_DELETED)
   const git = useGitStatus(
     rootPath,
@@ -311,9 +298,15 @@ export default function FileTree({
         const index = buildDeletedIndex(rootPath, statuses)
         deletedRef.current = index
         setTreeData((prev) => applyDeleted(prev, rootPath, index))
+        onGitStatusesChange?.(rootPath, statuses)
       },
-      [rootPath]
+      [rootPath, onGitStatusesChange]
     )
+  )
+  // 目录行按子孙文件的状态聚合：只有一种状态时沿用，出现多种状态统一归为修改
+  const directoryGitStatuses = useMemo(
+    () => buildDirectoryGitStatuses(rootPath, git.statuses),
+    [rootPath, git.statuses]
   )
   const [loadError, setLoadError] = useState<string | null>(null)
   // 根目录已被外部删除/重命名：树失效，展示提示并允许重试或重新打开文件夹
@@ -980,31 +973,33 @@ export default function FileTree({
             <OpenContextMenuContext.Provider value={openContextMenu}>
               <RootToolbarContext.Provider value={{ rootPath, toolbar: rootToolbar }}>
                 <GitStatusContext.Provider value={git.statuses}>
-                  <Tree<FileNode>
-                    ref={treeRef}
-                    data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
-                    idAccessor="path"
-                    childrenAccessor="children"
-                    width={width}
-                    height={height}
-                    rowHeight={ROW_HEIGHT}
-                    indent={INDENT}
-                    // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
-                    openByDefault={false}
-                    initialOpenState={initialOpenState}
-                    searchTerm={searchActive ? trimmedQuery : undefined}
-                    disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
-                    disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
-                    disableMultiSelection
-                    selection={selectedPath ?? undefined}
-                    onMove={handleMove}
-                    onRename={handleRename}
-                    onToggle={handleToggle}
-                    onSelect={handleSelect}
-                    aria-label="项目文件树"
-                  >
-                    {TreeNode}
-                  </Tree>
+                  <DirectoryGitStatusContext.Provider value={directoryGitStatuses}>
+                    <Tree<FileNode>
+                      ref={treeRef}
+                      data={searchActive ? (currentSearch?.entries ?? []) : rootTreeData}
+                      idAccessor="path"
+                      childrenAccessor="children"
+                      width={width}
+                      height={height}
+                      rowHeight={ROW_HEIGHT}
+                      indent={INDENT}
+                      // 目录默认折叠：懒加载下展开时才请求子项（react-arborist 默认值为 true，会导致首次点击只折叠不展开）
+                      openByDefault={false}
+                      initialOpenState={initialOpenState}
+                      searchTerm={searchActive ? trimmedQuery : undefined}
+                      disableDrag={(data: FileNode) => searchActive || data.path === rootPath}
+                      disableEdit={(data: FileNode) => searchActive || data.path === rootPath}
+                      disableMultiSelection
+                      selection={selectedPath ?? undefined}
+                      onMove={handleMove}
+                      onRename={handleRename}
+                      onToggle={handleToggle}
+                      onSelect={handleSelect}
+                      aria-label="项目文件树"
+                    >
+                      {TreeNode}
+                    </Tree>
+                  </DirectoryGitStatusContext.Provider>
                 </GitStatusContext.Provider>
               </RootToolbarContext.Provider>
             </OpenContextMenuContext.Provider>

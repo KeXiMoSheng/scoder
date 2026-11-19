@@ -22,6 +22,10 @@
   --accent-foreground: #ffffff;
   --selection: #2c313a;
   --error: #e05561;
+  /* Git 状态标记：取自所选主题的 editorGutter.*Background（lib/theme.ts 运行时覆盖） */
+  --git-added: #109868;
+  --git-modified: #948b60;
+  --git-deleted: #9a353d;
   /* shadcn sidebar 令牌直接指向应用主题变量，随主题切换联动 */
   --sidebar: var(--bg-elevated);
   --sidebar-foreground: var(--text);
@@ -48,6 +52,10 @@
   --color-accent-fg: var(--accent-foreground);
   --color-selection: var(--selection);
   --color-danger: var(--error);
+  /* Git 状态色：文件树 / 编辑器页签 / AI 变更清单共用同一套令牌 */
+  --color-git-added: var(--git-added);
+  --color-git-modified: var(--git-modified);
+  --color-git-deleted: var(--git-deleted);
 
   /* shadcn/ui 设计令牌：全部指向应用主题变量，组件随主题切换自动换色。
      注意 shadcn 语义中的 accent 是菜单/列表悬停底色，对应项目的 selection */

@@ -1,5 +1,7 @@
 import { execFile } from 'child_process'
 import { existsSync } from 'fs'
+import { win32 } from 'path'
+import { findExecutable } from './executable'
 
 /**
  * 选一个 PowerShell 可执行文件。
@@ -7,7 +9,7 @@ import { existsSync } from 'fs'
  * 只有用户在系统配置里显式指定了 PowerShell 7，才使用它；
  * 没配置（默认）一律回退 Windows 自带的 5.1 —— 5.1 会把 progress/error 流
  * 序列化成 CLIXML，并且默认按控制台代码页输出。
- * PS7 的安装位置五花八门（MSI、Store、zip 解压、自定义目录），不做自动探测。
+ * 设置页的自动填入由 detectPowerShell7Path 负责，不会改变这里的运行时选择。
  *
  * AI 的 bash 工具与内置终端共用这一处探测，两边的 PowerShell 版本保持一致。
  * @param configuredPath 设置页保存的 pwsh.exe 绝对路径；空字符串表示不使用 PS7
@@ -17,6 +19,29 @@ export function detectPowerShell(configuredPath: string): string {
     return configuredPath
   }
   return 'powershell.exe'
+}
+
+/**
+ * 自动探测 PowerShell 7（pwsh.exe）的绝对路径，供设置页预先填入。
+ *
+ * 先查 PATH，再尝试 MSI / Store 的常见安装位置；只有 Windows 才有 PowerShell 7，
+ * 其它平台直接返回 null。路径一律按 Windows 规则拼接，保证分隔符是 `\`。
+ * @returns pwsh.exe 的绝对路径；没有探测到时为 null
+ */
+export function detectPowerShell7Path(): string | null {
+  if (process.platform !== 'win32') {
+    return null
+  }
+  const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files'
+  const localAppData = process.env.LOCALAPPDATA
+  return findExecutable(
+    ['pwsh.exe'],
+    [
+      win32.join(programFiles, 'PowerShell', '7', 'pwsh.exe'),
+      win32.join(programFiles, 'PowerShell', '7-preview', 'pwsh.exe'),
+      localAppData ? win32.join(localAppData, 'Microsoft', 'WindowsApps', 'pwsh.exe') : null
+    ]
+  )
 }
 
 /**

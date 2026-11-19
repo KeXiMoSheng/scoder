@@ -36,6 +36,9 @@ export type CssVarName =
   | '--error'
   | '--search-match'
   | '--search-match-border'
+  | '--git-added'
+  | '--git-modified'
+  | '--git-deleted'
 
 export interface AppTheme {
   id: ThemeId
@@ -72,7 +75,11 @@ const VAR_COLOR_KEYS: Record<CssVarName, readonly string[]> = {
     'editor.findMatchBorder',
     'editor.selectionHighlightBorder',
     'editor.wordHighlightStrongBorder'
-  ]
+  ],
+  // Git 状态标记（文件树、编辑器页签、AI 变更清单）统一取 VSCode 的 editorGutter 色
+  '--git-added': ['editorGutter.addedBackground'],
+  '--git-modified': ['editorGutter.modifiedBackground'],
+  '--git-deleted': ['editorGutter.deletedBackground']
 }
 
 /** Monaco base 字段 → 明暗类型 */
@@ -138,7 +145,11 @@ function extractVars(
     '--error': pick('--error') ?? '#e05561',
     '--search-match': pick('--search-match') ?? (kind === 'dark' ? '#d19a6688' : '#ffd33d99'),
     '--search-match-border':
-      pick('--search-match-border') ?? (kind === 'dark' ? '#d19a66' : '#9a6700')
+      pick('--search-match-border') ?? (kind === 'dark' ? '#d19a66' : '#9a6700'),
+    // 主题没有 editorGutter 色时回退到 VSCode 的 Git 装饰默认色
+    '--git-added': pick('--git-added') ?? '#81b88b',
+    '--git-modified': pick('--git-modified') ?? '#e2c08d',
+    '--git-deleted': pick('--git-deleted') ?? '#c74e39'
   }
 }
 

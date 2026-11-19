@@ -157,18 +157,18 @@ const api: ScoderAPI = {
     ipcRenderer.on(TERMINAL_CHANNELS.exit, listener)
     return () => ipcRenderer.removeListener(TERMINAL_CHANNELS.exit, listener)
   },
-  // 终端设置：PowerShell 7 路径由用户显式指定，选择/测试都由主进程完成
+  // 终端设置：设置页自动探测 PowerShell 7 并预填路径，选择/测试都由主进程完成
   getTerminalSettings: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.get),
   saveTerminalSettings: (input: TerminalSettings) =>
     ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.save, input),
-  browsePowerShellPath: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.browse),
+  detectPowerShellPath: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.detect),
   testPowerShellPath: (filePath: string) =>
     ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.test, filePath),
   openPowerShellDownload: () => ipcRenderer.invoke(TERMINAL_SETTINGS_CHANNELS.openDownload),
   // Git 设置：默认自动探测 PATH 上的 git，用户可指定可执行文件并测试版本
   getGitSettings: () => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.get),
   saveGitSettings: (input: GitSettings) => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.save, input),
-  browseGitPath: () => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.browse),
+  detectGitPath: () => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.detect),
   testGitPath: (filePath: string) => ipcRenderer.invoke(GIT_SETTINGS_CHANNELS.test, filePath),
   // Git 状态：主进程按固定间隔自动检测，只在变化时推送
   watchGitStatus: (root: string) => ipcRenderer.invoke(GIT_CHANNELS.watchStatus, root),

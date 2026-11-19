@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachment } from '@shared/ai/types'
+import type { GitFileStatus } from '@shared/git/types'
 import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
 import AiDiffView from './components/AiDiffView'
 import AiSidebar from './components/AiSidebar'
@@ -50,6 +51,9 @@ const TERMINAL_HEIGHT_RATIO = 1 / 4
 const TERMINAL_HIDE_RATIO = 1 / 8
 /** 编辑器区最小保留高度（px）：把命令行面板拖大时不会把编辑器挤没 */
 const EDITOR_MIN_HEIGHT = 120
+
+/** 没有 Git 状态时的共享空表：保持引用稳定，避免页签无谓重渲染 */
+const EMPTY_GIT_STATUSES: ReadonlyMap<string, GitFileStatus> = new Map()
 
 /** 正在查看的 AI 改动：会话 + 轮次 + 文件（相对工作区根） */
 interface DiffViewTarget {
@@ -117,6 +121,15 @@ function App(): React.JSX.Element {
   const [aiAttachments, setAiAttachments] = useState<AiAttachment[]>([])
   // 应用级主题（UI 配色 + 编辑器主题同步切换）
   const { themeId, setThemeId } = useTheme()
+  // 文件树把 Git 快照上报到这里，供编辑器页签共用；root 不匹配时视为空（切换项目后旧快照不生效）
+  const [gitSnapshot, setGitSnapshot] = useState<{
+    root: string
+    statuses: ReadonlyMap<string, GitFileStatus>
+  } | null>(null)
+  const gitStatuses =
+    gitSnapshot !== null && gitSnapshot.root === projectPath
+      ? gitSnapshot.statuses
+      : EMPTY_GIT_STATUSES
   // 当前激活文件如果是二进制类型（图片/音视频等）则走预览页签而不是文本编辑器
   const previewKind = activeFile !== null ? previewKindOf(activeFile.name) : null
   // 编辑器上报的当前文本文件编码（底部状态栏展示与切换）
@@ -411,6 +424,14 @@ function App(): React.JSX.Element {
       return next
     })
   }, [])
+
+  /** 文件树收到 Git 推送：保存快照供编辑器页签着色；root 用于丢弃切换项目后迟到的结果 */
+  const handleGitStatusesChange = useCallback(
+    (root: string, statuses: ReadonlyMap<string, GitFileStatus>): void => {
+      setGitSnapshot({ root, statuses })
+    },
+    []
+  )
 
   // 模型润色完标题后同步标签。变更审查只由对话底部的变更文件面板触发，
   // 不在 AI 写入后自动打开。
@@ -767,6 +788,7 @@ function App(): React.JSX.Element {
                 onEntryMoved={handleEntryMoved}
                 onEntryDeleted={handleEntryDeleted}
                 onSendToAi={handleAttachPathToAi}
+                onGitStatusesChange={handleGitStatusesChange}
                 onReopenProject={() => void handleOpenProject()}
               />
             ) : (
@@ -789,6 +811,7 @@ function App(): React.JSX.Element {
                   files={files}
                   activePath={activePath}
                   dirtyPaths={dirtyPaths}
+                  gitStatuses={gitStatuses}
                   onActivate={handleActivateTab}
                   onClose={close}
                   onCloseOthers={closeOthers}

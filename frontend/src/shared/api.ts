@@ -127,8 +127,8 @@ export interface ScoderAPI {
   getTerminalSettings: () => Promise<TerminalSettings>
   /** 保存终端设置；路径非法时整份拒绝并抛错 */
   saveTerminalSettings: (input: TerminalSettings) => Promise<TerminalSettings>
-  /** 弹出系统文件选择框挑选 pwsh.exe；用户取消时返回 null */
-  browsePowerShellPath: () => Promise<string | null>
+  /** 自动探测 PATH / 常见安装目录中的 pwsh.exe；没有探测到时返回 null */
+  detectPowerShellPath: () => Promise<string | null>
   /** 实际启动选中路径的 PowerShell 并返回版本号；无法运行时抛错 */
   testPowerShellPath: (filePath: string) => Promise<string>
   /** 在系统浏览器中打开 PowerShell 官方下载页 */
@@ -138,8 +138,8 @@ export interface ScoderAPI {
   getGitSettings: () => Promise<GitSettings>
   /** 保存 Git 设置；路径非法时整份拒绝并抛错 */
   saveGitSettings: (input: GitSettings) => Promise<GitSettings>
-  /** 弹出系统文件选择框挑选 git 可执行文件；用户取消时返回 null */
-  browseGitPath: () => Promise<string | null>
+  /** 自动探测 PATH / 常见安装目录中的 git；没有探测到时返回 null */
+  detectGitPath: () => Promise<string | null>
   /** 实际运行 `git --version` 并返回版本号；空路径测试自动探测的 git */
   testGitPath: (filePath: string) => Promise<GitVersionInfo>
   /**

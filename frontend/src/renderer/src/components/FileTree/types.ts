@@ -2,6 +2,7 @@
 
 import type { MoveHandler, RenameHandler } from 'react-arborist'
 import type { FileEntry } from '@shared/files/types'
+import type { GitFileStatus } from '@shared/git/types'
 
 /** 文件树节点：以绝对路径为唯一标识；目录的 children 初始为空数组表示尚未加载 */
 export interface FileNode extends FileEntry {
@@ -27,6 +28,11 @@ export interface FileTreeProps {
   onEntryDeleted: (path: string) => void
   /** 把文件或目录作为上下文发送给 AI（添加到右侧输入区）；目录只提供路径与类型 */
   onSendToAi: (path: string, isDirectory: boolean) => void
+  /**
+   * Git 状态快照变化时上报给 App（root 为快照所属工作区）：
+   * 编辑器页签等界面复用同一份状态，避免重复订阅主进程。
+   */
+  onGitStatusesChange?: (rootPath: string, statuses: ReadonlyMap<string, GitFileStatus>) => void
   /** 当前项目目录已失效（被删除/重命名）或无法读取时，请求重新选择文件夹 */
   onReopenProject?: () => void
   /**

@@ -17,40 +17,47 @@ interface TestResult {
 
 /**
  * 终端设置分区：指定 PowerShell 7 的安装路径，并提供实际启动测试。
- * PS7 的安装位置随安装方式而异（MSI、Store、zip、自定义目录），不做自动探测；
- * 不配置时一律使用 Windows 自带的 5.1。
+ * 打开设置页时会从 PATH 与常见安装目录自动探测 pwsh.exe 并预先填入；
+ * 留空时运行时仍回退 Windows 自带的 5.1。
  */
 export default function TerminalSettings(): React.JSX.Element {
   const [path, setPath] = useState(DEFAULT_TERMINAL_SETTINGS.powershellPath)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [browsing, setBrowsing] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
 
-  // 首屏加载：在异步回调里更新状态，避免 effect 内同步触发级联渲染
+  // 首屏加载：没有保存路径时用自动探测结果预填，方便用户看到可用的 PowerShell 7
   useEffect(() => {
     let active = true
-    window.api
-      .getTerminalSettings()
-      .then((settings) => {
-        if (active) {
-          setPath(settings.powershellPath)
+    void (async () => {
+      try {
+        const settings = await window.api.getTerminalSettings()
+        if (!active) {
+          return
         }
-      })
-      .catch((reason) => {
+        if (settings.powershellPath.trim().length > 0) {
+          setPath(settings.powershellPath)
+          return
+        }
+        // 探测只是辅助：失败时保持留空，运行时照常回退 5.1
+        const detected = await window.api.detectPowerShellPath().catch(() => null)
+        if (active) {
+          setPath(detected ?? '')
+        }
+      } catch (reason) {
         if (active) {
           setError(extractErrorMessage(reason))
         }
-      })
-      .finally(() => {
+      } finally {
         if (active) {
           setLoading(false)
         }
-      })
+      }
+    })()
     return () => {
       active = false
     }
@@ -62,25 +69,20 @@ export default function TerminalSettings(): React.JSX.Element {
     setTestResult(null)
   }, [])
 
+  // 与文件树的「在文件资源管理器中显示」共用 revealEntry：
+  // 浏览按钮直接打开系统文件管理器并选中当前路径
   const browse = useCallback(async (): Promise<void> => {
-    if (browsing) {
+    const target = path.trim()
+    if (target.length === 0) {
       return
     }
-    setBrowsing(true)
     setError(null)
     try {
-      const picked = await window.api.browsePowerShellPath()
-      if (picked !== null) {
-        setPath(picked)
-        setSaved(false)
-        setTestResult(null)
-      }
+      await window.api.revealEntry(target)
     } catch (reason) {
       setError(extractErrorMessage(reason))
-    } finally {
-      setBrowsing(false)
     }
-  }, [browsing])
+  }, [path])
 
   // 测试不要求先保存：输入框里的路径直接拿去启动，方便边选边试
   const test = useCallback(async (): Promise<void> => {
@@ -158,8 +160,8 @@ export default function TerminalSettings(): React.JSX.Element {
       <div>
         <h1 className="text-lg font-semibold text-fg">终端</h1>
         <p className="mt-1 leading-[1.6] text-dim">
-          为内置终端与 AI 的命令工具指定 PowerShell 7。安装位置随安装方式而异，请手动选择其中的
-          pwsh.exe；不指定时一律使用 Windows 自带的 5.1。
+          为内置终端与 AI 的命令工具指定 PowerShell 7。打开本页时会自动探测系统中的 pwsh.exe
+          并填入路径；没有探测到时也可以手动选择，留空则一律使用 Windows 自带的 5.1。
         </p>
       </div>
 
@@ -174,7 +176,7 @@ export default function TerminalSettings(): React.JSX.Element {
           <CardHeader>
             <CardTitle className="text-sm">PowerShell 7</CardTitle>
             <CardDescription className="text-[12px]">
-              指定后，新打开的终端与之后发起的 AI 命令都会使用该 PowerShell。
+              自动探测到的 pwsh.exe 会预先填入；留空则回退系统自带的 PowerShell 5.1。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -192,15 +194,17 @@ export default function TerminalSettings(): React.JSX.Element {
                   <Button
                     type="button"
                     variant="outline"
+                    title="在文件资源管理器中显示并选中当前路径"
+                    disabled={path.trim().length === 0}
                     onClick={() => void browse()}
-                    disabled={browsing}
                   >
-                    {browsing ? '选择中…' : '浏览…'}
+                    浏览…
                   </Button>
                 </div>
                 <FieldDescription>
-                  留空表示不使用 PowerShell 7，始终回退 Windows 自带的
-                  5.1。修改后对之后打开的终端与新的命令调用生效。
+                  留空表示不使用 PowerShell 7，始终回退 Windows 自带的 5.1。打开本页时会自动填入
+                  探测到的路径；「浏览…」会在系统文件管理器中显示并选中当前路径。修改后对之后打开的
+                  终端与新的命令调用生效。
                 </FieldDescription>
               </Field>
 

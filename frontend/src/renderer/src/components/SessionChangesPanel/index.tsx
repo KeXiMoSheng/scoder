@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, FileDiff } from 'lucide-react'
 import type { AiFileReview, AiMessageView, ToolFileChange } from '@shared/ai/types'
 import { basename } from '../../lib/filePath'
+import { GIT_STATUS_TEXT_CLASS, statusFromChangeCode } from '../../lib/gitStatus'
 import { cn } from '../../lib/utils'
 import FileIcon from '../FileIcon'
+import GitStatusBadge from '../GitStatusBadge'
 import type { SessionChangesPanelProps } from './types'
 
 /** 一个文件在本会话内的累计改动；turn 取最早出现的那一轮，作为 diff 基线 */
@@ -183,6 +185,7 @@ export default function SessionChangesPanel({
         <ul className="m-0 max-h-44 list-none overflow-y-auto border-t border-line/60 p-0">
           {files.map((file) => {
             const state = fileReviewState(reviews.get(file.path))
+            const gitStatus = statusFromChangeCode(file.status)
             return (
               <li key={file.path}>
                 <button
@@ -194,19 +197,14 @@ export default function SessionChangesPanel({
                   <span className="inline-flex shrink-0 items-center justify-center">
                     <FileIcon name={basename(file.path)} />
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-fg">{file.path}</span>
+                  <span className={cn('min-w-0 flex-1 truncate', GIT_STATUS_TEXT_CLASS[gitStatus])}>
+                    {file.path}
+                  </span>
                   <span className="shrink-0 font-mono text-[11px]">
                     <span className="text-link">+{file.added}</span>{' '}
                     <span className="text-danger">-{file.removed}</span>
                   </span>
-                  <span
-                    className={cn(
-                      'w-3 shrink-0 text-[10px] font-medium',
-                      file.status === 'A' ? 'text-link' : 'text-dim'
-                    )}
-                  >
-                    {file.status}
-                  </span>
+                  <GitStatusBadge status={gitStatus} className="ml-0 w-auto" />
                   <span className={cn('w-12 shrink-0 text-right text-[10px]', REVIEW_CLASS[state])}>
                     {REVIEW_LABEL[state]}
                   </span>

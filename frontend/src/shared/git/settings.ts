@@ -1,7 +1,7 @@
 /**
  * Git 设置：可执行文件路径由用户显式指定。
  *
- * 与 PowerShell 7 不同，git 通常已经在 PATH 上，所以默认自动探测；
+ * git 通常已经在 PATH 上，所以设置页会先自动探测绝对路径并预填；
  * 只有用户显式指定了路径（例如 Windows 上没加进 PATH 的 Git for Windows），
  * 才使用该路径。
  */
@@ -21,8 +21,8 @@ export const DEFAULT_GIT_SETTINGS: GitSettings = {
 export const GIT_SETTINGS_CHANNELS = {
   get: 'gitSettings:get',
   save: 'gitSettings:save',
-  /** 弹出系统文件选择框，返回选中的可执行文件路径（不落库） */
-  browse: 'gitSettings:browse',
+  /** 自动探测 PATH / 常见安装目录中的 git，返回绝对路径（不落库） */
+  detect: 'gitSettings:detect',
   /** 实际运行一次 `git --version`，返回版本号 */
   test: 'gitSettings:test'
 } as const

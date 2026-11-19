@@ -12,7 +12,8 @@ export default function FileRow({
   icon,
   trailing,
   children,
-  className
+  className,
+  nameClassName
 }: FileRowProps): React.JSX.Element {
   return (
     <span className={cn('flex min-w-0 items-center gap-1.5', className)}>
@@ -23,7 +24,7 @@ export default function FileRow({
       )}
       {children ?? (
         <>
-          <span className="min-w-0 truncate">{name}</span>
+          <span className={cn('min-w-0 truncate', nameClassName)}>{name}</span>
           {trailing ? <span className="inline-flex shrink-0 items-center">{trailing}</span> : null}
         </>
       )}

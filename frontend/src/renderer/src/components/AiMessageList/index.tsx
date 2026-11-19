@@ -3,12 +3,13 @@ import { Check, Copy, FileDiff, Folder, Loader2 } from 'lucide-react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachmentView, ToolFileChange } from '@shared/ai/types'
 import FileRow from '../FileRow'
+import GitStatusBadge from '../GitStatusBadge'
 import MarkdownPreview from '../MarkdownPreview'
 import TodoPlan from '../TodoPlan'
 import ToolCallRow from '../ToolCallRow'
 import { attachmentLineLabel } from '../../lib/aiAttachment'
 import { basename } from '../../lib/filePath'
-import { cn } from '../../lib/utils'
+import { GIT_STATUS_TEXT_CLASS, statusFromChangeCode } from '../../lib/gitStatus'
 import type { AiMessageListProps } from './types'
 
 /** 距底部多少像素内视为“停在底部”：新内容到来时继续自动滚动 */
@@ -256,32 +257,32 @@ function ChangesSummary({
         <span className="shrink-0 text-danger">-{removed}</span>
       </div>
       <ul className="m-0 list-none p-0">
-        {files.map((file) => (
-          <li key={file.path}>
-            <button
-              type="button"
-              className="flex w-full cursor-pointer items-center border-none bg-transparent px-2 py-1 text-left text-[12px] transition-colors hover:bg-hover/60"
-              title={`打开 ${file.path}`}
-              onClick={() => onOpenFile(file.path)}
-            >
-              <FileRow
-                name={basename(file.path)}
-                className="min-w-0 flex-1"
-                trailing={
-                  <span className="flex items-center gap-1.5 text-[11px]">
-                    <span className="text-link">+{file.added}</span>
-                    <span className="text-danger">-{file.removed}</span>
-                    <span
-                      className={cn('font-medium', file.status === 'A' ? 'text-link' : 'text-dim')}
-                    >
-                      {file.status}
+        {files.map((file) => {
+          const gitStatus = statusFromChangeCode(file.status)
+          return (
+            <li key={file.path}>
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center border-none bg-transparent px-2 py-1 text-left text-[12px] transition-colors hover:bg-hover/60"
+                title={`打开 ${file.path}`}
+                onClick={() => onOpenFile(file.path)}
+              >
+                <FileRow
+                  name={basename(file.path)}
+                  className="min-w-0 flex-1"
+                  nameClassName={GIT_STATUS_TEXT_CLASS[gitStatus]}
+                  trailing={
+                    <span className="flex items-center gap-1.5 text-[11px]">
+                      <span className="text-link">+{file.added}</span>
+                      <span className="text-danger">-{file.removed}</span>
+                      <GitStatusBadge status={gitStatus} className="ml-0 w-auto" />
                     </span>
-                  </span>
-                }
-              />
-            </button>
-          </li>
-        ))}
+                  }
+                />
+              </button>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

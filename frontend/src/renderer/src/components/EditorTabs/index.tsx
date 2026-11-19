@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { isAtOrUnder, relativePathNative } from '../../lib/filePath'
+import { GIT_STATUS_TEXT_CLASS } from '../../lib/gitStatus'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
+import GitStatusBadge from '../GitStatusBadge'
 import type { EditorTabsProps, TabMenuState, TabOverflowMenuState } from './types'
 
 /**
@@ -43,6 +45,7 @@ export default function EditorTabs({
   files,
   activePath,
   dirtyPaths,
+  gitStatuses,
   onActivate,
   onClose,
   onCloseOthers,
@@ -195,6 +198,7 @@ export default function EditorTabs({
       >
         {files.map((file) => {
           const active = file.path === activePath
+          const gitStatus = gitStatuses.get(file.path)
           return (
             <div
               key={file.path}
@@ -215,27 +219,35 @@ export default function EditorTabs({
             >
               <FileRow
                 name={file.name}
+                nameClassName={
+                  gitStatus !== undefined ? GIT_STATUS_TEXT_CLASS[gitStatus] : undefined
+                }
                 trailing={
-                  <span className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center">
-                    {dirtyPaths.has(file.path) ? (
-                      <span
-                        className="absolute h-[7px] w-[7px] rounded-full bg-fg opacity-85 transition-opacity group-hover:opacity-0"
-                        title="有未保存的更改"
-                      />
+                  <span className="flex items-center gap-0.5">
+                    {gitStatus !== undefined ? (
+                      <GitStatusBadge status={gitStatus} className="ml-0" />
                     ) : null}
-                    <button
-                      type="button"
-                      className="absolute inset-0 inline-flex cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)]"
-                      aria-label={`关闭 ${file.name}`}
-                      title="关闭"
-                      onClick={(event) => {
-                        // 阻止冒泡，避免同时触发标签激活
-                        event.stopPropagation()
-                        onClose(file.path)
-                      }}
-                    >
-                      <X className="size-2.5" />
-                    </button>
+                    <span className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+                      {dirtyPaths.has(file.path) ? (
+                        <span
+                          className="absolute h-[7px] w-[7px] rounded-full bg-fg opacity-85 transition-opacity group-hover:opacity-0"
+                          title="有未保存的更改"
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        className="absolute inset-0 inline-flex cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)]"
+                        aria-label={`关闭 ${file.name}`}
+                        title="关闭"
+                        onClick={(event) => {
+                          // 阻止冒泡，避免同时触发标签激活
+                          event.stopPropagation()
+                          onClose(file.path)
+                        }}
+                      >
+                        <X className="size-2.5" />
+                      </button>
+                    </span>
                   </span>
                 }
               />

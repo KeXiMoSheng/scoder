@@ -16,4 +16,6 @@ export interface FileRowProps {
   children?: ReactNode
   /** 附加到内容容器的样式（例如覆盖行内间距） */
   className?: string
+  /** 文件名的附加样式（例如按 Git 状态着色）；目录名同样适用 */
+  nameClassName?: string
 }
