@@ -1,3 +1,5 @@
+import type { McpPromptServer } from '../../shared/mcp/types'
+
 /**
  * 系统提示词：按节拼接。
  *
@@ -5,21 +7,28 @@
  * 以后增删工具时追加或去掉一节即可，不必回头改已有段落。
  * @param cwd 工作区根目录（用于告诉模型路径基准）
  * @param platform 当前系统：决定 shell 语法提示，默认取运行时值
+ * @param mcpServers 当前已连接的 MCP 服务端；为空时不出现 MCP 段落
  */
 export function buildSystemPrompt(
   cwd: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  mcpServers: readonly McpPromptServer[] = []
 ): string {
-  return [
+  const sections = [
     roleSection(cwd),
     environmentSection(platform),
     planSection(),
     discoverySection(),
     commandSection(),
     writeSection(),
-    failureSection(),
-    styleSection()
-  ].join('\n\n')
+    failureSection()
+  ]
+  const mcp = mcpSection(mcpServers)
+  if (mcp !== null) {
+    sections.push(mcp)
+  }
+  sections.push(styleSection())
+  return sections.join('\n\n')
 }
 
 /** 角色与工作区基准 */
@@ -105,4 +114,38 @@ function failureSection(): string {
 /** 回答风格 */
 function styleSection(): string {
   return '回答风格：结论先行，引用文件时给出相对路径与行号；代码片段只保留必要的上下文。'
+}
+
+/** 单个服务端说明的长度上限（字符）：服务端可能塞进来一整篇文档，不能让它挤掉规则 */
+const MAX_INSTRUCTION_CHARS = 2_000
+
+/**
+ * MCP 段落：只讲外部工具的用法纪律与当前可用的服务端。
+ * 没有已连接的服务端时返回 null，提示词与未配置 MCP 时完全一致。
+ * @param servers 已连接的 MCP 服务端
+ * @returns 段落文本，或 null（不出现该段）
+ */
+function mcpSection(servers: readonly McpPromptServer[]): string | null {
+  if (servers.length === 0) {
+    return null
+  }
+  const lines = [
+    'MCP 扩展工具的规则：',
+    '1. 名字形如 mcp__<服务名>__<工具名> 的工具来自外部 MCP 服务端，不是本地文件工具；先看参数说明再调用。',
+    '2. 服务端返回失败时按失败处理：读错误信息调整参数，不要原样重复同样的调用。',
+    '3. 结果里的图片、音频与内嵌资源只会给出文字说明；确实需要原始数据时告诉用户。',
+    '当前已连接的 MCP 服务端：'
+  ]
+  for (const server of servers) {
+    lines.push(`- ${server.name}（${server.toolCount} 个工具）`)
+    const instructions = server.instructions.trim()
+    if (instructions.length > 0) {
+      const text =
+        instructions.length > MAX_INSTRUCTION_CHARS
+          ? `${instructions.slice(0, MAX_INSTRUCTION_CHARS)}…（服务端说明已截断）`
+          : instructions
+      lines.push(`  服务端说明：${text.replace(/\n/g, '\n  ')}`)
+    }
+  }
+  return lines.join('\n')
 }

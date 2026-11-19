@@ -1,4 +1,4 @@
-import type { JsonSchemaObject, JsonValue, ToolCardView } from '../../../shared/ai/types'
+import type { JsonValue, ToolCardView, ToolParameterSchema } from '../../../shared/ai/types'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
 
@@ -42,8 +42,11 @@ export interface ToolOutcome {
 export interface ToolDefinition {
   name: string
   description: string
-  /** 参数 schema，直接转成模型的 function.parameters */
-  parameters: JsonSchemaObject
+  /**
+   * 参数 schema，直接转成模型的 function.parameters。
+   * 内置工具用 JsonSchemaObject 手写；MCP 工具原样透传服务端公布的 schema。
+   */
+  parameters: ToolParameterSchema
   /** 声明为 true 才允许与同批次的兄弟调用并发；P0 一律串行 */
   isConcurrencySafe?: (args: Record<string, unknown>) => boolean
   /**
@@ -123,11 +126,24 @@ export function sectionText(text: string, tag: string): string {
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>()
 
-  register(definition: ToolDefinition): void {
+  /**
+   * 注册一个工具。
+   * 内置工具在装配阶段注册一次；MCP 工具随连接增删，靠返回的注销函数回收。
+   * @param definition 工具定义
+   * @returns 注销函数；重复调用安全
+   * @throws 工具重名时抛出：调用方必须先注销旧定义
+   */
+  register(definition: ToolDefinition): () => void {
     if (this.tools.has(definition.name)) {
       throw new Error(`工具重名：${definition.name}`)
     }
     this.tools.set(definition.name, definition)
+    return () => {
+      // 只删除自己注册的那一份：同名工具可能已经被下一次同步替换
+      if (this.tools.get(definition.name) === definition) {
+        this.tools.delete(definition.name)
+      }
+    }
   }
 
   get(name: string): ToolDefinition | undefined {

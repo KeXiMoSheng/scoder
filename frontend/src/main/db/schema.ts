@@ -12,7 +12,7 @@ export const APPLICATION_ID = 0x53434f44
  * 当前库结构版本。
  * 加表/加字段时：递增此常量，并在 MIGRATIONS 末尾追加一步；不要修改已发布的历史步骤。
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 /** 一次结构升级：只在库的 user_version 小于该步版本时执行一次 */
 interface Migration {
@@ -45,6 +45,31 @@ const CREATE_APP_SETTINGS_SQL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )
+`
+
+/**
+ * MCP 服务端配置表。
+ * 一条记录对应一个连接实例：transport 决定 command/args/env/cwd 还是 url/headers 生效，
+ * 数组与对象列存 JSON 文本，键值集合不单独建表（读写都是整条替换）。
+ */
+const CREATE_MCP_SERVERS_SQL = `
+  CREATE TABLE IF NOT EXISTS mcp_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    transport TEXT NOT NULL,
+    command TEXT NOT NULL DEFAULT '',
+    args TEXT NOT NULL DEFAULT '[]',
+    env TEXT NOT NULL DEFAULT '{}',
+    cwd TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    headers TEXT NOT NULL DEFAULT '{}',
+    tool_call_timeout_ms INTEGER NOT NULL DEFAULT 60000,
+    startup_timeout_ms INTEGER NOT NULL DEFAULT 30000,
+    reconnect TEXT NOT NULL DEFAULT '{"enabled":true,"initialDelayMs":500,"maxDelayMs":30000,"maxAttempts":10}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )
 `
@@ -87,6 +112,11 @@ export const MIGRATIONS: readonly Migration[] = [
     // 早期迁移把未设置的存量行统一补成了 1M；按新的缺省口径归位，避免界面全部显示 1M
     up: (db) =>
       db.exec('UPDATE model_configs SET context_window = 200000 WHERE context_window = 1000000;')
+  },
+  {
+    version: 6,
+    description: 'MCP 服务端配置表',
+    up: (db) => db.exec(CREATE_MCP_SERVERS_SQL)
   }
 ]
 

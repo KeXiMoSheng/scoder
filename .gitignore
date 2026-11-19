@@ -10,6 +10,7 @@ frontend/node_modules/
 frontend/out/
 frontend/dist/
 frontend/.eslintcache
+frontend/.mcp-smoke/
 
 # 环境变量与本地配置（保留 *.example 模板）
 .env

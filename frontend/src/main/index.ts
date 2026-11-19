@@ -27,6 +27,7 @@ import { disposeAllFileWrites, registerFileWriteHandlers } from './files/write'
 import { disposeAllDirectoryWatchers, registerDirectoryWatchHandlers } from './files/watch'
 import { replaceFileContents, searchFileContents } from './files/search'
 import { registerModelImportHandlers } from './model-import'
+import { disposeMcp, initMcp } from './mcp'
 import { detectPowerShell, probePowerShellVersion } from './powershell'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { MAX_EDITOR_TEXT_BYTES } from '../shared/files/settings'
@@ -678,6 +679,8 @@ app.whenReady().then(() => {
   registerModelImportHandlers()
   // AI 通道依赖数据库（按 id 读模型配置），必须在 initDatabase 之后注册
   registerAiHandlers()
+  // MCP：注册设置面板通道，并按已保存的配置挂载连接（工具注册进共享注册表）
+  initMcp()
 
   // 快捷键策略（dev 通道自行接管，避免打包后 watchWindowShortcuts 按生产策略屏蔽调试快捷键）：
   // - 开发版：F12 或 Ctrl+Shift+I（macOS 为 Cmd+Alt+I）切换开发者工具
@@ -730,6 +733,35 @@ app.on('before-quit', () => {
   }
   terminalSessions.clear()
   closeDatabase()
+})
+
+/**
+ * MCP 关闭的等待上限（毫秒）。
+ * stdio 服务端是子进程：不关闭就退出会留下孤儿进程，所以要等；但清理卡住时不能不让用户退出。
+ */
+const MCP_QUIT_TIMEOUT_MS = 3_000
+
+/** 是否已经进入“等 MCP 收尾”的退出流程：防止 preventDefault 与再次 quit 互相触发 */
+let quittingAfterMcpDispose = false
+
+// MCP 连接的关闭是异步的（关闭传输、等子进程退出），before-quit 里拿不到 await：
+// 先拦下这次退出，清理完再重新退出一次。第二次进入时标志位已置，直接放行。
+app.on('before-quit', (event) => {
+  if (quittingAfterMcpDispose) {
+    return
+  }
+  quittingAfterMcpDispose = true
+  event.preventDefault()
+  const fallback = setTimeout(() => app.quit(), MCP_QUIT_TIMEOUT_MS)
+  fallback.unref()
+  void disposeMcp()
+    .catch((error: unknown) => {
+      console.warn('关闭 MCP 连接失败', error)
+    })
+    .finally(() => {
+      clearTimeout(fallback)
+      app.quit()
+    })
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

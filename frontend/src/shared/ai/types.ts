@@ -30,6 +30,23 @@ export interface JsonSchemaObject {
 }
 
 /**
+ * 宽松的 JSON Schema 对象：MCP 服务端公布的 inputSchema 原样透传给模型。
+ * 内置工具手写的 JsonSchemaObject 只覆盖真正用到的子集，
+ * 外部 schema 可能带 enum/oneOf/$defs/anyOf 等关键字，裁剪会改变语义，因此不裁剪。
+ */
+export interface JsonSchemaLoose {
+  type?: string
+  properties?: Record<string, unknown>
+  required?: string[]
+  additionalProperties?: boolean | Record<string, unknown>
+  /** 其余 JSON Schema 关键字按原样保留 */
+  [keyword: string]: unknown
+}
+
+/** 工具参数 schema：内置工具的结构化形态，或 MCP 透传的外部 schema */
+export type ToolParameterSchema = JsonSchemaObject | JsonSchemaLoose
+
+/**
  * diff 卡片里的一行。
  * context 是未改动的上下文行，del 是被删掉的旧行，add 是新增行。
  * 由主进程算好行类型，渲染进程直接上色，不再自己算 diff。
