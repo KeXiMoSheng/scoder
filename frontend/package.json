@@ -9,6 +9,7 @@
   "homepage": "https://electron-vite.org",
   "scripts": {
     "check:file-icon": "node scripts/check-file-icon.mjs",
+    "theme:preview": "node scripts/preview-theme.mjs",
     "version:check": "node scripts/check-version.mjs",
     "release:patch": "npm version patch -m \"版本%s\" --tag-version-prefix=\"\"",
     "release:minor": "npm version minor -m \"版本%s\" --tag-version-prefix=\"\"",
