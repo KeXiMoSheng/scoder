@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ImageZoom from '../ImageZoom'
 import { previewKindOf, previewMimeOf } from '../../lib/filePreview'
 import type { FilePreviewKind } from '../../lib/filePreview'
 import { extractErrorMessage } from '../../lib/errorMessage'
@@ -36,7 +37,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-/** 图片 / 音频 / 视频：原始字节包成 Blob URL，交给浏览器原生控件解码与播放 */
+/** 图片 / 音频 / 视频：原始字节包成 Blob URL 后交给对应的查看器解码与播放 */
 function MediaView({ kind, name, mime, data, setDetail }: MediaViewProps): React.JSX.Element {
   // 组件按文件重建（调用方以路径作 key），初始化时创建一次对象 URL 即可
   const [url] = useState(() => URL.createObjectURL(new Blob([data], { type: mime })))
@@ -46,23 +47,19 @@ function MediaView({ kind, name, mime, data, setDetail }: MediaViewProps): React
 
   if (failed) {
     return (
-      <p className="m-0 max-w-[360px] text-center leading-[1.6] text-dim">
+      <p className="m-auto max-w-[360px] p-6 text-center leading-[1.6] text-dim">
         当前运行环境无法解码该{KIND_LABELS[kind]}（{mime}）
       </p>
     )
   }
 
   if (kind === 'image') {
+    // 图片交给可缩放的查看器：滚轮缩放、拖动平移、双击复位，尺寸回填到状态栏
     return (
-      <img
+      <ImageZoom
         src={url}
         alt={name}
-        className="max-h-full max-w-full object-contain"
-        draggable={false}
-        onLoad={(event) => {
-          const image = event.currentTarget
-          setDetail(`${image.naturalWidth} × ${image.naturalHeight}`)
-        }}
+        onLoad={(size) => setDetail(`${size.width} × ${size.height}`)}
         onError={() => setFailed(true)}
       />
     )
@@ -70,37 +67,41 @@ function MediaView({ kind, name, mime, data, setDetail }: MediaViewProps): React
 
   if (kind === 'audio') {
     return (
-      <audio
-        src={url}
-        controls
-        className="w-full max-w-[560px]"
-        onLoadedMetadata={(event) => {
-          setDetail(formatDuration(event.currentTarget.duration))
-        }}
-        onError={() => setFailed(true)}
-      />
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+        <audio
+          src={url}
+          controls
+          className="w-full max-w-[560px]"
+          onLoadedMetadata={(event) => {
+            setDetail(formatDuration(event.currentTarget.duration))
+          }}
+          onError={() => setFailed(true)}
+        />
+      </div>
     )
   }
 
   return (
-    <video
-      src={url}
-      controls
-      className="max-h-full max-w-full rounded-sm bg-black"
-      onLoadedMetadata={(event) => {
-        const video = event.currentTarget
-        const duration = formatDuration(video.duration)
-        setDetail(
-          [`${video.videoWidth} × ${video.videoHeight}`, duration].filter(Boolean).join(' · ')
-        )
-      }}
-      onError={() => setFailed(true)}
-    />
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+      <video
+        src={url}
+        controls
+        className="max-h-full max-w-full rounded-sm bg-black"
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget
+          const duration = formatDuration(video.duration)
+          setDetail(
+            [`${video.videoWidth} × ${video.videoHeight}`, duration].filter(Boolean).join(' · ')
+          )
+        }}
+        onError={() => setFailed(true)}
+      />
+    </div>
   )
 }
 
 /**
- * 二进制文件预览页签：图片/音视频交给浏览器原生控件；
+ * 二进制文件预览页签：图片走可缩放的查看器，音视频交给浏览器原生控件；
  * 其它二进制（PDF、压缩包、可执行文件等）不做预览，只提示不支持。
  * 文本文件不经过这里（由 CodeEditor 打开）。
  */
@@ -151,15 +152,13 @@ export default function FilePreview({ file }: FilePreviewProps): React.JSX.Eleme
           </p>
         ) : null}
         {state.status === 'ready' && kind !== 'binary' ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-            <MediaView
-              kind={kind}
-              name={file.name}
-              mime={mime}
-              data={state.data}
-              setDetail={setDetail}
-            />
-          </div>
+          <MediaView
+            kind={kind}
+            name={file.name}
+            mime={mime}
+            data={state.data}
+            setDetail={setDetail}
+          />
         ) : null}
       </div>
       <div className="flex h-7 shrink-0 items-center gap-2 overflow-hidden border-t border-line bg-elevated px-3 text-[11px] text-dim">
