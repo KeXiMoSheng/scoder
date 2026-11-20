@@ -26,6 +26,7 @@ export type CssVarName =
   | '--bg-elevated'
   | '--bg-hover'
   | '--border'
+  | '--divider'
   | '--text'
   | '--text-dim'
   | '--link'
@@ -57,6 +58,10 @@ const VAR_COLOR_KEYS: Record<CssVarName, readonly string[]> = {
   '--bg-elevated': ['sideBar.background', 'editorGroupHeader.tabsBackground'],
   '--bg-hover': ['list.hoverBackground', 'list.activeSelectionBackground'],
   '--border': ['sideBar.border', 'panel.border', 'editorGroupHeader.tabsBorder'],
+  // 分栏分隔线：优先取 panel.border。editorGroup.border 虽是分栏的语义键，但在 One Dark Pro 系列里
+  // 与编辑器底色过于接近（#181a1f / #23252c），单独成线后不够清晰；panel.border 是主题里
+  // 用来分隔面板的可见线色，四套主题都提供了该键。
+  '--divider': ['panel.border', 'editorGroup.border', 'sideBar.border'],
   '--text': ['editor.foreground', 'foreground'],
   '--text-dim': ['tab.inactiveForeground', 'statusBar.foreground', 'tab.activeForeground'],
   // Markdown 预览等处的链接色：优先取主题的链接色，缺失时回退正文色
@@ -128,11 +133,14 @@ function extractVars(
   const bg = pick('--bg') ?? '#1e1e1e'
   const text = pick('--text') ?? '#d4d4d4'
   const accent = pick('--accent') ?? '#404754'
+  const border = pick('--border') ?? bg
   return {
     '--bg': bg,
     '--bg-elevated': pick('--bg-elevated') ?? bg,
     '--bg-hover': pick('--bg-hover') ?? bg,
-    '--border': pick('--border') ?? bg,
+    '--border': border,
+    // 主题完全没有面板分隔色时，至少与普通边框一致，避免分栏处出现硬编码颜色
+    '--divider': pick('--divider') ?? border,
     '--text': text,
     '--text-dim': pick('--text-dim') ?? text,
     '--link': pick('--link') ?? text,

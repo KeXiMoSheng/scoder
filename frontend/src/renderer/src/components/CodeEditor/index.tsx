@@ -1265,6 +1265,7 @@ export default function CodeEditor({
             {viewMode === 'split' ? (
               <ResizeHandle
                 label="调整编辑区与预览区宽度"
+                divider
                 onResizeStart={handleSplitResizeStart}
                 onResize={handleSplitResize}
               />

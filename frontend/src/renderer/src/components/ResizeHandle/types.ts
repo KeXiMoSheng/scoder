@@ -7,6 +7,8 @@ export interface ResizeHandleProps {
   orientation?: 'vertical' | 'horizontal'
   /** 折叠态样式：面板收起后以高亮拖拽条提示可拖出（底部命令行面板使用） */
   collapsed?: boolean
+  /** 常驻分隔线：相邻面板底色相同、仅靠悬停难看出分界时使用（如编辑区与预览区的分栏） */
+  divider?: boolean
   /** 拖拽开始（父级此刻记录面板初始尺寸） */
   onResizeStart: () => void
   /** 拖拽中回调；offset 为相对按下位置的偏移（px）：竖向拖拽为横向偏移（向右为正），横向拖拽为纵向偏移（向下为正） */

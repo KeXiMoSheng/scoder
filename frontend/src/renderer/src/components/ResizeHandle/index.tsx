@@ -6,6 +6,7 @@ export default function ResizeHandle({
   label,
   orientation = 'vertical',
   collapsed = false,
+  divider = false,
   onResizeStart,
   onResize
 }: ResizeHandleProps): React.JSX.Element {
@@ -29,7 +30,7 @@ export default function ResizeHandle({
 
   // 分隔条尺寸与光标：横向条调高度（折叠时略高并带顶边），纵向条调宽度
   const classNames = [
-    'shrink-0 transition-colors',
+    'relative shrink-0 transition-colors',
     isHorizontal ? 'w-auto cursor-row-resize' : 'w-1 cursor-col-resize',
     isHorizontal ? (collapsed ? 'h-1.5' : 'h-1') : '',
     // 折叠态加边线提示可拖出：横向条在上方、纵向条在两侧（左右面板收起均适用）
@@ -78,6 +79,19 @@ export default function ResizeHandle({
           stopDragging(event.currentTarget, event.pointerId)
         }
       }}
-    />
+    >
+      {/* 常驻分隔线：2px 落在 4px 热区正中，整像素不虚边；悬停/拖拽时整条高亮由外层负责 */}
+      {divider && !collapsed ? (
+        <span
+          aria-hidden="true"
+          className={[
+            'pointer-events-none absolute bg-divider',
+            isHorizontal
+              ? 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'
+              : 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2'
+          ].join(' ')}
+        />
+      ) : null}
+    </div>
   )
 }

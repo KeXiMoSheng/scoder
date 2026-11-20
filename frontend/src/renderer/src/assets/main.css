@@ -14,6 +14,8 @@
   --bg-elevated: #21252b;
   --bg-hover: #2c313a;
   --border: #3e4452;
+  /* 分栏分隔线：取主题的 panel.border，比 editorGroup.border 在各套深色主题下更清晰 */
+  --divider: #3e4452;
   --text: #abb2bf;
   --text-dim: #9da5b4;
   --link: #61afef;
@@ -44,6 +46,7 @@
   --color-elevated: var(--bg-elevated);
   --color-hover: var(--bg-hover);
   --color-line: var(--border);
+  --color-divider: var(--divider);
   --color-fg: var(--text);
   --color-dim: var(--text-dim);
   --color-link: var(--link);
