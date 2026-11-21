@@ -13,6 +13,8 @@ import type {
   ToolCardView,
   ToolFileChange
 } from '../../../shared/ai/types'
+import { toolImagePreviewPath } from '../images/store'
+import type { ToolImageRef } from '../images/types'
 import type { SessionBlock, SessionEvent } from './types'
 
 /** 由工具名与原始参数推导挂起卡片；历史日志里没有结果卡片时用它兜底 */
@@ -171,8 +173,10 @@ export function textOf(blocks: readonly SessionBlock[]): string {
 }
 
 /**
- * 拼接发给模型的内容：文本块原样保留，附加的上下文展开成带类型的引用；
+ * 拼接发给模型的文本：文本块原样保留，附加的上下文展开成带类型的引用；
  * 只有 selection 会携带选中文本，file/directory 仅给出路径与类型。
+ * 粘贴的图片在这里只留一行说明，图片本身由调用方作为内容块附在文本之后
+ * （见 images/message.ts 的 userContentWithImages）。
  * 与 textOf 刻意分开：附件信息只进入上下文，不进入用户气泡正文。
  * @param blocks 内容块数组
  */
@@ -190,7 +194,8 @@ export function modelTextOf(blocks: readonly SessionBlock[]): string {
   }
   if (attachments.length > 0) {
     parts.push(
-      `用户附加的上下文（file/directory 只给出路径与类型，需要内容时请用工具读取）：\n${attachments.join('\n')}`
+      '用户附加的上下文（file/directory 只给出路径与类型，需要内容时请用工具读取）：\n' +
+        attachments.join('\n')
     )
   }
   return parts.join('\n\n')
@@ -203,7 +208,28 @@ function attachmentOf(block: Extract<SessionBlock, { type: 'attachment' }>): str
     const endLine = block.endLine ?? startLine
     return `<attachment path="${block.path}" type="selection" lines="${startLine}-${endLine}">\n${block.text ?? ''}\n</attachment>`
   }
+  if (block.kind === 'image') {
+    const image = block.image
+    const facts =
+      image === undefined ? '' : ` media="${image.mediaType}" size="${image.width}x${image.height}"`
+    return `<attachment path="${block.path}" type="image"${facts} />`
+  }
   return `<attachment path="${block.path}" type="${block.kind}" />`
+}
+
+/**
+ * 取出内容块里粘贴的图片引用，按出现顺序。
+ * 实时发送与历史重放都用它决定要给模型附哪些图片。
+ * @param blocks 内容块数组
+ */
+export function imageRefsOf(blocks: readonly SessionBlock[]): ToolImageRef[] {
+  const refs: ToolImageRef[] = []
+  for (const block of blocks) {
+    if (block.type === 'attachment' && block.kind === 'image' && block.image !== undefined) {
+      refs.push(block.image)
+    }
+  }
+  return refs
 }
 
 /** 取出用户附加的上下文（供气泡展示）；同一附件只保留一份 */
@@ -219,6 +245,9 @@ export function attachmentsOf(blocks: readonly SessionBlock[]): AiAttachmentView
       kind: block.kind,
       ...(block.kind === 'selection'
         ? { startLine: block.startLine ?? 1, endLine: block.endLine ?? block.startLine ?? 1 }
+        : {}),
+      ...(block.kind === 'image' && block.image !== undefined
+        ? { image: imageAttachmentView(block.image) }
         : {})
     }
     const key = attachmentKey(view)
@@ -228,6 +257,21 @@ export function attachmentsOf(blocks: readonly SessionBlock[]): AiAttachmentView
     }
   }
   return attachments
+}
+
+/**
+ * 图片附件的展示信息：带上只读预览路径，气泡里据此显示缩略图。
+ * 对象名非法（日志被手改）时不提供预览，只保留尺寸文字。
+ */
+function imageAttachmentView(ref: ToolImageRef): AiAttachmentView['image'] {
+  const previewPath = toolImagePreviewPath(ref)
+  return {
+    mediaType: ref.mediaType,
+    width: ref.width,
+    height: ref.height,
+    bytes: ref.bytes,
+    ...(previewPath === undefined ? {} : { previewPath })
+  }
 }
 
 /**
@@ -253,6 +297,10 @@ function resultCard(
   }
   // todo 卡片的信息在 todos 里，同样不能用结果文本顶掉
   if (base?.todos !== undefined) {
+    return base
+  }
+  // 图片卡片的尺寸与格式在 image 里；正文由渲染进程按路径取图，不需要结果文本
+  if (base?.image !== undefined) {
     return base
   }
   if (text.length === 0) {

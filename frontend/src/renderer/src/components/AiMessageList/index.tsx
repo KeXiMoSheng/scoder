@@ -166,20 +166,25 @@ function UserBubble({
                   ) : null}
                 </>
               )
+              // 粘贴的图片在这里没有工作区路径：点开的是主进程存下来的图片文件
+              const openTarget =
+                attachment.kind === 'image' ? attachment.image?.previewPath : attachment.path
               return (
                 <li
                   key={attachmentKey(attachment)}
                   className="inline-flex h-5 max-w-[220px] items-center rounded-[3px] border border-line bg-base px-1 text-[11px] leading-5 text-dim"
                 >
-                  {attachment.kind === 'directory' ? (
-                    content
+                  {attachment.kind === 'directory' || openTarget === undefined ? (
+                    <span className="min-w-0 truncate" title={attachment.path}>
+                      {content}
+                    </span>
                   ) : (
                     <button
                       type="button"
                       className="inline-flex min-w-0 cursor-pointer items-center border-none bg-transparent p-0 text-inherit transition-colors hover:text-fg"
                       aria-label={`打开 ${basename(attachment.path)}`}
-                      title={`打开 ${attachment.path}`}
-                      onClick={() => onOpenFile(attachment.path)}
+                      title={`打开 ${openTarget}`}
+                      onClick={() => onOpenFile(openTarget)}
                     >
                       {content}
                     </button>

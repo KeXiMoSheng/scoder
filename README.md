@@ -11,7 +11,10 @@ scoder（全称 **Super Coder**）是一款本地运行的 AI 编码桌面应用
 
 - 兼容 OpenAI `chat/completions` 协议，流式输出，可接入任意 OpenAI 兼容服务或本地模型
 - 模型配置可增删改，支持从远程 `/models` 接口一键导入；可配置上下文窗口档位与思考深度（`reasoning_effort`）
-- 内置工具调用：`read` / `list` / `glob` / `grep` / `bash` / `write` / `edit` / `todo_write`
+- 内置工具调用：`read` / `read_image` / `list` / `glob` / `grep` / `bash` / `write` / `edit` / `todo_write`
+- 识图：`read_image` 把工作区里的 PNG / JPEG / WebP / GIF 直接交给视觉模型查看（不是文字描述）。单张源文件上限 20 MB；超过 2048 px 的长边或 4 MB 的编码体积会自动缩小/重编码（PNG、JPEG 可本地缩放，WebP / GIF 超限时提示转格式）。图片按内容寻址存在 `userData/ai-images`，会话日志只记引用，历史重放时图片与当初完全一致
+- 剪切板贴图：输入框里 `Ctrl/Cmd+V` 直接粘贴截图或复制的图片（一条消息最多 6 张、单张 20 MB）。粘贴的图片与文件、目录、选中行走**同一种文件行标签**，悬停可移除；粘贴时图片就已入库，因此**草稿和消息里的图片标签都能点开**，在编辑器里以图片预览打开（页签显示原始文件名）。只发图片、不写文字也可以；纯文本粘贴保持原样
+- 图片仅在模型支持图片输入时发送：能力由 `src/main/ai/capabilities.ts` 统一解析，文本模型看不到 `read_image`，历史里的图片也不会被回放
 - 文件读写工具限制在当前工作区内，写操作遵循“先读后改”；`bash` 固定工作目录并限制超时与输出上限
 - 多会话：以 JSONL 持久化，支持标签页、历史列表、自动生成标题、单条 / 批量导出
 - 上下文用量展示；单段步数用满后自动续接，连续重复调用会提醒直至中止；可随时中断本轮
@@ -74,10 +77,24 @@ scoder/
 │   ├── src/shared/          # 主进程与渲染进程共享的类型与通道常量
 │   ├── src/renderer/        # React 界面（Monaco、xterm、Tailwind）
 │   ├── build/               # 打包资源（应用图标、NSIS 安装脚本、entitlements）
-│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询 / MCP 与主题导入冒烟）
+│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询 / MCP、主题、图片冒烟）
 ├── Makefile                 # 开发、构建、打包的统一入口
 └── README.md
 ```
+
+### 识图的扩展点
+
+识图刻意只做一条通路（模型工具 → 图片对象存储 → 请求里的图片块），每条边都只在一个地方定义，往后加能力时改那里即可：
+
+| 想扩展的方向 | 改哪里 |
+| --- | --- |
+| 某个模型不能看图 / 按模型区分能力 | `frontend/src/main/ai/capabilities.ts`：`resolveModelCapabilities()` 返回 `vision: false`，工具下发、历史回放、系统提示会一起变 |
+| 新增产出图片的工具（截图、绘图） | 工具的 `execute()` 返回 `image`（用 `frontend/src/main/ai/images/store.ts` 的 `saveToolImage` 落盘），循环会自动补一条图片消息并写进日志 |
+| 用户侧的其它图片来源（拖拽文件、系统截图） | 渲染进程把图片包成 `AiAttachment`（kind `image` + base64），走 `toAttachmentBlocks` 同一条入库管线即可；入口在 `frontend/src/renderer/src/lib/clipboardImage.ts` |
+| 换一家服务商的图片表达（如 Anthropic 的 image block） | `frontend/src/main/ai/images/message.ts`：实时发送与历史重放共用它 |
+| 新增图片格式或调整限额/编码 | `frontend/src/main/ai/images/probe.ts`（识别与尺寸）、`prepare.ts`（限额、缩放、重编码） |
+| 图片卡片的展示 | `frontend/src/shared/ai/types.ts` 的 `ToolCardView.image` + `renderer/src/lib/toolRow.ts`、`ToolCallRow`（`bodyKind: 'image'`） |
+| 会话日志是否回放图片 | `SessionStore.history(cwd, id, loadImage)` 的第三个参数：不传就只重放文字 |
 
 ## 技术栈
 
@@ -144,6 +161,7 @@ cd frontend
 npm run typecheck   # 主进程 + 渲染进程类型检查
 npm run lint        # ESLint
 npm run format      # Prettier 格式化
+npm run test:image  # 图片格式识别冒烟测试（纯函数，不需要 Electron）
 ```
 
 ```bash
@@ -213,6 +231,8 @@ curl http://127.0.0.1:39200/api/v1/health
 | `scoder.db`                             | SQLite：模型配置（`model_configs`）、应用设置（`app_settings`） |
 | `sessions/<projectKey>/<sessionId>.jsonl` | AI 会话日志（追加式 JSONL）                          |
 | `ai-change-snapshots/`                  | AI 改动前的文件快照，供行内 diff 使用                  |
+| `ai-images/objects/<xx>/<sha256>.<ext>` | `read_image` 读过的图片与粘贴的图片（内容寻址，只增不删，可跨会话复用） |
+| `ai-images/pasted/<sha8>/<文件名>` | 上面对象的硬链接：点开消息里的图片标签时按这个可读文件名打开预览 |
 | 导出目录（用户选择）                    | 会话导出文件，命名为 `<标题>_<yyyymmdd_HHMMSS>.jsonl`  |
 
 ## 打包

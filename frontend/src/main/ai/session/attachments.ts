@@ -1,13 +1,18 @@
 /**
  * 用户附加的上下文：把渲染进程传来的附件整理成可入库的内容块。
  *
- * 约定：file/directory 只保留路径与类型，不读取文件内容；
- * 只有 kind 为 selection 的附件携带用户在编辑器中选中的行文本。
+ * 约定：
+ * - file/directory 只保留路径与类型，不读取文件内容；
+ * - selection 额外携带用户在编辑器中选中的行文本；
+ * - image（剪切板粘贴）走与 read_image 同一条图片管线：识别 → 限量/缩放 → 内容寻址存储，
+ *   日志里只落引用，模型在消息里拿到真正的图片内容。
+ *
  * 路径仍走工作区文件系统解析，保证展示路径与工具看到的一致，并挡住越界路径。
  */
-import { attachmentKey } from '../../../shared/ai/attachments'
+import { MAX_PASTED_IMAGES, attachmentKey } from '../../../shared/ai/attachments'
 import type { AiAttachment } from '../../../shared/ai/types'
 import type { FileSystemService } from '../fs/service'
+import { stagePastedImage } from '../images/paste'
 import type { SessionBlock } from './types'
 
 /** 单条选中行附件允许携带的最大字符数：超出部分截断，剩余内容交给模型用 read 续读 */
@@ -17,6 +22,7 @@ const MAX_SELECTION_CHARS = 20_000
  * 把附件转成会话日志里的内容块。
  * @param fs 本轮工作区文件系统（负责边界校验与展示路径生成）
  * @param attachments 渲染进程传来的附件；重复附件自动忽略
+ * @throws Error 粘贴的图片为空、格式不支持或超出限额（整条消息因此不发送）
  */
 export async function toAttachmentBlocks(
   fs: FileSystemService,
@@ -24,12 +30,23 @@ export async function toAttachmentBlocks(
 ): Promise<SessionBlock[]> {
   const blocks: SessionBlock[] = []
   const seen = new Set<string>()
+  let imageCount = 0
   for (const attachment of attachments ?? []) {
     const key = attachmentKey(attachment)
     if (seen.has(key)) {
       continue
     }
     seen.add(key)
+
+    if (attachment.kind === 'image') {
+      imageCount += 1
+      if (imageCount > MAX_PASTED_IMAGES) {
+        throw new Error(`一条消息最多粘贴 ${MAX_PASTED_IMAGES} 张图片`)
+      }
+      const { ref } = await stagePastedImage(attachment.path, attachment.data ?? '')
+      blocks.push({ type: 'attachment', path: attachment.path, kind: 'image', image: ref })
+      continue
+    }
 
     // 越界或已不存在的路径仍保留用户给的绝对路径：不读取内容，只作为上下文提示
     let path = attachment.path

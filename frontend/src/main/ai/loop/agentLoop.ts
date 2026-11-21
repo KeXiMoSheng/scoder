@@ -1,9 +1,14 @@
 import type { AiRuntimeSettings } from '../../../shared/ai/settings'
 import type { AiEvent, AiSendRequest, AiTurnEndReason } from '../../../shared/ai/types'
+import type { ModelCapabilities } from '../capabilities'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
 import type { ChangeSnapshotStore } from '../changes/snapshots'
 import { toContextUsage } from '../context'
+import { toolImageMessage, userContentWithImages } from '../images/message'
+import type { ToolImagePayload } from '../images/message'
+import { imageDataUrl, readToolImageBytes, readToolImageDataUrl } from '../images/store'
+import type { ToolImageRef } from '../images/types'
 import type { ChatMessage, ChatToolCall, OpenAiConfig, StreamDelta } from '../llm/openai'
 import { streamChat, toOpenAiTools } from '../llm/openai'
 import { buildSystemPrompt } from '../prompt'
@@ -11,7 +16,7 @@ import { toAttachmentBlocks } from '../session/attachments'
 import type { SessionStore } from '../session/store'
 import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
-import { modelTextOf } from '../session/view'
+import { imageRefsOf, modelTextOf } from '../session/view'
 import { errorMessage, type ToolExecutionResult, type ToolRegistry } from '../tools/registry'
 import type { McpPromptServer } from '../../../shared/mcp/types'
 import { RepeatCallGuard } from './repeatGuard'
@@ -38,6 +43,11 @@ export interface RunTurnOptions {
   settings: AiRuntimeSettings
   /** 当前已连接的 MCP 服务端：进入系统提示，为空时提示词里没有 MCP 段落 */
   mcpServers?: readonly McpPromptServer[]
+  /**
+   * 本轮模型的输入能力：决定下发哪些工具、历史图片怎么重放、提示词写哪几段。
+   * 由调用方解析后传入（见 capabilities.ts），循环本身不判断模型。
+   */
+  capabilities: ModelCapabilities
   /** 事件出口：主进程里是 webContents.send，测试里可以直接收集 */
   emit: (event: AiEvent) => void
   /** 用户中止信号 */
@@ -50,8 +60,20 @@ export interface RunTurnOptions {
  * @param options 注入的依赖与本轮请求
  */
 export async function runTurn(options: RunTurnOptions): Promise<void> {
-  const { request, model, fs, observation, registry, sessions, changes, emit, signal, settings } =
-    options
+  const {
+    request,
+    model,
+    fs,
+    observation,
+    registry,
+    sessions,
+    changes,
+    emit,
+    signal,
+    settings,
+    capabilities
+  } = options
+  const { vision: supportsVision } = capabilities
   // 先落盘上一轮遗留的未闭合标记，再据此算出本轮编号
   const state = await sessions.ensure(request.cwd, request.sessionId)
   await sessions.settle(request.cwd, request.sessionId)
@@ -59,12 +81,29 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
   const turn = state.turnCount + 1
   // 附件在落盘前整理成内容块：只有选中行带文本，文件/目录只记录路径与类型
   const attachments = await toAttachmentBlocks(fs, request.attachments)
-  const messages = await initialMessages(sessions, request, attachments, options.mcpServers ?? [])
-  const tools = toOpenAiTools(registry.list())
+  // 文本模型收不了图片：与其静默丢掉，不如让这一轮明确失败
+  if (
+    !supportsVision &&
+    attachments.some((block) => block.type === 'attachment' && block.kind === 'image')
+  ) {
+    throw new Error('当前模型不支持图片输入，无法发送粘贴的图片')
+  }
+  const messages = await initialMessages(
+    sessions,
+    request,
+    attachments,
+    options.mcpServers ?? [],
+    supportsVision
+  )
+  // 文本模型不下发 read_image：工具列表里没有它，模型就不会为一次注定失败的调用付费
+  const tools = toOpenAiTools(
+    registry.list().filter((tool) => supportsVision || tool.requiresVision !== true)
+  )
   let reason: AiTurnEndReason = 'done'
 
-  // 首轮异步润色标题：与主回复并行，不阻塞也不影响结果；失败保留默认标题
-  if (turn === 1) {
+  // 首轮异步润色标题：与主回复并行，不阻塞也不影响结果；失败保留默认标题。
+  // 只发了图片、没有文字时跳过：没有可概括的内容
+  if (turn === 1 && request.prompt.trim().length > 0) {
     void refineTitle(request, model, sessions, emit, signal)
   }
 
@@ -125,7 +164,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
         step,
         emit,
         signal,
-        guard
+        supportsVision,
+        guard,
+        stepImages: []
       }
 
       const pending = new Map<number, PendingCall>()
@@ -193,6 +234,9 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
           stoppedByGuard = true
           break
         }
+        // 图片统一在全部工具结果之后发送：tool 消息必须连续，
+        // 中间插一条用户消息会被严格的服务商判成「缺 tool 结果」
+        await flushStepImages(callContext.stepImages, messages)
         await sessions.record(request.cwd, request.sessionId, [
           {
             type: 'step/end',
@@ -251,21 +295,39 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
  * 组装本次请求的消息序列：系统提示每轮现算，历史从日志重放得到。
  * 系统提示不入库，改 prompt.ts 后对所有历史会话立即生效。
  * @param attachments 本轮新附加文件的内容块（历史里的附件已由重放展开）
+ * @param supportsVision 当前模型能否看图：决定提示词里的看图规则与历史图片是否重放
  */
 async function initialMessages(
   sessions: SessionStore,
   request: AiSendRequest,
   attachments: readonly SessionBlock[],
-  mcpServers: readonly McpPromptServer[]
+  mcpServers: readonly McpPromptServer[],
+  supportsVision: boolean
 ): Promise<ChatMessage[]> {
-  const history = await sessions.history(request.cwd, request.sessionId)
+  // 文本模型不回放历史图片：它们本来就看不了，发过去只会被网关拒绝
+  // 文本模型不回放历史图片：它们本来就看不了，发过去只会被网关拒绝
+  const loadImage = supportsVision ? readToolImageDataUrl : undefined
+  const history = await sessions.history(request.cwd, request.sessionId, loadImage)
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: buildSystemPrompt(request.cwd, process.platform, mcpServers)
+    content: buildSystemPrompt(request.cwd, process.platform, mcpServers, {
+      vision: supportsVision
+    })
   }
+  const messageBlocks: SessionBlock[] = [
+    ...(request.prompt.length > 0 ? [{ type: 'text' as const, text: request.prompt }] : []),
+    ...attachments
+  ]
   const userMessage: ChatMessage = {
     role: 'user',
-    content: modelTextOf([{ type: 'text', text: request.prompt }, ...attachments])
+    content:
+      loadImage === undefined
+        ? modelTextOf(messageBlocks)
+        : await userContentWithImages(
+            modelTextOf(messageBlocks),
+            imageRefsOf(messageBlocks),
+            loadImage
+          )
   }
   return [systemMessage, ...history, userMessage]
 }
@@ -344,8 +406,12 @@ interface CallContext {
   step: number
   emit: (event: AiEvent) => void
   signal: AbortSignal
+  /** 当前模型是否声明支持图片输入（图片工具的门禁） */
+  supportsVision: boolean
   /** 跨步骤累计的重复调用守卫 */
   guard: RepeatCallGuard
+  /** 本步工具产出的图片：全部工具执行完后统一附进下一条用户消息 */
+  stepImages: ToolImageRef[]
 }
 
 /**
@@ -373,7 +439,8 @@ async function executeCall(
     cwd: request.cwd,
     sessionId: request.sessionId,
     observation,
-    signal
+    signal,
+    supportsVision: context.supportsVision
   })
   await writeToolResult(call, result, messages, context)
 
@@ -514,11 +581,45 @@ async function writeToolResult(
         text: result.text,
         ...(stopped ? { stopped: true as const } : {}),
         // 卡片随日志保存，历史重放才能与实时看到的一致
-        ...(result.card ? { card: result.card } : {})
+        ...(result.card ? { card: result.card } : {}),
+        // 图片只存引用：字节在 userData 的图片存储里，日志不跟着膨胀
+        ...(result.image ? { image: result.image } : {})
       }
     }
   ])
   messages.push({ role: 'tool', tool_call_id: call.id, content: result.text })
+  if (result.image) {
+    context.stepImages.push(result.image)
+  }
+}
+
+/**
+ * 把本步工具产出的图片附成一条用户消息。
+ * 字节读不回来（对象被删/损坏）时该张图片从请求里省略：
+ * 工具结果的文字说明还在，宁可少一张图也不要让整轮请求失败。
+ * @param images 本步产出的图片引用，按工具调用顺序
+ * @param messages 正在拼装的请求消息
+ */
+async function flushStepImages(
+  images: readonly ToolImageRef[],
+  messages: ChatMessage[]
+): Promise<void> {
+  if (images.length === 0) {
+    return
+  }
+  const payloads: ToolImagePayload[] = []
+  for (const ref of images) {
+    const data = await readToolImageBytes(ref)
+    if (data === undefined) {
+      console.warn(`图片对象缺失或校验失败，本次请求省略该图片：${ref.storeName}`)
+      continue
+    }
+    payloads.push({ ref, dataUrl: imageDataUrl(data, ref.mediaType) })
+  }
+  const message = toolImageMessage(payloads)
+  if (message !== undefined) {
+    messages.push(message)
+  }
 }
 
 /**

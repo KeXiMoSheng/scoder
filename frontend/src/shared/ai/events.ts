@@ -5,6 +5,8 @@ export const AI_CHANNELS = {
   send: 'ai:send',
   /** 渲染进程 → 主进程：中止一轮对话（单向 send） */
   abort: 'ai:abort',
+  /** 渲染进程 → 主进程：把粘贴的图片先入库，拿到可打开的预览路径（invoke） */
+  stageImage: 'ai:image:stage',
   /** 渲染进程 → 主进程：回应审批请求（单向 send） */
   approval: 'ai:approval',
   /** 主进程 → 渲染进程：流式事件（单向 send） */

@@ -8,6 +8,7 @@ import FileRow from '../FileRow'
 import ModelSelector from '../ModelSelector'
 import { Textarea } from '../ui/textarea'
 import { attachmentLabel, attachmentLineLabel } from '../../lib/aiAttachment'
+import { attachmentsFromImages, clipboardImageFiles } from '../../lib/clipboardImage'
 import { basename } from '../../lib/filePath'
 import type { ModelCallSettingsValue } from '../ModelCallSettings/types'
 import type { AiComposerProps } from './types'
@@ -39,11 +40,14 @@ export default function AiComposer({
   onCreateSession,
   attachments,
   onRemoveAttachment,
+  onAttachAttachment,
   onOpenFile,
   onSend,
   onAbort
 }: AiComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
+  // 粘贴被拒绝时的一句话提示：不弹窗，就地说明原因
+  const [attachError, setAttachError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelConfig[]>([])
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
 
@@ -109,17 +113,57 @@ export default function AiComposer({
       }
     : null
 
-  // 没有可用模型时也无法发送：主进程按 modelConfigId 读密钥
-  const canSend = value.trim().length > 0 && !disabled && !running && selectedModelId !== null
+  // 粘贴的图片与文件、目录、选中行走同一套标签行；图片在发送前还没有可打开的文件
+  const imageCount = attachments.filter((attachment) => attachment.kind === 'image').length
+  // 只发图片、不写文字也允许；两者都为空才算没内容。
+  // 没有可用模型时同样发不了：主进程按 modelConfigId 读密钥
+  const canSend =
+    (value.trim().length > 0 || imageCount > 0) && !disabled && !running && selectedModelId !== null
 
   const submit = useCallback((): void => {
     const text = value.trim()
-    if (!text || disabled || running || selectedModelId === null) {
+    if (
+      (text.length === 0 && imageCount === 0) ||
+      disabled ||
+      running ||
+      selectedModelId === null
+    ) {
       return
     }
     onSend(text, selectedModelId, attachments)
     setValue('')
-  }, [attachments, disabled, onSend, running, selectedModelId, value])
+    setAttachError(null)
+  }, [attachments, disabled, imageCount, onSend, running, selectedModelId, value])
+
+  /**
+   * 粘贴：剪贴板里有图片就转成附件，没有就交给输入框的默认粘贴。
+   * preventDefault 必须同步调用，否则浏览器会先把图片当成文本/文件粘进来。
+   */
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+      const files = clipboardImageFiles(event.nativeEvent)
+      if (files.length === 0) {
+        return
+      }
+      event.preventDefault()
+      void attachmentsFromImages(files, imageCount).then(
+        (result) => {
+          if (result.error !== undefined) {
+            setAttachError(result.error)
+            return
+          }
+          setAttachError(null)
+          for (const attachment of result.attachments) {
+            onAttachAttachment(attachment)
+          }
+        },
+        (error: unknown) => {
+          setAttachError(error instanceof Error ? error.message : String(error))
+        }
+      )
+    },
+    [imageCount, onAttachAttachment]
+  )
 
   return (
     <div className="shrink-0 border-t border-line p-2">
@@ -143,23 +187,31 @@ export default function AiComposer({
                 ) : null}
               </>
             )
+            // 目录与还没保存的图片没有可打开的文件：只展示 + 移除，不做跳转
+            const openable =
+              attachment.kind !== 'directory' &&
+              (attachment.kind !== 'image' || attachment.image?.previewPath !== undefined)
+            const openTarget =
+              attachment.kind === 'image' ? attachment.image?.previewPath : attachment.path
             return (
               <span
                 key={attachmentKey(attachment)}
                 className="inline-flex h-5 max-w-[220px] items-center rounded-[3px] border border-line bg-elevated pl-1.5 text-[12px] leading-5 text-fg"
               >
-                {attachment.kind === 'directory' ? (
-                  <span title={attachment.path}>{content}</span>
-                ) : (
+                {openable && openTarget !== undefined ? (
                   <button
                     type="button"
                     className="inline-flex min-w-0 cursor-pointer items-center border-none bg-transparent p-0 text-inherit transition-opacity hover:opacity-80"
                     aria-label={`打开 ${basename(attachment.path)}`}
-                    title={`打开 ${attachment.path}`}
-                    onClick={() => onOpenFile(attachment.path)}
+                    title={`打开 ${openTarget}`}
+                    onClick={() => onOpenFile(openTarget)}
                   >
                     {content}
                   </button>
+                ) : (
+                  <span className="min-w-0 truncate" title={attachment.path}>
+                    {content}
+                  </span>
                 )}
                 {/* 与编辑器标签的关闭按钮同一套交互：悬停出底色，点击只移除自己 */}
                 <button
@@ -176,6 +228,9 @@ export default function AiComposer({
           })}
         </div>
       ) : null}
+      {attachError === null ? null : (
+        <p className="m-0 mb-1.5 text-[11px] leading-[1.6] text-danger">{attachError}</p>
+      )}
       <Textarea
         className="max-h-40 min-h-[64px] resize-none bg-base text-[13px] focus-visible:border-accent-hover"
         placeholder={
@@ -183,11 +238,12 @@ export default function AiComposer({
             ? '先新建一个会话'
             : running
               ? '正在生成，可点右侧停止'
-              : '输入消息，Enter 发送，Shift+Enter 换行'
+              : '输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴图片'
         }
         value={value}
         disabled={disabled}
         onChange={(event) => setValue(event.target.value)}
+        onPaste={handlePaste}
         onKeyDown={(event) => {
           // 停在心里觉得不对的时候手不用离开键盘：Esc 等价于点停止键
           if (event.key === 'Escape' && running && onAbort) {

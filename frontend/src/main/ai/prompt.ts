@@ -1,5 +1,11 @@
 import type { McpPromptServer } from '../../shared/mcp/types'
 
+/** 提示词的可选能力开关：决定出现哪些段落 */
+export interface PromptCapabilities {
+  /** 当前模型能否看图：能看时才有 read_image 的使用规则 */
+  vision: boolean
+}
+
 /**
  * 系统提示词：按节拼接。
  *
@@ -8,11 +14,13 @@ import type { McpPromptServer } from '../../shared/mcp/types'
  * @param cwd 工作区根目录（用于告诉模型路径基准）
  * @param platform 当前系统：决定 shell 语法提示，默认取运行时值
  * @param mcpServers 当前已连接的 MCP 服务端；为空时不出现 MCP 段落
+ * @param capabilities 当前模型具备的能力；缺省按「不能看图」处理
  */
 export function buildSystemPrompt(
   cwd: string,
   platform: NodeJS.Platform = process.platform,
-  mcpServers: readonly McpPromptServer[] = []
+  mcpServers: readonly McpPromptServer[] = [],
+  capabilities: PromptCapabilities = { vision: false }
 ): string {
   const sections = [
     roleSection(cwd),
@@ -23,6 +31,9 @@ export function buildSystemPrompt(
     writeSection(),
     failureSection()
   ]
+  if (capabilities.vision) {
+    sections.push(imageSection())
+  }
   const mcp = mcpSection(mcpServers)
   if (mcp !== null) {
     sections.push(mcp)
@@ -100,6 +111,20 @@ function writeSection(): string {
     '3. 只有新建文件、或整体重写一个小文件时才用 write。',
     '4. 只改用户要求的范围：不顺手重构、不调整无关格式、不删除看起来没用的代码。',
     '5. 写完后不要复述整个文件，用一两句话说明改了哪里、为什么。'
+  ].join('\n')
+}
+
+/**
+ * 看图：图片只能通过 read_image 进入对话。
+ * 讲清三件事：什么时候用、拿到的是什么（缩小后的尺寸）、看不到图时怎么办。
+ */
+function imageSection(): string {
+  return [
+    '看图的规则：',
+    '1. 需要看图片内容时用 read_image 直接读，不要用 bash、不要装图像库、也不要自己生成缩略图。',
+    '2. read_image 接受工作区内的 PNG/JPEG/WebP/GIF。大图会被自动缩小，返回文字里的尺寸就是实际发出去的尺寸；要在原图上定位元素时按它给的倍数换算坐标。',
+    '3. 用户也可能直接在消息里粘贴图片：图片随消息一起到达，不要要求用户改用 read_image。',
+    '4. 图片（无论是工具读到的还是用户粘贴的）都会以内容块附在文字之后。如果只看到文件名而没看到图片，说明这一轮没能发送成功，直接告诉用户，不要凭文件名猜内容。'
   ].join('\n')
 }
 

@@ -12,6 +12,8 @@
  */
 import { join } from 'path'
 import type { AiSessionSummary } from '../../../shared/ai/types'
+import { toolImageMessage, userContentWithImages } from '../images/message'
+import type { ImageRefLoader, ToolImagePayload } from '../images/message'
 import type { ChatMessage, ChatToolCall } from '../llm/openai'
 import {
   appendSessionLog,
@@ -31,7 +33,7 @@ import {
   type SessionEventInput,
   type SessionLogContent
 } from './types'
-import { modelTextOf, textOf } from './view'
+import { imageRefsOf, modelTextOf, textOf } from './view'
 
 /** 新建会话的默认标题（首轮由模型润色，用户也可手动改名） */
 export const DEFAULT_TITLE = '新会话'
@@ -158,10 +160,11 @@ export class SessionStore {
    * 不含系统提示：它每轮由 buildSystemPrompt 现算，避免改了提示词却读回旧文案。
    * @param cwd 会话所属项目根目录
    * @param id 会话 id
+   * @param loadImage 历史图片的取字节方式；不给时图片引用直接跳过（只留工具结果的文字说明）
    */
-  async history(cwd: string, id: string): Promise<ChatMessage[]> {
+  async history(cwd: string, id: string, loadImage?: ToolImageLoader): Promise<ChatMessage[]> {
     const content = await readSessionLog(sessionLogPath(this.resolveRoot(), cwd, id))
-    return content ? replay(content.events) : []
+    return content ? replay(content.events, loadImage) : []
   }
 
   /**
@@ -410,6 +413,12 @@ function findOpenTurn(events: readonly SessionEvent[]): number | null {
 }
 
 /**
+ * 历史图片的取字节方式：按会话日志里的引用返回 data URL。
+ * 对象缺失或损坏时返回 undefined —— 该条图片从历史里省略，工具结果的文字说明仍然在。
+ */
+export type ToolImageLoader = ImageRefLoader
+
+/**
  * 把事件序列重放成 ChatMessage 数组。
  * 只认消息类事件，边界事件（turn/step）与标题事件不进入上下文。
  *
@@ -417,22 +426,38 @@ function findOpenTurn(events: readonly SessionEvent[]): number | null {
  * 把缺口原样喂给模型会得到 “tool_calls must be followed by tool messages” 的 400，
  * 整个会话从此发不出消息。因此这里以 assistant 消息为组，消费它后面的工具结果，
  * 没有结果的调用、没有调用的结果都丢弃——历史因此永远是可发送的形状。
+ *
+ * 带图片的工具结果：先补齐这一步的全部 tool 消息，再追加一条用户消息放图片，
+ * 保证 tool 消息连续（中间插一条用户消息同样会让严格的服务商判为缺结果）。
  * @param events 按 seq 排好的事件
+ * @param loadImage 图片取字节方式；不给时只重放文字
  */
-function replay(events: readonly SessionEvent[]): ChatMessage[] {
+async function replay(
+  events: readonly SessionEvent[],
+  loadImage?: ToolImageLoader
+): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = []
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index]
     switch (event.type) {
       case 'user/message': {
-        messages.push({ role: 'user', content: modelTextOf(event.data.content) })
+        const blocks = event.data.content
+        const text = modelTextOf(blocks)
+        // 图片只有在这条路由能看图时才重放；否则保持纯文本，历史仍然可发送
+        messages.push({
+          role: 'user',
+          content:
+            loadImage === undefined
+              ? text
+              : await userContentWithImages(text, imageRefsOf(blocks), loadImage)
+        })
         break
       }
       case 'assistant/message': {
         const text = textOf(event.data.content)
         const calls = toolCallsOf(event.data.content)
         // 这条消息之后、下一条消息之前的工具结果；中间允许夹着 step/turn 与标题事件
-        const results = new Map<string, string>()
+        const results = new Map<string, Extract<SessionEvent, { type: 'tool/result' }>['data']>()
         let next = index + 1
         while (
           next < events.length &&
@@ -441,7 +466,7 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
         ) {
           const candidate = events[next]
           if (candidate.type === 'tool/result') {
-            results.set(candidate.data.callId, candidate.data.text)
+            results.set(candidate.data.callId, candidate.data)
           }
           next += 1
         }
@@ -460,9 +485,10 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
           messages.push({
             role: 'tool',
             tool_call_id: call.id,
-            content: results.get(call.id) ?? ''
+            content: results.get(call.id)?.text ?? ''
           })
         }
+        await appendToolImages(messages, answered, results, loadImage)
         break
       }
       default:
@@ -471,6 +497,39 @@ function replay(events: readonly SessionEvent[]): ChatMessage[] {
     }
   }
   return messages
+}
+
+/**
+ * 把一步工具结果里的图片补成一条用户消息（与实时发送共用 toolImageMessage）。
+ * @param messages 正在拼装的历史
+ * @param calls 本步已执行的调用，按模型给出的顺序
+ * @param results callId → 工具结果事件数据
+ * @param loadImage 图片取字节方式；省略时只重放文字
+ */
+async function appendToolImages(
+  messages: ChatMessage[],
+  calls: readonly ChatToolCall[],
+  results: ReadonlyMap<string, Extract<SessionEvent, { type: 'tool/result' }>['data']>,
+  loadImage?: ToolImageLoader
+): Promise<void> {
+  if (loadImage === undefined) {
+    return
+  }
+  const payloads: ToolImagePayload[] = []
+  for (const call of calls) {
+    const ref = results.get(call.id)?.image
+    if (ref === undefined) {
+      continue
+    }
+    const dataUrl = await loadImage(ref)
+    if (dataUrl !== undefined) {
+      payloads.push({ ref, dataUrl })
+    }
+  }
+  const message = toolImageMessage(payloads)
+  if (message !== undefined) {
+    messages.push(message)
+  }
 }
 
 /** 取出内容块里的工具调用，展开成 OpenAI 的 tool_calls 形状 */

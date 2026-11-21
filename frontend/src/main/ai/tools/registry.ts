@@ -1,6 +1,7 @@
 import type { JsonValue, ToolCardView, ToolParameterSchema } from '../../../shared/ai/types'
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
+import type { ToolImageRef } from '../images/types'
 
 /** 工具执行上下文：由循环在每次调用时构造，工具不得跨调用缓存 */
 export interface ToolContext {
@@ -12,6 +13,11 @@ export interface ToolContext {
   observation: ObservationStore
   /** 用户中止本轮对话时触发；长耗时工具必须转发 */
   signal: AbortSignal
+  /**
+   * 当前模型是否声明支持图片输入。
+   * 图片类工具据此在注册表之外再做一次门禁：即使调用绕过工具声明也要被拒绝。
+   */
+  supportsVision: boolean
 }
 
 /** 一次落盘改动的基线信息：循环据此为本轮第一次改动保存快照 */
@@ -24,10 +30,16 @@ export interface ToolChangeRecord {
   status: 'A' | 'M'
 }
 
-/** 工具的规范输出：text 给模型，meta 给 UI（可回放） */
+/**
+ * 工具的规范输出：text 给模型，meta 给 UI（可回放）。
+ * image 是本次调用产生的图片：随工具结果落进会话日志，
+ * 并在工具结果之后作为一条图片消息发给模型（见 agentLoop.writeToolResult）。
+ */
 export interface ToolOutcome {
   text: string
   meta?: JsonValue
+  /** 本次调用产出的图片引用（只有 read_image 这类工具会填） */
+  image?: ToolImageRef
   /** 本次调用落盘的文件（相对工作区根）：循环据此通知界面刷新 */
   changedPaths?: string[]
   /** 本次改动用于记录本轮 diff 基线；不进入日志与卡片 */
@@ -50,6 +62,11 @@ export interface ToolDefinition {
   /** 声明为 true 才允许与同批次的兄弟调用并发；P0 一律串行 */
   isConcurrencySafe?: (args: Record<string, unknown>) => boolean
   /**
+   * 只有当前模型声明支持图片输入时才把该工具下发给模型。
+   * 这样文本模型不会看到一个注定失败的读图工具，也不会为此浪费一次工具调用。
+   */
+  requiresVision?: boolean
+  /**
    * 单次调用的合作式时限（毫秒），不声明表示不限时。
    * 只有转发 ctx.signal 的工具才可能被准时打断；到点后以失败结果回灌给模型，
    * 由模型自己决定重试、换方法还是放弃。当前工具都是短任务，先把口子留在这里。
@@ -67,6 +84,8 @@ export interface ToolExecutionResult {
   ok: boolean
   text: string
   card?: ToolCardView
+  /** 本次调用产出的图片（成功且有图片时才有） */
+  image?: ToolImageRef
   /** 本次调用落盘的文件（相对工作区根） */
   changedPaths?: string[]
   /** 本次改动的基线信息：只供循环记录快照，不进入日志与卡片 */
@@ -194,6 +213,7 @@ export class ToolRegistry {
         ok: true,
         text: outcome.text,
         ...(card ? { card } : {}),
+        ...(outcome.image ? { image: outcome.image } : {}),
         ...(outcome.changedPaths && outcome.changedPaths.length > 0
           ? { changedPaths: outcome.changedPaths }
           : {}),
