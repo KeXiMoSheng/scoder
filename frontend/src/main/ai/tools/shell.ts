@@ -10,6 +10,12 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_TIMEOUT_MS = 600_000
 /** 单条流保留的最大字符数：超出时只保留末尾（报错通常收在这一段） */
 const MAX_STREAM_CHARS = 20_000
+/**
+ * 退出后等管道排空的余量。
+ * 太短会丢掉命令最后一段输出；太长则漏网的孙进程握着写端时白等——
+ * 这里取 1 秒，足以覆盖 'exit' 到 'close' 的正常排空，也不至于让停止按钮失去反馈。
+ */
+const SETTLE_GRACE_MS = 1_000
 /** 命令执行器随系统而变：Windows 是 PowerShell，其余是 bash */
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -120,7 +126,9 @@ export function createBashTool(): ToolDefinition {
 
 /**
  * 执行命令并收集输出。
- * 超时或用户中止都会杀掉整个进程组：shell 拉起的子进程不能留在后台。
+ * 超时或用户中止都会杀掉整棵进程树：shell 拉起的子进程不能留在后台。
+ * 收尾不能只依赖 'close'——管道被漏网的孙进程握着时它永远不会来，
+ * 整个工具调用会挂死、停止按钮也就失效了；因此退出后只等一小段排空时间就结算。
  * @param command 交给 shell 的命令原文
  * @param cwd 工作目录（已解析到工作区内）
  * @param timeoutMs 超时毫秒数
@@ -159,33 +167,70 @@ function runCommand(
     let truncated = false
     let timedOut = false
     let settled = false
-
-    const kill = (): void => {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        return
-      }
-      try {
-        if (process.platform !== 'win32' && child.pid !== undefined) {
-          process.kill(-child.pid, 'SIGKILL')
-        } else {
-          child.kill('SIGKILL')
-        }
-      } catch {
-        // 进程已经退出或进程组不存在：无需再杀
-      }
-    }
-
-    const timer = setTimeout(() => {
-      timedOut = true
-      kill()
-    }, timeoutMs)
-    const onAbort = (): void => kill()
-    signal.addEventListener('abort', onAbort, { once: true })
+    /** 直接子进程的退出结果；被我们自己强制收尾时仍为 null */
+    let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+    /** 两个计时器：超时一次、兜底结算一次，结算时统一清掉 */
+    const timers: {
+      timeout?: ReturnType<typeof setTimeout>
+      settle?: ReturnType<typeof setTimeout>
+    } = {}
 
     const cleanup = (): void => {
-      clearTimeout(timer)
+      clearTimeout(timers.timeout)
+      clearTimeout(timers.settle)
       signal.removeEventListener('abort', onAbort)
     }
+
+    /** 结算一次：中止按原因拒绝，其余情况把已收到的输出交出去 */
+    const settle = (): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      if (signal.aborted) {
+        // 用户中止不是工具失败：交给循环按 aborted 收尾
+        reject(abortReason(signal))
+        return
+      }
+      if (exit === null) {
+        // 没等到 'exit' 就被结算：进程是我们杀掉的，如实标记成信号终止
+        resolve({ code: null, signal: 'SIGKILL', stdout, stderr, truncated, timedOut })
+        return
+      }
+      resolve({ code: exit.code, signal: exit.signal, stdout, stderr, truncated, timedOut })
+    }
+
+    /** 兜底结算：只装一次，先到的那次生效 */
+    const settleAfterGrace = (): void => {
+      timers.settle ??= setTimeout(settle, SETTLE_GRACE_MS)
+    }
+
+    const kill = (): void => {
+      // 已经退出就不用再杀：树上剩下的都是孤儿，命令本身已经有结论
+      if (exit !== null) {
+        return
+      }
+      if (process.platform === 'win32' && child.pid !== undefined) {
+        killWindowsTree(child.pid)
+      } else if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // 进程组已经不存在：无需再杀
+        }
+      }
+      try {
+        // 连同直接子进程一起兜一遍：进程组不存在、taskkill 缺失时这里是最后一手
+        child.kill('SIGKILL')
+      } catch {
+        // 进程已经退出：无需再杀
+      }
+      // 杀不掉的孙进程可能一直握着写端，等 'close' 等于永远等下去
+      settleAfterGrace()
+    }
+
+    const onAbort = (): void => kill()
 
     child.stdout?.on('data', (chunk: Buffer) => {
       const appended = appendCapped(stdout, chunk.toString('utf8'))
@@ -207,20 +252,47 @@ function runCommand(
       reject(error)
     })
 
-    child.on('close', (code, childSignal) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      cleanup()
-      if (signal.aborted) {
-        // 用户中止不是工具失败：交给循环按 aborted 收尾
-        reject(abortReason(signal))
-        return
-      }
-      resolve({ code, signal: childSignal, stdout, stderr, truncated, timedOut })
+    // 直接子进程退出就等于命令结束：让管道排空一小段再结算。
+    // 只等 'close' 时，只要有一个孙进程还活着（Windows 上更常见：被杀掉的只是
+    // PowerShell 本身），这里就永远不结算，超时与停止按钮一起失效。
+    child.on('exit', (code, childSignal) => {
+      exit ??= { code, signal: childSignal }
+      settleAfterGrace()
     })
+
+    child.on('close', (code, childSignal) => {
+      exit ??= { code, signal: childSignal }
+      settle()
+    })
+
+    timers.timeout = setTimeout(() => {
+      timedOut = true
+      kill()
+    }, timeoutMs)
+    signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+/**
+ * 结束整棵进程树。
+ *
+ * Windows 的 child.kill 走 TerminateProcess，只结束直接子进程：PowerShell 拉起的
+ * node / npm / psql 会活下来，继续握着 stdout/stderr 的写端，'close' 因此永远不会到。
+ * taskkill /T 按父子关系连根拔掉，而且只有父进程还在时才找得到子树，
+ * 所以调用点必须先确认直接子进程没有退出。
+ * @param pid 直接子进程（shell）的 pid
+ */
+function killWindowsTree(pid: number): void {
+  try {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true
+    }).on('error', () => {
+      // 系统里没有 taskkill：调用点还会补一次单进程 kill
+    })
+  } catch {
+    // pid 已被回收：无需再杀
+  }
 }
 
 /**
