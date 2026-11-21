@@ -28,7 +28,8 @@
     "build:win": "npm run build && node scripts/dist.mjs win",
     "build:mac": "npm run build && node scripts/dist.mjs mac",
     "build:linux": "npm run build && node scripts/dist.mjs linux",
-    "test:mcp": "rolldown scripts/mcp-smoke.ts --format cjs --platform node --external \"@modelcontextprotocol/sdk,@modelcontextprotocol/sdk/*\" --file .mcp-smoke/smoke.cjs && node .mcp-smoke/smoke.cjs"
+    "test:mcp": "rolldown scripts/mcp-smoke.ts --format cjs --platform node --external \"@modelcontextprotocol/sdk,@modelcontextprotocol/sdk/*\" --file .mcp-smoke/smoke.cjs && node .mcp-smoke/smoke.cjs",
+    "test:theme": "rolldown scripts/theme-import-smoke.ts --format cjs --platform node --file .theme-smoke/theme-import.cjs && node .theme-smoke/theme-import.cjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

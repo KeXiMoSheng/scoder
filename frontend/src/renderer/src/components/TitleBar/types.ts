@@ -23,6 +23,8 @@ export interface TitleBarProps {
   onOpenRecent: (path: string) => void
   /** 切换应用主题 */
   onThemeChange: (id: ThemeId) => void
+  /** 打开设置页「主题」分区（导入 VS Code 主题） */
+  onOpenThemeSettings: () => void
   /** 展开命令行面板并新建一个终端会话 */
   onNewTerminal: () => void
   /** 展开/收起 AI 助手 */

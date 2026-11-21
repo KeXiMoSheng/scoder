@@ -9,6 +9,7 @@ import ModelImport from '../ModelImport'
 import ModelSettings from '../ModelSettings'
 import SettingsSidebar from '../SettingsSidebar'
 import TerminalSettings from '../TerminalSettings'
+import ThemeSettings from '../ThemeSettings'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -28,6 +29,7 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   import: '一键导入模型',
   ai: 'AI 助手',
   mcp: 'MCP 服务',
+  themes: '主题',
   files: '编辑器',
   terminal: '终端',
   git: 'Git',
@@ -71,6 +73,7 @@ export default function SettingsPage({
           {section === 'import' ? <ModelImport onOpenModels={openModels} /> : null}
           {section === 'ai' ? <AiSettings /> : null}
           {section === 'mcp' ? <McpSettings /> : null}
+          {section === 'themes' ? <ThemeSettings /> : null}
           {section === 'files' ? <FileSettings /> : null}
           {section === 'terminal' ? <TerminalSettings /> : null}
           {section === 'git' ? <GitSettings /> : null}

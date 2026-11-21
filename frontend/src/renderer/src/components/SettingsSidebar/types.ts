@@ -4,7 +4,8 @@ import type { LucideIcon } from 'lucide-react'
 
 /** 设置页左侧导航的分区 id：新增设置分区时在此追加 */
 
-export type SettingsSectionId = 'models' | 'import' | 'ai' | 'mcp' | 'files' | 'files' | 'terminal' | 'git' | 'about'
+export type SettingsSectionId =
+  'models' | 'import' | 'ai' | 'mcp' | 'themes' | 'files' | 'terminal' | 'git' | 'about'
 
 /** 单个设置分区（侧栏菜单项） */
 export interface SettingsSection {

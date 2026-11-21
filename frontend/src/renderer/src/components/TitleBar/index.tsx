@@ -8,8 +8,8 @@ import {
   Terminal,
   X
 } from 'lucide-react'
+import { useTheme } from '../../hooks/useTheme'
 import { basename } from '../../lib/filePath'
-import { APP_THEMES } from '../../lib/theme'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import {
@@ -51,11 +51,14 @@ export default function TitleBar({
   onCloseFolder,
   onOpenRecent,
   onThemeChange,
+  onOpenThemeSettings,
   onNewTerminal,
   onToggleAiPanel,
   onToggleSettings
 }: TitleBarProps): React.JSX.Element {
   const [maximized, setMaximized] = useState(false)
+  // 主题目录可能随设置页导入/删除变化，订阅后菜单自动刷新
+  const { themes } = useTheme()
 
   useEffect(() => {
     // 标题栏挂载时先回查当前状态（应用启动即最大化），再订阅后续变化
@@ -120,18 +123,27 @@ export default function TitleBar({
         </MenubarMenu>
         <MenubarMenu>
           <MenubarTrigger className={MENU_TRIGGER_CLASS}>主题</MenubarTrigger>
-          <MenubarContent sideOffset={2} alignOffset={0} className="min-w-[180px]">
+          <MenubarContent sideOffset={2} alignOffset={0} className="min-w-[200px]">
             <MenubarRadioGroup value={themeId} onValueChange={onThemeChange}>
-              {APP_THEMES.map((theme) => (
+              {themes.map((theme) => (
                 <MenubarRadioItem
                   key={theme.id}
                   value={theme.id}
                   className={cn(MENU_ITEM_CLASS, 'pl-8')}
                 >
                   {theme.label}
+                  {theme.origin === 'imported' ? (
+                    <span className="ml-1 rounded border border-line px-1 py-0.5 text-[10px] text-dim">
+                      导入
+                    </span>
+                  ) : null}
                 </MenubarRadioItem>
               ))}
             </MenubarRadioGroup>
+            <MenubarSeparator />
+            <MenubarItem className={MENU_ITEM_CLASS} onSelect={onOpenThemeSettings}>
+              导入主题…
+            </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
       </Menubar>

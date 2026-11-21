@@ -611,6 +611,12 @@ function App(): React.JSX.Element {
     setSettingsOpen(true)
   }, [])
 
+  /** 打开系统配置的主题分区（标题栏主题菜单里的「导入主题…」） */
+  const openThemeSettings = useCallback((): void => {
+    setSettingsSection('themes')
+    setSettingsOpen(true)
+  }, [])
+
   /** 标题栏终端按钮：确保命令行面板展开，并新建一个终端会话 */
   const handleNewTerminal = useCallback((): void => {
     openTerminal()
@@ -756,6 +762,7 @@ function App(): React.JSX.Element {
         onCloseFolder={handleCloseProject}
         onOpenRecent={(path) => openProjectPath(path)}
         onThemeChange={setThemeId}
+        onOpenThemeSettings={openThemeSettings}
         onNewTerminal={handleNewTerminal}
         onToggleAiPanel={toggleAiPanel}
         onToggleSettings={toggleSettings}

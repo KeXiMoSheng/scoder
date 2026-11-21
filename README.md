@@ -30,6 +30,14 @@ scoder（全称 **Super Coder**）是一款本地运行的 AI 编码桌面应用
 - 大文本流式加载与流式保存，默认打开阈值为 1024 MB（设置页可调），避免整文件驻留内存
 - 文件被外部修改时自动重载；AI 的改动支持行内 diff 查看
 
+### 主题
+
+- 内置 One Dark Pro 系列与浅色主题，标题栏「主题」菜单即时切换，界面与 Monaco 编辑器配色同步
+- 内置主题同样直接使用 VS Code 原始主题文件（`public/theme/*.json`），启动时自动转换为 Monaco 主题；新增内置主题只需放入原始 JSON，无需再维护转换后的 `*-monaco.json`
+- 设置页「主题」可直接导入从 VS Code 下载的主题：单文件 `.json` / `.jsonc`（支持 `include` 继承）或主题扩展包 `.vsix`（导入包内 `contributes.themes` 声明的全部主题）
+- 导入主题保存在 `userData/themes`，会自动加入标题栏主题菜单，可随时应用或删除；同名主题重复导入会更新原记录
+- 导出方式：在 VS Code 扩展视图右键主题扩展选「Download VSIX」，或从 Marketplace 页面下载 `.vsix`；也可在命令面板运行「Developer: Open Extensions Folder」，直接选择扩展内的 `package.json` 或 `themes/` 下的主题文件
+
 ### 文件与工作区
 
 - 文件树：目录监听自动刷新，支持新建 / 重命名 / 移动 / 删除 / 在系统文件管理器中显示
@@ -66,7 +74,7 @@ scoder/
 │   ├── src/shared/          # 主进程与渲染进程共享的类型与通道常量
 │   ├── src/renderer/        # React 界面（Monaco、xterm、Tailwind）
 │   ├── build/               # 打包资源（应用图标、NSIS 安装脚本、entitlements）
-│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询 / MCP 冒烟）
+│   └── scripts/             # 开发与打包脚本（dev / dist / 版本校验 / 文件图标查询 / MCP 与主题导入冒烟）
 ├── Makefile                 # 开发、构建、打包的统一入口
 └── README.md
 ```

@@ -1,22 +1,20 @@
+import { convertThemeToMonaco, parseThemeJsonc } from '@shared/theme/convert'
+import type { ImportedTheme } from '@shared/theme/types'
 import { monaco } from './monaco'
 
-// 自动发现 public/theme/ 目录下的 *-monaco.json（转换工具生成的 Monaco 版数据，由 Vite 在构建/开发时展开为静态导入）：
-// 主题 id = 文件名剥离 -monaco 后缀；其 colors 段与原版主题一致，同时作为应用 UI 的取色来源
-// 新增主题只需把「主题名-monaco.json」放进 public/theme/ 目录，无需改动本文件
-// 注意：原版 .json 为 JSONC（带注释），不参与构建，仅作为资料保留
-const themeModules = import.meta.glob('@theme/*-monaco.json', { eager: true }) as Record<
-  string,
-  { default: ThemeFileData }
->
+// 自动发现 public/theme/ 下的 VS Code 原始主题（.json / JSONC），
+// 首屏渲染前用共享转换器转成 Monaco 主题；同一套配色只维护一份原始文件，
+// 不再需要单独提交转换后的 *-monaco.json。
+// 主题 id = 文件名（去掉 .json），同时作为 localStorage 里保存的主题标识。
+const themeModules = import.meta.glob('@theme/*.json', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+}) as Record<string, string>
 
+const THEME_FILE_SUFFIX = '.json'
+/** 兼容旧文件：误留的 *-monaco.json 不作为内置主题加载 */
 const MONACO_SUFFIX = '-monaco.json'
-
-/** *-monaco.json 的数据结构（含 inherit/base/colors/rules/encodedTokensColors 字段） */
-interface ThemeFileData {
-  /** 编辑器基础主题 */
-  base?: string
-  colors?: Record<string, string>
-}
 
 export type ThemeId = string
 
@@ -41,15 +39,30 @@ export type CssVarName =
   | '--git-modified'
   | '--git-deleted'
 
+/** 主题来源：内置（public/theme）或用户导入（userData/themes） */
+export type ThemeOrigin = 'builtin' | 'imported'
+
 export interface AppTheme {
   id: ThemeId
-  /** 下拉框显示名，取自文件名 */
+  /** 下拉框显示名，取自文件名（内置）或导入时的主题名 */
   label: string
   /** 明暗类型：写入 color-scheme，控制原生滚动条与下拉控件的明暗 */
   kind: 'light' | 'dark'
   vars: Record<CssVarName, string>
-  /** 注册到 Monaco 的完整主题数据（来自 *-monaco.json） */
+  /** 注册到 Monaco 的完整主题数据（内置主题由 public/theme 原始 JSON 转换，导入主题由 VS Code 主题转换） */
   editorTheme: monaco.editor.IStandaloneThemeData
+  /** 来源：设置页据此区分可删除的导入主题 */
+  origin: ThemeOrigin
+  /** 导入主题的来源文件名（.json / .vsix），内置主题为空 */
+  sourceName?: string
+  /** 导入时间（ISO 8601），内置主题为空 */
+  importedAt?: string
+}
+
+/** 主题目录快照：React 通过 useSyncExternalStore 订阅，导入/删除后菜单立即更新 */
+export interface ThemeSnapshot {
+  themes: readonly AppTheme[]
+  activeId: ThemeId
 }
 
 // UI 变量 → 主题 colors 段候选键：按序取第一个存在的值；全部缺失时回退到 extractVars 中的兜底值
@@ -161,46 +174,127 @@ function extractVars(
   }
 }
 
-function discoverThemes(): AppTheme[] {
+function discoverBuiltinThemes(): AppTheme[] {
   const themes: AppTheme[] = []
-  for (const [path, mod] of Object.entries(themeModules)) {
+  for (const [path, raw] of Object.entries(themeModules)) {
     const fileName = path.split('/').pop()
-    if (!fileName) {
+    if (!fileName || fileName.endsWith(MONACO_SUFFIX)) {
       continue
     }
-    const id = fileName.slice(0, -MONACO_SUFFIX.length)
-    const kind = BASE_KINDS[mod.default.base ?? ''] ?? 'dark'
-    themes.push({
-      id,
-      label: id,
-      kind,
-      vars: extractVars(mod.default.colors ?? {}, kind),
-      editorTheme: mod.default as unknown as monaco.editor.IStandaloneThemeData
-    })
+    const id = fileName.slice(0, -THEME_FILE_SUFFIX.length)
+    try {
+      const converted = convertThemeToMonaco(parseThemeJsonc(raw))
+      const kind = BASE_KINDS[converted.editorTheme.base] ?? 'dark'
+      themes.push({
+        id,
+        label: id,
+        kind,
+        vars: extractVars(converted.editorTheme.colors, kind),
+        editorTheme: converted.editorTheme as unknown as monaco.editor.IStandaloneThemeData,
+        origin: 'builtin'
+      })
+    } catch (error) {
+      // 单个内置主题损坏只跳过该主题，不能影响其他主题与启动流程
+      console.warn(`内置主题解析失败，已跳过：${fileName}`, error)
+    }
   }
   themes.sort((a, b) => a.id.localeCompare(b.id))
   return themes
 }
 
-/** public/theme/ 目录中发现的全套主题（按文件名排序；新增文件后无需改动代码） */
-export const APP_THEMES: readonly AppTheme[] = discoverThemes()
+/** public/theme/ 目录中发现的内置主题（按文件名排序；新增文件后无需改动代码） */
+const BUILTIN_THEMES: readonly AppTheme[] = discoverBuiltinThemes()
 
-const DEFAULT_THEME_ID = 'one-dark-pro'
+const DEFAULT_THEME_ID = 'one-dark-pro-darker'
 
 const STORAGE_KEY = 'scoder.theme'
 
-const THEME_BY_ID = new Map<string, AppTheme>(APP_THEMES.map((theme) => [theme.id, theme] as const))
+/** 导入主题 → 应用主题：与内置主题共用取色与明暗判定逻辑 */
+function toAppTheme(record: ImportedTheme): AppTheme {
+  const kind = BASE_KINDS[record.editorTheme.base] ?? 'dark'
+  return {
+    id: record.id,
+    label: record.label,
+    kind,
+    vars: extractVars(record.editorTheme.colors ?? {}, kind),
+    editorTheme: record.editorTheme as unknown as monaco.editor.IStandaloneThemeData,
+    origin: 'imported',
+    sourceName: record.sourceName,
+    importedAt: record.importedAt
+  }
+}
 
-let activeThemeId: ThemeId = APP_THEMES[0]?.id ?? DEFAULT_THEME_ID
+let importedThemes: readonly AppTheme[] = []
+let allThemes: readonly AppTheme[] = BUILTIN_THEMES
+let themeById = new Map<string, AppTheme>(allThemes.map((theme) => [theme.id, theme] as const))
+
+let activeThemeId: ThemeId = allThemes[0]?.id ?? DEFAULT_THEME_ID
+
+let snapshot: ThemeSnapshot = { themes: allThemes, activeId: activeThemeId }
+const themeListeners = new Set<() => void>()
+
+/** 订阅主题目录变化（导入/删除/切换都会通知） */
+export function subscribeThemes(listener: () => void): () => void {
+  themeListeners.add(listener)
+  return () => {
+    themeListeners.delete(listener)
+  }
+}
+
+/** 当前快照：themes 引用只在目录变化时替换，满足 useSyncExternalStore 的稳定快照要求 */
+export function getThemeSnapshot(): ThemeSnapshot {
+  return snapshot
+}
+
+function publishThemes(): void {
+  snapshot = { themes: allThemes, activeId: activeThemeId }
+  for (const listener of themeListeners) {
+    listener()
+  }
+}
 
 export function getActiveThemeId(): ThemeId {
   return activeThemeId
 }
 
+/**
+ * 用主进程读到的导入主题重建目录：注册到 Monaco 并让菜单立即反映。
+ * 启动引导与设置页导入/删除后都走这里，保证两处看到同一份清单。
+ */
+export function registerImportedThemes(records: readonly ImportedTheme[]): void {
+  importedThemes = records.map(toAppTheme)
+  for (const theme of importedThemes) {
+    try {
+      monaco.editor.defineTheme(theme.id, theme.editorTheme)
+    } catch (error) {
+      // 单套主题数据异常不应影响其他主题与内置主题
+      console.warn(`注册导入主题失败：${theme.label}`, error)
+    }
+  }
+  allThemes = [...BUILTIN_THEMES, ...importedThemes]
+  themeById = new Map(allThemes.map((theme) => [theme.id, theme] as const))
+  // 当前主题被删除时回退到内置默认主题；当前主题是导入主题时重放一次，应用可能更新过的配色
+  if (!themeById.has(activeThemeId)) {
+    applyTheme(resolveInitialThemeId())
+    return
+  }
+  if (importedThemes.some((theme) => theme.id === activeThemeId)) {
+    applyTheme(activeThemeId)
+    return
+  }
+  publishThemes()
+}
+
+/** 从主进程重新读取导入主题（设置页导入/删除后调用） */
+export async function syncImportedThemes(): Promise<void> {
+  const records = await window.api.listImportedThemes()
+  registerImportedThemes(records)
+}
+
 function readStoredThemeId(): ThemeId | null {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (stored !== null && THEME_BY_ID.has(stored)) {
+    if (stored !== null && themeById.has(stored)) {
       return stored
     }
   } catch {
@@ -213,21 +307,30 @@ function readStoredThemeId(): ThemeId | null {
 function resolveInitialThemeId(): ThemeId {
   return (
     readStoredThemeId() ??
-    (THEME_BY_ID.has(DEFAULT_THEME_ID) ? DEFAULT_THEME_ID : (APP_THEMES[0]?.id ?? DEFAULT_THEME_ID))
+    (themeById.has(DEFAULT_THEME_ID) ? DEFAULT_THEME_ID : (allThemes[0]?.id ?? DEFAULT_THEME_ID))
   )
 }
 
-/** 启动引导（main.tsx 在首屏渲染前调用）：注册全部 Monaco 主题并应用已保存的主题 */
-export function initTheme(): void {
-  for (const theme of APP_THEMES) {
+/**
+ * 启动引导（main.tsx 在首屏渲染前调用）：
+ * 先注册内置主题，再从 userData/themes 读取导入主题，最后应用已保存的主题。
+ * 导入主题读取失败不应影响启动，回退到内置主题即可。
+ */
+export async function initThemes(): Promise<void> {
+  for (const theme of BUILTIN_THEMES) {
     monaco.editor.defineTheme(theme.id, theme.editorTheme)
+  }
+  try {
+    await syncImportedThemes()
+  } catch (error) {
+    console.warn('读取导入主题失败，本次启动只加载内置主题', error)
   }
   applyTheme(resolveInitialThemeId())
 }
 
-/** 应用主题：写入 CSS 变量与 color-scheme、切换 Monaco 主题、持久化选择 */
+/** 应用主题：写入 CSS 变量与 color-scheme、切换 Monaco 主题、持久化选择并通知订阅者 */
 export function applyTheme(id: ThemeId): void {
-  const theme = THEME_BY_ID.get(id)
+  const theme = themeById.get(id)
   if (!theme) {
     return
   }
@@ -246,4 +349,5 @@ export function applyTheme(id: ThemeId): void {
   } catch {
     // 持久化失败不影响本次应用
   }
+  publishThemes()
 }

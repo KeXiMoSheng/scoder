@@ -26,6 +26,8 @@ import type { McpServerInput, McpServerView } from '../shared/mcp/types'
 import { TERMINAL_CHANNELS } from '../shared/terminal/events'
 import { TERMINAL_SETTINGS_CHANNELS, type TerminalSettings } from '../shared/terminal/settings'
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal/types'
+import { THEME_CHANNELS } from '../shared/theme/events'
+import type { ThemeImportResult } from '../shared/theme/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
 import { WORKSPACE_CHANNELS } from '../shared/workspace/events'
 import type { EditorTabsSnapshot } from '../shared/workspace/types'
@@ -236,6 +238,11 @@ const api: ScoderAPI = {
   // 应用信息与官方仓库跳转：关于页展示版本号，点击地址交给系统浏览器
   getAppInfo: () => ipcRenderer.invoke(APP_CHANNELS.getInfo),
   openRepository: () => ipcRenderer.invoke(APP_CHANNELS.openRepository),
+  // 导入主题：解析与文件落盘在主进程，渲染进程只拿转换后的 Monaco 主题数据
+  listImportedThemes: () => ipcRenderer.invoke(THEME_CHANNELS.listImported),
+  importThemes: (): Promise<ThemeImportResult> => ipcRenderer.invoke(THEME_CHANNELS.importThemes),
+  deleteImportedTheme: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke(THEME_CHANNELS.deleteImported, id),
   // 工作区最近项目 / 启动恢复：均走 invoke 拿主进程落库结果
   listRecentProjects: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.listRecent),
   recordProjectOpened: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.recordOpened, path),

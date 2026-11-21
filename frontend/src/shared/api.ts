@@ -33,6 +33,7 @@ import type {
 import type { McpProbeResult, McpServerConfig, McpServerInput, McpServerView } from './mcp/types'
 import type { TerminalSettings } from './terminal/settings'
 import type { TerminalCreateResult, TerminalDataEvent, TerminalExitEvent } from './terminal/types'
+import type { ImportedTheme, ThemeImportResult } from './theme/types'
 import type { EditorTabsSnapshot, RecentProject } from './workspace/types'
 
 /** 经 preload contextBridge 暴露给渲染进程的能力（白名单方法） */
@@ -212,6 +213,12 @@ export interface ScoderAPI {
   getAppInfo: () => Promise<AppInfo>
   /** 在系统浏览器中打开官方 GitHub 仓库 */
   openRepository: () => Promise<void>
+  /** 读取已导入的 VS Code 主题（userData/themes），供启动引导注册到 Monaco 与主题菜单 */
+  listImportedThemes: () => Promise<ImportedTheme[]>
+  /** 弹出文件选择框导入主题（.json/.jsonc/.vsix），转换并落库；用户取消时 canceled 为 true */
+  importThemes: () => Promise<ThemeImportResult>
+  /** 删除一套导入主题（主进程弹确认框）；用户取消或记录不存在时返回 false */
+  deleteImportedTheme: (id: string) => Promise<boolean>
   /** 最近项目列表（MRU，最多 5 个），供「文件」菜单展示 */
   listRecentProjects: () => Promise<RecentProject[]>
   /** 记录一个刚打开的项目：更新 MRU 并作为下次启动的默认打开项 */
