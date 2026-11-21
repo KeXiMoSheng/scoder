@@ -5,7 +5,8 @@
  * 一致的字母、颜色和目录聚合结果，因此这些规则集中在这里：
  * - 文件：新增 → addedBackground，修改 → modifiedBackground，删除 → deletedBackground
  * - 目录：子孙文件只有一种状态时沿用该状态；出现两种及以上状态时统一按「已修改」
- *   （目录本身没有被删除，混合变更用修改色表达）
+ *   （目录本身没有被删除，混合变更用修改色表达）。目录行只用圆点表示存在变化，
+ *   圆点颜色沿用上面同一套规则。
  */
 import type { GitFileStatus } from '@shared/git/types'
 import { dirname, isAtOrUnder } from './filePath'
@@ -25,6 +26,17 @@ export const GIT_STATUS_TEXT_CLASS: Record<GitFileStatus, string> = {
   added: GIT_STATUS_META.added.className,
   modified: GIT_STATUS_META.modified.className,
   deleted: GIT_STATUS_META.deleted.className
+}
+
+/**
+ * 目录圆点的无障碍文案。
+ * 目录状态是子孙文件聚合出来的，不能直接说「这个目录被删除」，
+ * 只说明目录内包含哪一类变化；混合变更聚合为 modified，文案同样以修改为准。
+ */
+export const GIT_DIRECTORY_STATUS_LABEL: Record<GitFileStatus, string> = {
+  added: '目录内包含新增文件',
+  modified: '目录内包含修改文件',
+  deleted: '目录内包含删除文件'
 }
 
 /** 把 AI 改动清单里的 git 记号（A/M/D）换算成文件状态 */

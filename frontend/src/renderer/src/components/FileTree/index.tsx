@@ -209,9 +209,12 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
   const gitStatus = node.data.isDirectory
     ? (directGitStatus ?? directoryGitStatuses.get(node.data.path))
     : (directGitStatus ?? (node.data.gitDeleted === true ? 'deleted' : undefined))
+  // 目录聚合状态用圆点表示，文件仍用 A/M/D 字母
+  const gitStatusVariant = node.data.isDirectory ? 'dot' : 'letter'
+  // 行高由 react-arborist 的 24px 行容器决定，这里撑满整行才能让内容与状态标记垂直居中
   const rowClass = node.isSelected
-    ? 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
-    : 'group flex cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
+    ? 'group flex h-full cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover bg-selection'
+    : 'group flex h-full cursor-pointer items-center gap-1 whitespace-nowrap pr-2 select-none hover:bg-hover'
   return (
     <div
       // 编辑中不挂拖拽源，避免拖动选中重命名文本时误触发节点拖拽
@@ -256,7 +259,9 @@ function TreeNode({ node, style, dragHandle }: NodeRendererProps<FileNode>): Rea
       >
         {node.isEditing ? <RenameInput node={node} /> : undefined}
       </FileRow>
-      {gitStatus !== undefined ? <GitStatusBadge status={gitStatus} /> : null}
+      {gitStatus !== undefined ? (
+        <GitStatusBadge status={gitStatus} variant={gitStatusVariant} />
+      ) : null}
       {isRoot ? (
         <div
           className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
