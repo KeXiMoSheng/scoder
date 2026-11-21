@@ -1,7 +1,4 @@
 # AI 执行命令卡死：`bash` 工具的超时与「停止」都无效
-
-一句话结论：**取消被实现成「杀进程 + 等 `close`」，而 `close` 等的不是进程死亡，是管道写端引用计数归零；Windows 上 `child.kill()` 只杀掉最外层那一个进程，所以 `close` 永远不来，`runCommand` 的 Promise 永远不结算，整轮对话连同停止按钮一起冻死。**
-
 涉及代码：[shell.ts](../../src/main/ai/tools/shell.ts)（工具执行）、[agentLoop.ts](../../src/main/ai/loop/agentLoop.ts)（调用方）、[main/ai/index.ts](../../src/main/ai/index.ts)（会话锁）。
 
 ## 一、现状
@@ -48,7 +45,20 @@
 | 信号处理 | `runCommand` 里 `signal.addEventListener('abort', onAbort)` → `kill()` |
 
 **信号一路都送到了，`signal.aborted` 也确实变成了 `true`。** 旧代码的 `kill()` 在 Windows 上只有一行：`child.kill('SIGKILL')`，等于 `TerminateProcess(powershell.exe)`——只结束直接子进程。
-
+```
+[scoder 的 Node 主进程]  ← 手里握着管道“读端”
+ │
+ └─ ① powershell.exe                      ← 直接子进程，就是 child.pid，旧代码只杀到它
+      │
+      └─ ② cmd.exe /c "...\gradlew.bat" :8b4t-cmhk-zh:compileJava --offline -q
+           │                                ← .bat 必须由 cmd.exe 执行（PowerShell 5.1 内部就是起 cmd /c）
+           │
+           └─ ③ java.exe org.gradle.wrapper.GradleWrapperMain ...   ← gradlew.bat 里启动的 wrapper 客户端
+                │
+                ├─ ④ java.exe org.gradle.launcher.daemon.bootstrap.GradleDaemon   ← 常驻 daemon
+                └─ ⑤ （可选）worker JVM / javac                                  ← Gradle 通常在 daemon 里就地编译，这层可能没有
+一句话结论：**取消被实现成「杀进程 + 等 `close`」，而 `close` 等的不是进程死亡，是管道写端引用计数归零；Windows 上 `child.kill()` 只杀掉最外层那一个进程，所以 `close` 永远不来，`runCommand` 的 Promise 永远不结算，整轮对话连同停止按钮一起冻死。**
+```
 ### 2.2 关键：`close` 等的是管道 EOF，不是进程死亡
 
 Node 的两个事件语义不同：
