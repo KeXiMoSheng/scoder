@@ -28,6 +28,7 @@ export default function AiSidebar({
   cwd,
   attachments,
   onRemoveAttachment,
+  onAttachAttachment,
   onAttachmentsSent,
   onOpenFile,
   onOpenChange,
@@ -230,6 +231,7 @@ export default function AiSidebar({
         onCreateSession={handleCreate}
         attachments={attachments}
         onRemoveAttachment={onRemoveAttachment}
+        onAttachAttachment={onAttachAttachment}
         onAttachmentsSent={onAttachmentsSent}
         onOpenFile={onOpenFile}
         onOpenChange={onOpenChange}

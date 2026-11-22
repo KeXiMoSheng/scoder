@@ -20,10 +20,22 @@ export interface ChatToolCall {
   function: { name: string; arguments: string }
 }
 
-/** 会话历史中的一条消息，形状与 OpenAI chat/completions 对齐 */
+/**
+ * 消息内容的一段：OpenAI 兼容接口的 content 数组形态。
+ * 图片用 data URL 内联发送（多数兼容网关不接受任意 URL，内联字节最稳）。
+ */
+export type ChatContentPart =
+  { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+
+/**
+ * 会话历史中的一条消息，形状与 OpenAI chat/completions 对齐。
+ * content 在普通文本消息里是字符串；带图片的用户消息使用内容块数组。
+ * tool 消息始终是纯文本 —— 各家网关对「工具结果里放图片」的支持并不一致，
+ * 图片改用紧随其后的用户消息发送（见 agentLoop.writeToolResult）。
+ */
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  content: string | ChatContentPart[] | null
   tool_calls?: ChatToolCall[]
   tool_call_id?: string
 }

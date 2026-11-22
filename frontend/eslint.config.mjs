@@ -7,7 +7,16 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
   // 冒烟测试的构建产物（rolldown 打包出的 CJS）不参与 lint
-  { ignores: ['**/node_modules', '**/dist', '**/out', '**/.mcp-smoke', '**/.theme-smoke'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      '**/.mcp-smoke',
+      '**/.theme-smoke',
+      '**/.image-smoke'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],

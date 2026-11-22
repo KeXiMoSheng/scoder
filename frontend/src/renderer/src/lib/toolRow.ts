@@ -5,7 +5,13 @@
  * 推导出一行的工具族、标题、单行摘要、可打开路径、diff 统计与展开体类型。
  * 组件只按模型渲染，不自己解释参数；工具特有的展示差异集中在定义表里。
  */
-import type { AiMessageView, TodoItem, ToolFileChange, ToolRowState } from '@shared/ai/types'
+import type {
+  AiMessageView,
+  TodoItem,
+  ToolFileChange,
+  ToolImageMeta,
+  ToolRowState
+} from '@shared/ai/types'
 import { isAbsolutePath, isAtOrUnder, relativePath } from './filePath'
 
 /** 一次工具调用消息（行组件的唯一输入） */
@@ -15,7 +21,7 @@ export type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 export type ToolRowVariant = 'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'others'
 
 /** 展开体类型：结构化卡片优先，其次通用的输入/输出卡（任务清单由 TodoPlan 单独展示） */
-export type ToolRowBodyKind = 'diff' | 'text' | 'io' | 'none'
+export type ToolRowBodyKind = 'diff' | 'text' | 'io' | 'image' | 'none'
 
 /**
  * 一个工具在行上的展示定义。
@@ -41,6 +47,12 @@ export const TOOL_ROW_DEFINITIONS: Record<string, ToolRowDefinition> = {
   read: {
     variant: 'read',
     title: '读取',
+    summaryKeys: ['file_path'],
+    filePathSummary: true
+  },
+  read_image: {
+    variant: 'read',
+    title: '查看图片',
     summaryKeys: ['file_path'],
     filePathSummary: true
   },
@@ -102,6 +114,8 @@ export interface ToolRowModel {
   bodyKind: ToolRowBodyKind
   /** 结构化正文：read 的行号窗口、list 的条目、glob/grep 的匹配 */
   textBody?: string
+  /** 图片正文：read_image 的结果卡片带上格式与尺寸 */
+  imageMeta?: ToolImageMeta
   /** 通用行的输入：参数 JSON 原文 */
   input?: string
   /** 通用行的输出：结果文本；结构化行只在失败时展示 */
@@ -136,10 +150,12 @@ export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRow
   const summary =
     message.status === 'error' && output !== undefined ? firstLine(output) : baseSummary
 
-  const structured = hunks.length > 0 || textBody !== undefined
+  const imageMeta = card?.kind === 'image' ? card.image : undefined
+  const structured = hunks.length > 0 || textBody !== undefined || imageMeta !== undefined
   // 结构化行的参数对读者没有信息量（尤其是 write 的整份内容），只保留结果
   const input = structured ? undefined : formatArguments(message.arguments, args)
-  const bodyKind = pickBodyKind(hunks.length > 0, textBody, input, output)
+  const bodyKind =
+    imageMeta !== undefined ? 'image' : pickBodyKind(hunks.length > 0, textBody, input, output)
 
   const filePath = definition.filePathSummary
     ? pickFilePath(card?.path, args, definition, cwd)
@@ -155,6 +171,7 @@ export function toolRowModel(message: ToolMessage, cwd?: string | null): ToolRow
     ...(card?.exitCode !== undefined ? { exitCode: card.exitCode } : {}),
     bodyKind,
     ...(textBody !== undefined ? { textBody } : {}),
+    ...(imageMeta !== undefined ? { imageMeta } : {}),
     ...(input !== undefined ? { input } : {}),
     // 结构化正文已经承载结果；失败时再把错误文本附在展开体下方
     ...(structured

@@ -133,11 +133,22 @@ export type TodoItem = {
 }
 
 /**
+ * 图片卡片的元信息：实际发给模型的格式、尺寸与字节数。
+ * 渲染进程据此展示尺寸文案；图片字节另按卡片路径从工作区读取。
+ */
+export interface ToolImageMeta {
+  mediaType: string
+  width: number
+  height: number
+  bytes: number
+}
+
+/**
  * 工具卡片：主进程根据调用参数或结果推导出的展示意图。
  * 渲染进程只负责画卡片，不参与工具执行，也不解析文件内容。
  */
 export interface ToolCardView {
-  kind: 'generic' | 'read' | 'diff' | 'todo'
+  kind: 'generic' | 'read' | 'diff' | 'todo' | 'image'
   title: string
   /** 卡片正文（read 为带行号的窗口；diff 卡片改用 hunks 渲染） */
   body?: string
@@ -149,6 +160,8 @@ export interface ToolCardView {
   hunks?: ToolHunk[]
   /** kind 为 todo 时的清单快照：整表替换后模型认为的最新计划 */
   todos?: TodoItem[]
+  /** kind 为 image 时的图片元信息（图片本体按 path 从工作区读取） */
+  image?: ToolImageMeta
   /**
    * bash 的退出码。非零退出码是「报告」而不是工具失败：
    * 行状态仍然是 ok，退出码单独标在行尾，供人判断这条命令是否真跑成功。
@@ -184,25 +197,67 @@ export interface AiContextUsage {
 
 /**
  * 用户附加给 AI 的上下文类型：
- * file/directory 只提供路径与类型，selection 额外携带选中的行内容。
+ * file/directory 只提供路径与类型，selection 额外携带选中的行内容，
+ * image 是从剪切板粘贴的图片（字节随请求传给主进程，由主进程入库）。
  */
-export type AiAttachmentKind = 'file' | 'directory' | 'selection'
+export type AiAttachmentKind = 'file' | 'directory' | 'selection' | 'image'
 
-/** 渲染进程传给主进程的附件：路径为绝对路径，必须位于工作区内 */
+/**
+ * 图片附件的元信息。
+ * 主进程在入库时把实际发送的格式与尺寸写进会话日志，
+ * 渲染进程只在点开时按 previewPath 交给编辑器预览。
+ */
+export interface AiImageAttachmentView {
+  /** 实际发给模型的格式，如 image/webp */
+  mediaType: string
+  width?: number
+  height?: number
+  bytes?: number
+  /** 会话历史里的只读预览路径：点开时由编辑器按图片预览打开 */
+  previewPath?: string
+}
+
+/** 渲染进程传给主进程的附件：文件/目录为绝对路径（必须位于工作区内），图片为展示名 */
 export interface AiAttachment extends AiAttachmentView {
   /** kind 为 selection 时的选中文本（整行内容）；其他类型缺省 */
   text?: string
+  /** kind 为 image 时的 base64 字节（不含 data: 前缀）；其他类型缺省 */
+  data?: string
+  /** kind 为 image 时声明的格式；主进程会按字节重新识别，声明不符以字节为准 */
+  mediaType?: string
 }
 
-/** 展示用附件：会话重放与本地回显共用，不包含可能很大的选中文本 */
+/** 展示用附件：会话重放与本地回显共用，不包含可能很大的选中文本与图片字节 */
 export interface AiAttachmentView {
-  /** 文件/目录路径：发给模型的展示路径（相对工作区根）；本地回显时也转成相对路径 */
+  /** 文件/目录路径：发给模型的展示路径（相对工作区根）；图片为粘贴时的展示名 */
   path: string
   kind: AiAttachmentKind
   /** kind 为 selection 时的起始行（1 起） */
   startLine?: number
   /** kind 为 selection 时的结束行（1 起，含） */
   endLine?: number
+  /** kind 为 image 时的图片元信息 */
+  image?: AiImageAttachmentView
+}
+
+/** 粘贴图片入库的入参：渲染进程读到的 base64 字节与展示名 */
+export interface AiStagedImageInput {
+  /** 展示名（如「粘贴的图片-1.png」），同时决定预览页签的名字 */
+  name: string
+  /** 浏览器声明的格式；主进程按字节重新识别 */
+  mediaType: string
+  /** base64 字节（不含 data: 前缀） */
+  data: string
+}
+
+/** 粘贴图片入库的结果：与消息里图片附件的展示信息一致 */
+export interface AiStagedImage {
+  mediaType: string
+  width: number
+  height: number
+  bytes: number
+  /** 可交给编辑器打开的绝对路径（带原文件名的别名） */
+  previewPath: string
 }
 
 /** 发起一轮对话的请求：工作区由渲染进程按当前打开的项目传入 */
@@ -213,7 +268,7 @@ export interface AiSendRequest {
   modelConfigId: number
   /** 工作区根目录的绝对路径，同时作为 AI 工具的边界 */
   cwd: string
-  /** 用户本轮输入 */
+  /** 用户本轮输入；本轮只发了图片时可以为空串 */
   prompt: string
   /**
    * 用户附加的上下文：file/directory 只带路径与类型，
@@ -388,6 +443,11 @@ export interface AiAPI {
   send: (request: AiSendRequest) => Promise<void>
   /** 中止指定会话正在执行的一轮对话 */
   abort: (sessionId: string) => void
+  /**
+   * 把一张粘贴的图片先存进图片存储，返回可打开的预览路径。
+   * 粘贴时就会调用：这样草稿里的图片标签已经能点开预览，不等消息发送。
+   */
+  stageImage: (input: AiStagedImageInput) => Promise<AiStagedImage>
   /** 回应一次审批请求（P1 的写操作会用到） */
   respondApproval: (requestId: string, approved: boolean) => void
   /** 订阅主进程事件；返回取消订阅函数。回调带会话 id，供多会话并发时过滤 */

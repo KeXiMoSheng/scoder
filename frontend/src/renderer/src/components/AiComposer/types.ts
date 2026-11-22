@@ -12,10 +12,12 @@ export interface AiComposerProps {
   canCreateSession: boolean
   /** 新建一个会话（上下文用量面板里的快捷入口） */
   onCreateSession: () => void
-  /** 已附加、等待随下一条消息发送的上下文（路径 + 类型，选中行含内容） */
+  /** 已附加、等待随下一条消息发送的上下文（路径 + 类型，选中行含内容，图片含字节） */
   attachments: readonly AiAttachment[]
   /** 移除一个已附加的上下文 */
   onRemoveAttachment: (attachment: AiAttachment) => void
+  /** 新增一个已附加的上下文（剪切板粘贴图片走这里） */
+  onAttachAttachment: (attachment: AiAttachment) => void
   /** 点击附件图标/名称在编辑器中打开对应文件（目录不跳转） */
   onOpenFile: (path: string) => void
   /** 发送一条消息（已去除首尾空白且非空）、选中的模型主键与随行附件 */

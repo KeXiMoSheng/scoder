@@ -2,7 +2,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { AI_CHANNELS } from '../shared/ai/events'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../shared/ai/settings'
-import type { AiAPI, AiEventEnvelope, AiFileReview, AiSendRequest } from '../shared/ai/types'
+import type {
+  AiAPI,
+  AiStagedImageInput,
+  AiEventEnvelope,
+  AiFileReview,
+  AiSendRequest
+} from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
 import { FILES_CHANNELS } from '../shared/files/events'
@@ -36,6 +42,7 @@ import type { EditorTabsSnapshot } from '../shared/workspace/types'
 const ai: AiAPI = {
   send: (request: AiSendRequest) => ipcRenderer.invoke(AI_CHANNELS.send, request),
   abort: (sessionId: string) => ipcRenderer.send(AI_CHANNELS.abort, sessionId),
+  stageImage: (input: AiStagedImageInput) => ipcRenderer.invoke(AI_CHANNELS.stageImage, input),
   respondApproval: (requestId: string, approved: boolean) =>
     ipcRenderer.send(AI_CHANNELS.approval, requestId, approved),
   onEvent: (listener: (payload: AiEventEnvelope) => void) => {

@@ -1,4 +1,5 @@
 import { createEditTool } from './edit'
+import { createReadImageTool } from './image'
 import { createListTool } from './list'
 import { createReadTool } from './read'
 import { ToolRegistry } from './registry'
@@ -8,7 +9,7 @@ import { createTodoTool } from './todo'
 import { createWriteTool } from './write'
 
 /**
- * 装配工具集：只读的 read / list / glob / grep，执行命令的 bash，
+ * 装配工具集：只读的 read / read_image / list / glob / grep，执行命令的 bash，
  * 写入的 write / edit，以及规划用的 todo_write。
  * 写工具的安全性来自“先读后改”（ctx.observation），而不是审批弹窗；
  * 工作区边界由 fs.resolve 统一保证。
@@ -18,6 +19,7 @@ import { createWriteTool } from './write'
 export function createToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
   registry.register(createReadTool())
+  registry.register(createReadImageTool())
   registry.register(createListTool())
   registry.register(createGlobTool())
   registry.register(createGrepTool())

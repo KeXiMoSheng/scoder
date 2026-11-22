@@ -11,6 +11,7 @@ import type {
   AiTurnEndReason,
   ToolCardView
 } from '../../../shared/ai/types'
+import type { ToolImageRef } from '../images/types'
 
 /**
  * 当前日志格式版本。
@@ -41,7 +42,7 @@ export type SessionBlock =
    */
   | {
       type: 'attachment'
-      /** 相对工作区根的展示路径 */
+      /** 相对工作区根的展示路径；粘贴的图片是展示名（如「粘贴的图片-1.webp」） */
       path: string
       kind: AiAttachmentKind
       /** kind 为 selection 时的起始行（1 起） */
@@ -50,6 +51,11 @@ export type SessionBlock =
       endLine?: number
       /** kind 为 selection 时的选中文本 */
       text?: string
+      /**
+       * kind 为 image 时的图片引用：字节在 userData 的图片存储里，
+       * 日志只记引用；重放时据此把图片重新放进用户消息。
+       */
+      image?: ToolImageRef
     }
   | { type: 'tool-call'; id: string; name: string; arguments: string }
 
@@ -85,6 +91,12 @@ export interface SessionEventMap {
     name: string
     ok: boolean
     text: string
+    /**
+     * 本次调用产出的图片（read_image）：
+     * 只存内容寻址的引用，字节在 userData 的图片存储里。
+     * 重放时据此在工具结果之后补一条图片消息，保证模型看到的历史与当初一致。
+     */
+    image?: ToolImageRef
     /** 用户中止本轮对话导致这次调用没有完成：重放时展示为「已停止」而不是失败 */
     stopped?: true
     /**

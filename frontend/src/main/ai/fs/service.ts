@@ -93,6 +93,11 @@ export interface FileSystemService {
   /** 观测目标；不存在返回 undefined */
   stat(target: FsTarget): Promise<FsStat | undefined>
   /**
+   * 读取整份二进制内容（图片这类需要完整字节的文件）。
+   * @param maxBytes 允许读取的最大字节数，超出即拒绝
+   */
+  readBytes(target: FsTarget, maxBytes: number): Promise<Uint8Array>
+  /**
    * 获取有界行窗口。
    * @param size 调用方已观测到的文件字节数；大文件或大小未知时走流式扫描
    */
@@ -196,6 +201,30 @@ export class LocalFileSystem implements FileSystemService {
 
   async stat(target: FsTarget): Promise<FsStat | undefined> {
     return this.probe(target.key)
+  }
+
+  /**
+   * 读取整份二进制内容（read_image 用）。
+   * 上限在调用方已按文件大小判过，这里再兜一次底：先 stat 再读，
+   * 读到的长度与 stat 不符（文件在读取期间变大）时同样拒绝。
+   * @param target 已解析的文件目标
+   * @param maxBytes 允许读取的最大字节数
+   * @returns 完整字节
+   * @throws Error 目标不是文件、或大小超出上限
+   */
+  async readBytes(target: FsTarget, maxBytes: number): Promise<Uint8Array> {
+    const info = await this.probe(target.key)
+    if (!info || info.type !== 'file') {
+      throw new Error(`不是文件：${target.displayPath}`)
+    }
+    if (info.size > maxBytes) {
+      throw new Error(`文件大小 ${info.size} 字节，超过上限 ${maxBytes} 字节`)
+    }
+    const data = await fs.readFile(target.key)
+    if (data.byteLength > maxBytes) {
+      throw new Error(`文件大小 ${data.byteLength} 字节，超过上限 ${maxBytes} 字节`)
+    }
+    return data
   }
 
   /** 观测单个路径（含写入必需的 mode）；不存在返回 undefined */

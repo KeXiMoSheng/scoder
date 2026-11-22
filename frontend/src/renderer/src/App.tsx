@@ -897,6 +897,7 @@ function App(): React.JSX.Element {
               cwd={projectPath}
               attachments={aiAttachments}
               onRemoveAttachment={handleRemoveAiAttachment}
+              onAttachAttachment={attachToAi}
               onAttachmentsSent={clearAiAttachments}
               onOpenFile={openFileByPath}
               onOpenChange={handleOpenChange}

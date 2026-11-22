@@ -1,6 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type { MessageBoxOptions, OpenDialogOptions, WebContents } from 'electron'
 import { isAbsolute, join } from 'path'
+import {
+  MAX_PASTED_IMAGE_BYTES,
+  MAX_PASTED_IMAGES,
+  PASTED_IMAGE_MEDIA_TYPES
+} from '../../shared/ai/attachments'
 import { DEFAULT_CONTEXT_WINDOW } from '../../shared/ai/context'
 import { AI_CHANNELS } from '../../shared/ai/events'
 import type {
@@ -12,14 +17,18 @@ import type {
   AiSessionExportResult,
   AiSessionsExportResult,
   AiSessionSummary,
+  AiStagedImage,
+  AiStagedImageInput,
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById, getAiRuntimeSettings } from '../db'
+import { resolveModelCapabilities } from './capabilities'
 import { mcpManager } from '../mcp/manager'
 import { CHANGE_SNAPSHOT_DIR_NAME, ChangeSnapshotStore } from './changes/snapshots'
 import { lastContextUsage } from './context'
 import { ObservationStore } from './fs/observation'
 import { LocalFileSystem } from './fs/service'
+import { stagePastedImage } from './images/paste'
 import type { OpenAiConfig } from './llm/openai'
 import { runTurn } from './loop/agentLoop'
 import { toolRegistry as registry } from './registry'
@@ -95,6 +104,28 @@ export function registerAiHandlers(): void {
       running.delete(request.sessionId)
     })
   })
+
+  /**
+   * 粘贴图片先入库：返回可打开的预览路径，草稿里的图片标签因此能立刻点开预览。
+   * 发送时同一份字节会再入库一次，内容寻址让它直接命中同一个对象。
+   */
+  ipcMain.handle(
+    AI_CHANNELS.stageImage,
+    async (_event, input: AiStagedImageInput): Promise<AiStagedImage> => {
+      assertStagedImageInput(input)
+      const { ref, previewPath } = await stagePastedImage(input.name, input.data)
+      if (previewPath === undefined) {
+        throw new Error('图片已保存，但没能生成可打开的预览路径')
+      }
+      return {
+        mediaType: ref.mediaType,
+        width: ref.width,
+        height: ref.height,
+        bytes: ref.bytes,
+        previewPath
+      }
+    }
+  )
 
   ipcMain.on(AI_CHANNELS.abort, (_event, sessionId: string): void => {
     if (typeof sessionId !== 'string') return
@@ -349,7 +380,11 @@ export function registerAiHandlers(): void {
   )
 }
 
-/** 执行一轮对话；工作区文件系统在每轮开始时按 cwd 创建 */
+/**
+ * 执行一轮对话；工作区文件系统在每轮开始时按 cwd 创建。
+ * 模型能力（能否看图）在本轮开始时解析一次，随本轮快照传进循环，
+ * 循环不做模型判断，只按这个布尔值决定下发什么工具、怎么重放历史与写提示词。
+ */
 async function startTurn(
   request: AiSendRequest,
   model: OpenAiConfig,
@@ -370,6 +405,7 @@ async function startTurn(
       settings: getAiRuntimeSettings(),
       // 已连接的 MCP 服务端同样现读：刚连上的工具这一轮就能用，说明文字进系统提示
       mcpServers: mcpManager.promptServers(),
+      capabilities: resolveModelCapabilities(model),
       emit,
       signal
     })
@@ -409,44 +445,114 @@ function validateRequest(request: AiSendRequest): void {
   if (typeof request.cwd !== 'string' || !isAbsolute(request.cwd)) {
     throw new Error('cwd 必须是绝对路径')
   }
-  if (typeof request.prompt !== 'string' || request.prompt.trim().length === 0) {
-    throw new Error('prompt 不能为空')
+  if (typeof request.prompt !== 'string') {
+    throw new Error('prompt 无效')
   }
   if (typeof request.modelConfigId !== 'number' || !Number.isInteger(request.modelConfigId)) {
     throw new Error('modelConfigId 无效')
   }
-  if (request.attachments !== undefined) {
-    if (!Array.isArray(request.attachments) || request.attachments.length > MAX_ATTACHMENTS) {
-      throw new Error(`附件数量不能超过 ${MAX_ATTACHMENTS} 个`)
+  const attachments = validateAttachments(request.attachments)
+  // 只发图片、不写文字是允许的；两者都为空则没有可发送的内容
+  if (request.prompt.trim().length === 0 && attachments.images === 0) {
+    throw new Error('prompt 不能为空')
+  }
+}
+
+/**
+ * 校验一张粘贴图片的入参（IPC 边界，渲染进程的内容按不可信处理）。
+ * @param input 渲染进程传来的展示名、声明格式与 base64 字节
+ * @throws Error 参数结构、格式或体积不合法
+ */
+function assertStagedImageInput(input: AiStagedImageInput): void {
+  if (typeof input !== 'object' || input === null) {
+    throw new Error('图片参数无效')
+  }
+  const { name, mediaType, data } = input
+  if (typeof name !== 'string' || name.length === 0 || name.length > 200) {
+    throw new Error('图片展示名无效')
+  }
+  if (
+    typeof mediaType !== 'string' ||
+    !(PASTED_IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)
+  ) {
+    throw new Error('图片格式无效')
+  }
+  // base64 的字符数上限按 4/3 展开，留几个字节给换行符
+  const maxBase64Chars = Math.ceil(MAX_PASTED_IMAGE_BYTES / 3) * 4 + 4
+  if (typeof data !== 'string' || data.length === 0 || data.length > maxBase64Chars) {
+    throw new Error('图片内容无效或超过单张上限')
+  }
+}
+
+/**
+ * 校验附件列表，返回图片张数。
+ * 文件/目录/选中行都必须是工作区内的绝对路径；粘贴的图片只有展示名与 base64 字节。
+ * @param attachments 渲染进程传来的附件
+ * @returns 附件里的图片张数，供「只发图片也可以」的判断使用
+ */
+function validateAttachments(attachments: AiSendRequest['attachments']): { images: number } {
+  if (attachments === undefined) {
+    return { images: 0 }
+  }
+  if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS) {
+    throw new Error(`附件数量不能超过 ${MAX_ATTACHMENTS} 个`)
+  }
+  let images = 0
+  for (const candidate of attachments as unknown[]) {
+    if (typeof candidate !== 'object' || candidate === null) {
+      throw new Error('附件参数无效')
     }
-    for (const candidate of request.attachments as unknown[]) {
-      if (typeof candidate !== 'object' || candidate === null) {
-        throw new Error('附件参数无效')
+    const { path, kind, startLine, endLine, text, data, mediaType } = candidate as Record<
+      string,
+      unknown
+    >
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error('附件路径无效')
+    }
+    if (kind === 'image') {
+      images += 1
+      if (images > MAX_PASTED_IMAGES) {
+        throw new Error(`一条消息最多粘贴 ${MAX_PASTED_IMAGES} 张图片`)
       }
-      const { path, kind, startLine, endLine, text } = candidate as Record<string, unknown>
-      if (typeof path !== 'string' || !isAbsolute(path)) {
-        throw new Error('附件路径必须是绝对路径')
+      if (path.length > 200) {
+        throw new Error('图片展示名过长')
       }
-      if (kind !== 'file' && kind !== 'directory' && kind !== 'selection') {
-        throw new Error('附件类型无效')
+      if (
+        typeof mediaType !== 'string' ||
+        !(PASTED_IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)
+      ) {
+        throw new Error('图片格式无效')
       }
-      if (kind === 'selection') {
-        if (typeof text !== 'string') {
-          throw new Error('选中行内容无效')
-        }
-        if (
-          typeof startLine !== 'number' ||
-          !Number.isInteger(startLine) ||
-          typeof endLine !== 'number' ||
-          !Number.isInteger(endLine) ||
-          startLine < 1 ||
-          endLine < startLine
-        ) {
-          throw new Error('选中行范围无效')
-        }
+      // base64 的字符数上限按 4/3 展开，留几个字节给换行符
+      const maxBase64Chars = Math.ceil(MAX_PASTED_IMAGE_BYTES / 3) * 4 + 4
+      if (typeof data !== 'string' || data.length === 0 || data.length > maxBase64Chars) {
+        throw new Error('图片内容无效或超过单张上限')
+      }
+      continue
+    }
+    if (!isAbsolute(path)) {
+      throw new Error('附件路径必须是绝对路径')
+    }
+    if (kind !== 'file' && kind !== 'directory' && kind !== 'selection') {
+      throw new Error('附件类型无效')
+    }
+    if (kind === 'selection') {
+      if (typeof text !== 'string') {
+        throw new Error('选中行内容无效')
+      }
+      if (
+        typeof startLine !== 'number' ||
+        !Number.isInteger(startLine) ||
+        typeof endLine !== 'number' ||
+        !Number.isInteger(endLine) ||
+        startLine < 1 ||
+        endLine < startLine
+      ) {
+        throw new Error('选中行范围无效')
       }
     }
   }
+  return { images }
 }
 
 /**

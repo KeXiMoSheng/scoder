@@ -21,6 +21,7 @@ export default function AiChatPanel({
   onCreateSession,
   attachments,
   onRemoveAttachment,
+  onAttachAttachment,
   onAttachmentsSent,
   onOpenFile,
   onOpenChange,
@@ -62,6 +63,7 @@ export default function AiChatPanel({
         onCreateSession={onCreateSession}
         attachments={attachments}
         onRemoveAttachment={onRemoveAttachment}
+        onAttachAttachment={onAttachAttachment}
         onOpenFile={onOpenFile}
         onSend={handleSend}
         onAbort={abort}

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -10,7 +10,8 @@ import {
   Wrench,
   type LucideIcon
 } from 'lucide-react'
-import type { AiMessageView, ToolHunk, ToolRowState } from '@shared/ai/types'
+import type { AiMessageView, ToolHunk, ToolImageMeta, ToolRowState } from '@shared/ai/types'
+import { isAbsolutePath, joinPath } from '../../lib/filePath'
 import { toolRowModel, type ToolRowVariant } from '../../lib/toolRow'
 import { cn } from '../../lib/utils'
 import type { ToolCallRowProps } from './types'
@@ -175,7 +176,7 @@ export default function ToolCallRow({
           </span>
         ) : null}
       </div>
-      {open ? <RowBody message={message} model={model} /> : null}
+      {open ? <RowBody message={message} model={model} cwd={cwd} onOpenFile={onOpenFile} /> : null}
     </div>
   )
 }
@@ -187,17 +188,23 @@ export default function ToolCallRow({
  */
 function RowBody({
   message,
-  model
+  model,
+  cwd,
+  onOpenFile
 }: {
   message: ToolMessage
   model: ReturnType<typeof toolRowModel>
+  cwd?: string | null
+  onOpenFile: (path: string, line?: number, endLine?: number) => void
 }): React.JSX.Element {
   const card = message.card
   const hunks: readonly ToolHunk[] = card?.kind === 'diff' ? (card.hunks ?? []) : []
 
   return (
     <div className="mt-0.5 mb-1 pr-1 pl-6">
-      {model.bodyKind === 'diff' ? (
+      {model.bodyKind === 'image' ? (
+        <ImageBody path={card?.path} meta={model.imageMeta} cwd={cwd} onOpenFile={onOpenFile} />
+      ) : model.bodyKind === 'diff' ? (
         <>
           <DiffBody hunks={hunks} />
           {model.output !== undefined ? (
@@ -213,6 +220,130 @@ function RowBody({
       ) : null}
     </div>
   )
+}
+
+/**
+ * 图片正文：按卡片路径从工作区读回字节，展示实际发给模型的那张图。
+ * read_image 已经把尺寸与格式算好了，这里只负责画出来并提供打开原图的入口。
+ */
+function ImageBody({
+  path,
+  meta,
+  cwd,
+  onOpenFile
+}: {
+  path?: string
+  meta?: ToolImageMeta
+  cwd?: string | null
+  onOpenFile: (filePath: string) => void
+}): React.JSX.Element {
+  const absolute =
+    path === undefined
+      ? undefined
+      : isAbsolutePath(path)
+        ? path
+        : cwd === null || cwd === undefined
+          ? undefined
+          : joinPath(cwd, path)
+  if (absolute === undefined) {
+    return <ImageNotice text="没有可读取的图片路径" />
+  }
+  // key 让换一张图时重建组件：读字节的状态跟着重置，不必在 effect 里清状态
+  return (
+    <ImageObject
+      key={absolute}
+      path={path ?? absolute}
+      absolute={absolute}
+      meta={meta}
+      onOpenFile={onOpenFile}
+    />
+  )
+}
+
+/** 一张图片的读取状态与展示 */
+function ImageObject({
+  path,
+  absolute,
+  meta,
+  onOpenFile
+}: {
+  path: string
+  absolute: string
+  meta?: ToolImageMeta
+  onOpenFile: (filePath: string) => void
+}): React.JSX.Element {
+  const [state, setState] = useState<{ url?: string; failed?: boolean }>({})
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | undefined
+    window.api.readFileBytes(absolute).then(
+      (data) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(new Blob([data], { type: meta?.mediaType ?? 'image/png' }))
+        setState({ url: objectUrl })
+      },
+      () => {
+        if (!cancelled) setState({ failed: true })
+      }
+    )
+    return () => {
+      cancelled = true
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+  }, [absolute, meta?.mediaType])
+
+  const caption = [
+    meta?.mediaType.replace('image/', '').toUpperCase(),
+    meta === undefined ? undefined : `${meta.width} × ${meta.height}`,
+    meta === undefined ? undefined : formatBytes(meta.bytes)
+  ]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join(' · ')
+
+  return (
+    <div className="overflow-hidden rounded-md border border-line bg-base/50">
+      {state.url !== undefined ? (
+        <button
+          type="button"
+          className="block max-w-full cursor-zoom-in border-none bg-transparent p-0"
+          title={`打开 ${path}`}
+          onClick={() => onOpenFile(path)}
+        >
+          <img src={state.url} alt={path} className="block max-h-64 max-w-full object-contain" />
+        </button>
+      ) : (
+        <ImageNotice
+          text={state.failed === true ? '图片无法读取（可能已被移动或删除）' : '正在读取图片…'}
+        />
+      )}
+      {caption.length > 0 ? (
+        <div className="border-t border-line px-2.5 py-1 text-[10px] leading-[1.7] text-dim/80">
+          {caption}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 图片位置的占位文案 */
+function ImageNotice({ text }: { text: string }): React.JSX.Element {
+  return <p className="m-0 px-2.5 py-2 text-[11px] leading-[1.7] text-dim">{text}</p>
+}
+
+/** 人类可读的字节数，与主进程说明文字的口径一致 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
 }
 
 /** 输入 / 输出卡：输入是参数 JSON，输出是工具结果原文 */

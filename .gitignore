@@ -11,6 +11,8 @@ frontend/out/
 frontend/dist/
 frontend/.eslintcache
 frontend/.mcp-smoke/
+frontend/.theme-smoke/
+frontend/.image-smoke/
 
 # 环境变量与本地配置（保留 *.example 模板）
 .env
@@ -28,3 +30,4 @@ Thumbs.db
 
 # 本地参考资料仓库（内嵌 git 仓库，仅供本地借鉴，不入库）
 deepseek-harness/
+examples/

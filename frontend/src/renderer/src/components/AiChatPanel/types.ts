@@ -18,6 +18,8 @@ export interface AiChatPanelProps {
   attachments: readonly AiAttachment[]
   /** 移除一个已附加的上下文 */
   onRemoveAttachment: (attachment: AiAttachment) => void
+  /** 新增一个已附加的上下文（输入区粘贴图片） */
+  onAttachAttachment: (attachment: AiAttachment) => void
   /** 消息发出后清空已附加内容 */
   onAttachmentsSent: () => void
   /** 点击附件打开对应文件 */

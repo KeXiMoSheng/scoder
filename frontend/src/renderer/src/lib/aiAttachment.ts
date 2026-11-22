@@ -24,8 +24,19 @@ export function attachmentLineLabel(attachment: AiAttachmentView): string | null
   return `L${startLine}-${attachment.endLine ?? startLine}`
 }
 
-/** 把待发送附件（绝对路径）转成展示对象（相对工作区根），用于本地消息回显 */
+/**
+ * 把待发送附件转成展示对象，用于本地消息回显。
+ * 文件/目录/选中行把绝对路径转成相对工作区根；粘贴的图片本来就没有工作区路径，
+ * 原样保留展示名与预览信息（预览用内联 data URL，不必等主进程回包）。
+ */
 export function toAttachmentView(attachment: AiAttachment, cwd: string): AiAttachmentView {
+  if (attachment.kind === 'image') {
+    return {
+      path: attachment.path,
+      kind: 'image',
+      ...(attachment.image === undefined ? {} : { image: attachment.image })
+    }
+  }
   const startLine = attachment.startLine ?? 1
   return {
     path: relativePath(attachment.path, cwd),
