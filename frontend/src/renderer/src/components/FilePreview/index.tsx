@@ -39,11 +39,22 @@ function formatDuration(seconds: number): string {
 
 /** 图片 / 音频 / 视频：原始字节包成 Blob URL 后交给对应的查看器解码与播放 */
 function MediaView({ kind, name, mime, data, setDetail }: MediaViewProps): React.JSX.Element {
-  // 组件按文件重建（调用方以路径作 key），初始化时创建一次对象 URL 即可
-  const [url] = useState(() => URL.createObjectURL(new Blob([data], { type: mime })))
+  // 对象 URL 必须在 effect 里创建、由该 effect 的清理函数撤销：
+  // 开发态的 StrictMode 会「挂载 → 卸载 → 再挂载」，若在渲染期（useState 初始化器）创建，
+  // 这次卸载的清理会立刻撤销**正在播放**的 URL——图片多半已解码完看不出问题，
+  // 音视频则播到已缓冲的几秒后卡死在 waiting（Blob 数据已释放，后续字节读不出来）。
+  // 换成「渲染期创建 + 延迟释放」（参见 SvgPreview）也能绕过，但每次挂载都要多留一份整块字节，
+  // 音视频动辄几十 MB，不划算，因此这里显式关掉针对同步 setState 的检查。
+  const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
-  useEffect(() => () => URL.revokeObjectURL(url), [url])
+  useEffect(() => {
+    // 组件按文件重建（调用方以路径作 key），data/mime 在一次挂载期间不变，URL 只建一次
+    const objectUrl = URL.createObjectURL(new Blob([data], { type: mime }))
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上方注释：URL 只能由 effect 产出
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [data, mime])
 
   if (failed) {
     return (
@@ -51,6 +62,11 @@ function MediaView({ kind, name, mime, data, setDetail }: MediaViewProps): React
         当前运行环境无法解码该{KIND_LABELS[kind]}（{mime}）
       </p>
     )
+  }
+
+  // 对象 URL 在首帧渲染后由 effect 建好，这一帧先占位，避免尺寸/时长回填前界面跳动
+  if (url === null) {
+    return <div className="min-h-0 flex-1" />
   }
 
   if (kind === 'image') {
