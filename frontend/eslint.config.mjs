@@ -15,7 +15,8 @@ export default defineConfig(
       '**/.mcp-smoke',
       '**/.theme-smoke',
       '**/.image-smoke',
-      '**/.question-smoke'
+      '**/.question-smoke',
+      '**/.browser-smoke'
     ]
   },
   tseslint.configs.recommended,

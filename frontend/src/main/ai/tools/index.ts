@@ -1,4 +1,6 @@
 import { createAskUserTool } from './ask'
+
+import { createBrowserTools } from './browser'
 import { createEditTool } from './edit'
 import { createReadImageTool } from './image'
 import { createListTool } from './list'
@@ -11,7 +13,7 @@ import { createWriteTool } from './write'
 
 /**
  * 装配工具集：只读的 read / read_image / list / glob / grep，执行命令的 bash，
- * 写入的 write / edit，主动询问用户的 ask_user_question，以及规划用的 todo_write。
+ * 写入的 write / edit，主动询问用户的 ask_user_question，以及规划用的 todo_write，以及前端自测用的浏览器工具。
  * 写工具的安全性来自“先读后改”（ctx.observation），而不是审批弹窗；
  * 工作区边界由 fs.resolve 统一保证。
  * bash 只固定了 cwd、超时与输出上限；审批/沙箱/后台任务留作后续扩展点。
@@ -29,5 +31,8 @@ export function createToolRegistry(): ToolRegistry {
   registry.register(createEditTool())
   registry.register(createAskUserTool())
   registry.register(createTodoTool())
+  for (const tool of createBrowserTools()) {
+    registry.register(tool)
+  }
   return registry
 }

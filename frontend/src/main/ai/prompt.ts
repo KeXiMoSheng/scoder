@@ -35,6 +35,7 @@ export function buildSystemPrompt(
   if (capabilities.vision) {
     sections.push(imageSection())
   }
+  sections.push(browserSection(capabilities.vision))
   const mcp = mcpSection(mcpServers)
   if (mcp !== null) {
     sections.push(mcp)
@@ -146,6 +147,23 @@ function failureSection(): string {
   return [
     '工具失败时读错误信息并调整参数（例如先 read 再改，或给出更精确的 old_string）。',
     '同一个失败连续出现两次时停下来，把错误原样告诉用户，不要继续试错。'
+  ].join('\n')
+}
+
+/**
+ * 浏览器：前端联调时用工具代替人眼看页面。
+ * 讲清顺序（先快照再操作）、元素引用的生命周期，以及截图只截视口。
+ */
+function browserSection(vision: boolean): string {
+  return [
+    '浏览器测试的规则：',
+    '1. 测试前端页面前，先用 bash 启动 dev server 并确认端口可用，再用 browser_open 打开对应地址（默认按 http:// 补全）。',
+    '2. 操作页面前先 browser_snapshot：它给出标题、可见文字与 eN 引用的可交互元素；点击/输入都使用引用，不要猜选择器。',
+    '3. 页面更新后引用可能失效，重新快照再继续；不要原样重复同一次点击。',
+    vision
+      ? '4. 需要确认真实渲染效果（布局、颜色、间距、报错覆盖层）时用 browser_screenshot，截图只包含当前视口。'
+      : '4. 当前模型不能看图，不要调用 browser_screenshot；改用 browser_snapshot 读取页面文字与元素。',
+    '5. 同一会话的浏览器跨轮次保留页面与登录状态；需要干净环境或测试结束时用 browser_close 关闭。'
   ].join('\n')
 }
 

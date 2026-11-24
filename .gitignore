@@ -14,6 +14,7 @@ frontend/.mcp-smoke/
 frontend/.theme-smoke/
 frontend/.image-smoke/
 frontend/.question-smoke/
+frontend/.browser-smoke/
 
 # 环境变量与本地配置（保留 *.example 模板）
 .env

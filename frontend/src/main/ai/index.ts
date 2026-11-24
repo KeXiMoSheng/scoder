@@ -22,6 +22,7 @@ import type {
   ToolCardView
 } from '../../shared/ai/types'
 import { findModelConfigById, getAiRuntimeSettings } from '../db'
+import { browserManager } from '../browser/manager'
 import { resolveModelCapabilities } from './capabilities'
 import { mcpManager } from '../mcp/manager'
 import { CHANGE_SNAPSHOT_DIR_NAME, ChangeSnapshotStore } from './changes/snapshots'
@@ -198,6 +199,8 @@ export function registerAiHandlers(): void {
       await changeSnapshots.removeSession(project, id).catch((error: unknown) => {
         console.warn('清理改动快照失败', error)
       })
+      // 浏览器窗口与会话绑定，日志删除后一并关闭
+      browserManager.close(id)
       return true
     }
   )

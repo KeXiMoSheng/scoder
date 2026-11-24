@@ -18,6 +18,7 @@ import icon from '../../resources/icon.png?asset'
 import { closeDatabase, getTerminalSettings, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
 import { registerAppHandlers } from './app'
+import { browserManager } from './browser/manager'
 import { disposeAllFileStreams, registerFileStreamHandlers } from './files/stream'
 import { decodeWholeText, TextStreamError } from './files/textStream'
 import { BINARY_SAMPLE_BYTES, isBinarySample } from './files/encoding'
@@ -623,6 +624,11 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // 主窗口关闭时销毁隐藏的 AI 浏览器窗口：否则它们会挡住 window-all-closed，应用退不干净
+  mainWindow.on('closed', () => {
+    browserManager.disposeAll()
+  })
+
   // 无边框窗口的标题栏按钮需要跟随最大化/还原切换图标，状态变化时主动推送给渲染进程
   const pushMaximizeState = (): void => {
     if (!mainWindow.isDestroyed()) {
@@ -731,6 +737,7 @@ app.whenReady().then(() => {
 // 应用退出前结束所有终端会话（pty 子进程不会随主进程自动退出）
 app.on('before-quit', () => {
   abortAllAiRuns()
+  browserManager.disposeAll()
   disposeAllFileStreams()
   disposeAllFileWrites()
   disposeAllDirectoryWatchers()
