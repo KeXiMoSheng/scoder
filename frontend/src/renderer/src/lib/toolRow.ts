@@ -18,7 +18,8 @@ import { isAbsolutePath, isAtOrUnder, relativePath } from './filePath'
 export type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 
 /** 工具族：决定行首图标与摘要来源 */
-export type ToolRowVariant = 'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'others'
+export type ToolRowVariant =
+  'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'question' | 'others'
 
 /** 展开体类型：结构化卡片优先，其次通用的输入/输出卡（任务清单由 TodoPlan 单独展示） */
 export type ToolRowBodyKind = 'diff' | 'text' | 'io' | 'image' | 'none'
@@ -91,6 +92,11 @@ export const TOOL_ROW_DEFINITIONS: Record<string, ToolRowDefinition> = {
   todo_write: {
     variant: 'todo',
     title: '更新任务清单'
+  },
+  // 参数还在流式生成时先显示这一行；卡片绘制完后由 AiQuestionCard 接管
+  ask_user_question: {
+    variant: 'question',
+    title: '询问用户'
   }
 }
 

@@ -18,6 +18,7 @@ import { generateTitle } from '../session/title'
 import type { SessionBlock } from '../session/types'
 import { imageRefsOf, modelTextOf } from '../session/view'
 import { errorMessage, type ToolExecutionResult, type ToolRegistry } from '../tools/registry'
+import type { QuestionBroker } from '../questions/broker'
 import type { McpPromptServer } from '../../../shared/mcp/types'
 import { RepeatCallGuard } from './repeatGuard'
 
@@ -35,6 +36,11 @@ export interface RunTurnOptions {
   fs: FileSystemService
   /** 会话级“已读”观测：写工具的“先读后改”就靠它 */
   observation: ObservationStore
+  /**
+   * 向用户提问的协调器：ask_user_question 在这里挂起，
+   * 渲染进程作答后工具才返回，本轮随之继续。
+   */
+  questions: QuestionBroker
   registry: ToolRegistry
   sessions: SessionStore
   /** 本轮改动的 diff 基线快照：首次改动时保存，供界面按需查看 */
@@ -65,6 +71,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
     model,
     fs,
     observation,
+    questions,
     registry,
     sessions,
     changes,
@@ -155,6 +162,7 @@ export async function runTurn(options: RunTurnOptions): Promise<void> {
       const callContext: CallContext = {
         fs,
         observation,
+        questions,
         registry,
         request,
         sessions,
@@ -396,6 +404,7 @@ function finishCalls(pending: Map<number, PendingCall>): ChatToolCall[] {
 interface CallContext {
   fs: FileSystemService
   observation: ObservationStore
+  questions: QuestionBroker
   registry: ToolRegistry
   request: AiSendRequest
   sessions: SessionStore
@@ -438,6 +447,8 @@ async function executeCall(
     fs,
     cwd: request.cwd,
     sessionId: request.sessionId,
+    callId: call.id,
+    questions: context.questions,
     observation,
     signal,
     supportsVision: context.supportsVision

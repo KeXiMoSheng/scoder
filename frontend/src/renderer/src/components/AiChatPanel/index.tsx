@@ -27,7 +27,7 @@ export default function AiChatPanel({
   onOpenChange,
   reviewsVersion
 }: AiChatPanelProps): React.JSX.Element {
-  const { messages, running, error, usage, send, abort } = useAiChat(sessionId, cwd)
+  const { messages, running, error, usage, send, answerQuestion, abort } = useAiChat(sessionId, cwd)
 
   const handleSend = useCallback(
     (text: string, modelConfigId: number, attachments: readonly AiAttachment[]): void => {
@@ -46,6 +46,7 @@ export default function AiChatPanel({
         error={error}
         emptyHint={emptyHint}
         cwd={cwd}
+        onAnswerQuestion={answerQuestion}
         onOpenFile={onOpenFile}
       />
       <SessionChangesPanel

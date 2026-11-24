@@ -5,6 +5,7 @@ import type {
   AiContextUsage,
   AiEvent,
   AiMessageView,
+  AiQuestionAnswer,
   ToolFileChange
 } from '@shared/ai/types'
 import { toAttachmentView } from '../lib/aiAttachment'
@@ -103,6 +104,8 @@ export interface AiChatApi {
   usage: AiContextUsage | null
   /** 发送一条消息（可附带本轮要发送给 AI 的上下文附件）；未打开项目时只在本地报错 */
   send: (text: string, modelConfigId: number, attachments?: readonly AiAttachment[]) => void
+  /** 回答一次 ask_user_question；成功后由主进程推送工具结果事件 */
+  answerQuestion: (callId: string, answers: AiQuestionAnswer[]) => Promise<void>
   /** 中止当前会话正在执行的一轮对话 */
   abort: () => void
 }
@@ -213,13 +216,23 @@ export function useAiChat(sessionId: string | null, cwd: string | null): AiChatA
     [cwd, sessionId]
   )
 
+  const answerQuestion = useCallback(
+    async (callId: string, answers: AiQuestionAnswer[]): Promise<void> => {
+      if (sessionId === null) {
+        throw new Error('请先新建一个会话')
+      }
+      await window.api.ai.answerQuestion(sessionId, callId, answers)
+    },
+    [sessionId]
+  )
+
   const abort = useCallback((): void => {
     if (sessionId !== null) {
       window.api.ai.abort(sessionId)
     }
   }, [sessionId])
 
-  return { messages, running, error, usage, send, abort }
+  return { messages, running, error, usage, send, answerQuestion, abort }
 }
 
 /** 把一条主进程事件并入消息列表 */

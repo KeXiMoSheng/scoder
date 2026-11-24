@@ -5,6 +5,7 @@ import {
   Eye,
   FilePenLine,
   ListChecks,
+  MessageCircleQuestion,
   Search,
   Terminal,
   Wrench,
@@ -24,6 +25,7 @@ const VARIANT_ICONS: Record<ToolRowVariant, LucideIcon> = {
   write: FilePenLine,
   edit: FilePenLine,
   todo: ListChecks,
+  question: MessageCircleQuestion,
   others: Wrench
 }
 

@@ -143,12 +143,46 @@ export interface ToolImageMeta {
   bytes: number
 }
 
+/** ask_user_question 的一个可选项：标签会原样回传给模型，描述只用于展示 */
+export interface AiQuestionOption {
+  label: string
+  /** 一句话说明取舍或影响 */
+  description?: string
+}
+
+/**
+ * 一次询问里的单个问题。
+ * 由模型给出、主进程校验后写进工具卡片：卡片随调用参数与结果落进会话日志，
+ * 历史重放时不需要再向模型要一遍问题。
+ */
+export interface AiQuestion {
+  /** 问题 id：回答按它回填，同一次调用内唯一 */
+  id: string
+  question: string
+  /** 可选短标题，如「确认」「选择方案」 */
+  header?: string
+  /** 可选的选择项；没有选项时用户只能自由输入 */
+  options?: AiQuestionOption[]
+  /** 是否允许选多个选项，默认单选 */
+  multiSelect?: boolean
+}
+
+/** 用户对一个问题的回答：选中的选项标签与/或自由输入 */
+export interface AiQuestionAnswer {
+  /** 对应问题的 id */
+  id: string
+  /** 选中的选项标签；只输入了自由文本时为空数组 */
+  selected: string[]
+  /** 用户自己输入的回答；未输入时缺省 */
+  custom?: string
+}
+
 /**
  * 工具卡片：主进程根据调用参数或结果推导出的展示意图。
  * 渲染进程只负责画卡片，不参与工具执行，也不解析文件内容。
  */
 export interface ToolCardView {
-  kind: 'generic' | 'read' | 'diff' | 'todo' | 'image'
+  kind: 'generic' | 'read' | 'diff' | 'todo' | 'image' | 'question'
   title: string
   /** 卡片正文（read 为带行号的窗口；diff 卡片改用 hunks 渲染） */
   body?: string
@@ -162,6 +196,10 @@ export interface ToolCardView {
   todos?: TodoItem[]
   /** kind 为 image 时的图片元信息（图片本体按 path 从工作区读取） */
   image?: ToolImageMeta
+  /** kind 为 question 时模型提出的问题：渲染进程据此画交互卡片 */
+  questions?: AiQuestion[]
+  /** kind 为 question 且用户已回答时，按问题顺序记录的回答 */
+  answers?: AiQuestionAnswer[]
   /**
    * bash 的退出码。非零退出码是「报告」而不是工具失败：
    * 行状态仍然是 ok，退出码单独标在行尾，供人判断这条命令是否真跑成功。
@@ -450,6 +488,11 @@ export interface AiAPI {
   stageImage: (input: AiStagedImageInput) => Promise<AiStagedImage>
   /** 回应一次审批请求（P1 的写操作会用到） */
   respondApproval: (requestId: string, approved: boolean) => void
+  /**
+   * 回答一次 ask_user_question：把该调用所有问题的答案一次性交给主进程，
+   * 挂起的工具调用随继续执行。问题已结束（本轮中止、会话结束或已答复）时抛错。
+   */
+  answerQuestion: (sessionId: string, callId: string, answers: AiQuestionAnswer[]) => Promise<void>
   /** 订阅主进程事件；返回取消订阅函数。回调带会话 id，供多会话并发时过滤 */
   onEvent: (listener: (payload: AiEventEnvelope) => void) => () => void
   /** 读取一个会话的历史消息（从 jsonl 日志重放）与执行状态 */

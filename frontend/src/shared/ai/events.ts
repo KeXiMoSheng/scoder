@@ -9,6 +9,8 @@ export const AI_CHANNELS = {
   stageImage: 'ai:image:stage',
   /** 渲染进程 → 主进程：回应审批请求（单向 send） */
   approval: 'ai:approval',
+  /** 渲染进程 → 主进程：回答一次 ask_user_question（invoke） */
+  answerQuestion: 'ai:questions:answer',
   /** 主进程 → 渲染进程：流式事件（单向 send） */
   event: 'ai:event',
   /** 渲染进程 → 主进程：列出磁盘上的会话摘要（invoke） */

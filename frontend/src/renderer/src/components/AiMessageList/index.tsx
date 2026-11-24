@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Copy, FileDiff, Folder, Loader2 } from 'lucide-react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachmentView, ToolFileChange } from '@shared/ai/types'
+import AiQuestionCard from '../AiQuestionCard'
 import FileRow from '../FileRow'
 import GitStatusBadge from '../GitStatusBadge'
 import MarkdownPreview from '../MarkdownPreview'
@@ -25,6 +26,7 @@ export default function AiMessageList({
   error,
   emptyHint,
   cwd,
+  onAnswerQuestion,
   onOpenFile
 }: AiMessageListProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -93,6 +95,17 @@ export default function AiMessageList({
               />
             )
           case 'tool':
+            // 询问用户：卡片本身就是交互界面，由 AiQuestionCard 接管；回答后同一张卡回放答案
+            if (message.card?.kind === 'question' && (message.card.questions?.length ?? 0) > 0) {
+              return (
+                <AiQuestionCard
+                  key={message.id}
+                  message={message}
+                  active={running}
+                  onAnswer={(answers) => onAnswerQuestion(message.callId, answers)}
+                />
+              )
+            }
             // 任务清单换成 Trace 展示；没有清单快照（参数非法 / 失败）时仍走通用工具行
             return message.card?.kind === 'todo' && (message.card.todos?.length ?? 0) > 0 ? (
               <TodoPlan

@@ -31,6 +31,7 @@ import { LocalFileSystem } from './fs/service'
 import { stagePastedImage } from './images/paste'
 import type { OpenAiConfig } from './llm/openai'
 import { runTurn } from './loop/agentLoop'
+import { QuestionBroker } from './questions/broker'
 import { toolRegistry as registry } from './registry'
 import { assertSessionId, SESSIONS_DIR_NAME } from './session/jsonl'
 import { SessionStore } from './session/store'
@@ -56,6 +57,12 @@ const changeSnapshots = new ChangeSnapshotStore(() =>
 
 /** 会话级“已读”观测：先读后改策略的状态，按 sessionId 隔离 */
 const observations = new ObservationStore()
+
+/**
+ * 待回答的问题：ask_user_question 在这里挂起，
+ * 渲染进程通过 answerQuestion 通道作答后，工具调用才继续。
+ */
+const questions = new QuestionBroker()
 
 /** 正在执行的会话 → 中止控制器 */
 const running = new Map<string, AbortController>()
@@ -101,9 +108,26 @@ export function registerAiHandlers(): void {
       controller.signal,
       emit
     ).finally(() => {
+      // 本轮已经收尾：还挂着的询问不可能再被这条调用消费，统一按结束收尾
+      questions.closeSession(request.sessionId)
       running.delete(request.sessionId)
     })
   })
+
+  // 回答一次 ask_user_question：渲染进程传来的内容按不可信处理，
+  // 校验（问题 id、选项范围、必答）都在 QuestionBroker 里完成
+  ipcMain.handle(
+    AI_CHANNELS.answerQuestion,
+    (_event, sessionId: unknown, callId: unknown, answers: unknown): void => {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throw new Error('sessionId 无效')
+      }
+      if (typeof callId !== 'string' || callId.length === 0) {
+        throw new Error('callId 无效')
+      }
+      questions.answer(sessionId, callId, answers)
+    }
+  )
 
   /**
    * 粘贴图片先入库：返回可打开的预览路径，草稿里的图片标签因此能立刻点开预览。
@@ -259,7 +283,9 @@ export function registerAiHandlers(): void {
       }
       const events = await sessions.events(project, id)
       return {
-        messages: toMessageViews(events, describeToolCall),
+        messages: toMessageViews(events, describeToolCall, {
+          pendingQuestionCallIds: new Set(questions.pendingCallIds(id))
+        }),
         // 切回一个仍在执行的会话时，界面要能重新显示“正在生成”
         running: running.has(id),
         // 只展示服务商真实返回的用量；从未调用过模型或未返回 usage 时为 0
@@ -398,6 +424,7 @@ async function startTurn(
       model,
       fs,
       observation: observations,
+      questions,
       registry,
       sessions,
       changes: changeSnapshots,

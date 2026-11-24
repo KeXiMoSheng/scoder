@@ -2,6 +2,7 @@ import type { JsonValue, ToolCardView, ToolParameterSchema } from '../../../shar
 import type { ObservationStore } from '../fs/observation'
 import type { FileSystemService } from '../fs/service'
 import type { ToolImageRef } from '../images/types'
+import type { QuestionBroker } from '../questions/broker'
 
 /** 工具执行上下文：由循环在每次调用时构造，工具不得跨调用缓存 */
 export interface ToolContext {
@@ -9,6 +10,13 @@ export interface ToolContext {
   /** 会话工作目录（P0 恒为工作区根） */
   cwd: string
   sessionId: string
+  /** 本次工具调用的 id：ask_user_question 的挂起问题与回答按它关联 */
+  callId: string
+  /**
+   * 向用户提问并等待回答的协调器。
+   * 工具只负责声明问题；挂起、作答与中止都由它统一管理。
+   */
+  questions: QuestionBroker
   /** 会话级“已读”观测：写工具据此拿到 createIfAbsent / replaceIfVersion 意图 */
   observation: ObservationStore
   /** 用户中止本轮对话时触发；长耗时工具必须转发 */

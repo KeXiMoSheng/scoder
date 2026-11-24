@@ -4,6 +4,7 @@ import { AI_CHANNELS } from '../shared/ai/events'
 import { AI_RUNTIME_CHANNELS, type AiRuntimeSettings } from '../shared/ai/settings'
 import type {
   AiAPI,
+  AiQuestionAnswer,
   AiStagedImageInput,
   AiEventEnvelope,
   AiFileReview,
@@ -45,6 +46,8 @@ const ai: AiAPI = {
   stageImage: (input: AiStagedImageInput) => ipcRenderer.invoke(AI_CHANNELS.stageImage, input),
   respondApproval: (requestId: string, approved: boolean) =>
     ipcRenderer.send(AI_CHANNELS.approval, requestId, approved),
+  answerQuestion: (sessionId: string, callId: string, answers: AiQuestionAnswer[]) =>
+    ipcRenderer.invoke(AI_CHANNELS.answerQuestion, sessionId, callId, answers),
   onEvent: (listener: (payload: AiEventEnvelope) => void) => {
     const handler = (_event: IpcRendererEvent, payload: AiEventEnvelope): void => listener(payload)
     ipcRenderer.on(AI_CHANNELS.event, handler)

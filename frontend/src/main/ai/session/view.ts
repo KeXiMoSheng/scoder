@@ -28,10 +28,13 @@ export type ToolCallDescriber = (name: string, rawArguments: string) => ToolCard
  * - 空文本的助手消息（只调了工具）不产生文本条目。
  * @param events 按 seq 排好的事件
  * @param describe 生成挂起卡片的兜底函数（工具定义不在时可以为空）
+ * @param options.pendingQuestionCallIds 主进程仍在等待回答的 ask_user_question 调用；
+ *   不在其中的无结果询问属于崩溃残留，重放成「已停止」而不是可作答状态
  */
 export function toMessageViews(
   events: readonly SessionEvent[],
-  describe?: ToolCallDescriber
+  describe?: ToolCallDescriber,
+  options: { pendingQuestionCallIds?: ReadonlySet<string> } = {}
 ): AiMessageView[] {
   const views: AiMessageView[] = []
   /** callId → 卡片在 views 里的下标，用于结果回填 */
@@ -73,6 +76,11 @@ export function toMessageViews(
             continue
           }
           const card = describe?.(block.name, block.arguments)
+          // 崩溃或旧进程留下的询问没有结果、也不在主进程的等待队列里：重放成已停止
+          const unanswered =
+            block.name === 'ask_user_question' &&
+            options.pendingQuestionCallIds !== undefined &&
+            !options.pendingQuestionCallIds.has(block.id)
           toolIndex.set(block.id, views.length)
           views.push({
             kind: 'tool',
@@ -83,7 +91,7 @@ export function toMessageViews(
             name: block.name,
             arguments: block.arguments,
             // 日志里只有「已发起」的调用；结果事件到达前一律按执行中重放
-            status: 'running',
+            status: unanswered ? 'stopped' : 'running',
             ...(card ? { card } : {})
           })
         }
@@ -297,6 +305,10 @@ function resultCard(
   }
   // todo 卡片的信息在 todos 里，同样不能用结果文本顶掉
   if (base?.todos !== undefined) {
+    return base
+  }
+  // 询问卡片的正文在 questions/answers 里；旧结果文本不能把交互卡片顶成普通文本
+  if (base?.questions !== undefined) {
     return base
   }
   // 图片卡片的尺寸与格式在 image 里；正文由渲染进程按路径取图，不需要结果文本

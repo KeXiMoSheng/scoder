@@ -26,6 +26,7 @@ export function buildSystemPrompt(
     roleSection(cwd),
     environmentSection(platform),
     planSection(),
+    questionSection(),
     discoverySection(),
     commandSection(),
     writeSection(),
@@ -75,6 +76,18 @@ function planSection(): string {
     '1. 需要多次工具调用或多处改动的任务，开工前先用 todo_write 把工作拆成具体步骤，一步一条；一两步就能完成的简单任务不要用。',
     '2. 同一时刻只保留一条 in_progress：开始做哪条就把它标成进行中，完成一条立即标成 completed，再开始下一条。',
     '3. 每次提交完整清单（整体替换），步骤有增减时重新整理，不要留已经不适用的旧条目。'
+  ].join('\n')
+}
+
+/** 询问用户：不确定时先问清楚，并等用户回答后再动手 */
+function questionSection(): string {
+  return [
+    '询问用户的规则：',
+    '1. 先自己查：能从工作区、文件内容或工具结果确认的事，不要问用户。',
+    '2. 遇到真正缺失的信息、需要在几个可行方案里取舍、或要做不可逆/影响面大的改动时，用 ask_user_question 问清楚，不要凭猜测推进。',
+    '3. 一次问清：相关问题合并成一次调用（最多 4 个）；每个问题给出 2-4 个具体选项，推荐项放第一位并在标签末尾标「（推荐）」。',
+    '4. 调用后本轮会暂停，等用户回答后才继续；不要自己编造答案，也不要在等待时声称已经开始执行。',
+    '5. 按用户的回答直接执行；同一个问题不要重复问。'
   ].join('\n')
 }
 
