@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Eye,
   FilePenLine,
+  Globe,
   ListChecks,
   Search,
   Terminal,
@@ -24,6 +25,7 @@ const VARIANT_ICONS: Record<ToolRowVariant, LucideIcon> = {
   write: FilePenLine,
   edit: FilePenLine,
   todo: ListChecks,
+  browser: Globe,
   others: Wrench
 }
 

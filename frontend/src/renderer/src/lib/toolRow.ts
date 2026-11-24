@@ -18,7 +18,8 @@ import { isAbsolutePath, isAtOrUnder, relativePath } from './filePath'
 export type ToolMessage = Extract<AiMessageView, { kind: 'tool' }>
 
 /** 工具族：决定行首图标与摘要来源 */
-export type ToolRowVariant = 'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'others'
+export type ToolRowVariant =
+  'read' | 'search' | 'bash' | 'write' | 'edit' | 'todo' | 'browser' | 'others'
 
 /** 展开体类型：结构化卡片优先，其次通用的输入/输出卡（任务清单由 TodoPlan 单独展示） */
 export type ToolRowBodyKind = 'diff' | 'text' | 'io' | 'image' | 'none'
@@ -91,6 +92,33 @@ export const TOOL_ROW_DEFINITIONS: Record<string, ToolRowDefinition> = {
   todo_write: {
     variant: 'todo',
     title: '更新任务清单'
+  },
+  browser_open: {
+    variant: 'browser',
+    title: '打开网页',
+    summaryKeys: ['url']
+  },
+  browser_snapshot: {
+    variant: 'browser',
+    title: '查看页面'
+  },
+  browser_click: {
+    variant: 'browser',
+    title: '点击元素',
+    summaryKeys: ['ref']
+  },
+  browser_type: {
+    variant: 'browser',
+    title: '输入文本',
+    summaryKeys: ['ref']
+  },
+  browser_screenshot: {
+    variant: 'browser',
+    title: '网页截图'
+  },
+  browser_close: {
+    variant: 'browser',
+    title: '关闭浏览器'
   }
 }
 
