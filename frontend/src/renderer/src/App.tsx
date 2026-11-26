@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentKey } from '@shared/ai/attachments'
 import type { AiAttachment } from '@shared/ai/types'
+import type { BrowserTabState } from '@shared/browser/types'
 import type { GitFileStatus } from '@shared/git/types'
 import type { EditorTabsSnapshot, RecentProject } from '@shared/workspace/types'
 import AiDiffView from './components/AiDiffView'
 import AiSidebar from './components/AiSidebar'
+import BrowserPanel from './components/BrowserPanel'
 import CodeEditor from './components/CodeEditor'
 import type {
   CodeEditorHandle,
@@ -88,6 +90,10 @@ function App(): React.JSX.Element {
     closeUnder,
     restore
   } = useOpenedFiles()
+  // 浏览器页签：状态由主进程推送（页面本体是挂主窗口的 WebContentsView），
+  // AI 工具与标题栏「打开浏览器」都走同一条页签事件
+  const [browserTabs, setBrowserTabs] = useState<BrowserTabState[]>([])
+  const [activeBrowserSession, setActiveBrowserSession] = useState<string | null>(null)
   // AI 会话状态（新建/切换/重命名/关闭）：放在 App 里，侧边栏隐藏再打开时不丢会话
   const aiSessions = useAiSessions(projectPath)
   // 单独取出稳定回调：避免快捷键监听依赖整个会话对象而反复重建
@@ -132,6 +138,11 @@ function App(): React.JSX.Element {
       : EMPTY_GIT_STATUSES
   // 当前激活文件如果是二进制类型（图片/音视频等）则走预览页签而不是文本编辑器
   const previewKind = activeFile !== null ? previewKindOf(activeFile.name) : null
+  // 浏览器页签激活时接管编辑器内容区；状态与页签列表不一致（关闭竞态）时视为未激活
+  const activeBrowserTab =
+    activeBrowserSession === null
+      ? null
+      : (browserTabs.find((tab) => tab.sessionId === activeBrowserSession) ?? null)
   // 编辑器上报的当前文本文件编码（底部状态栏展示与切换）
   const [encodingState, setEncodingState] = useState<EditorEncodingState | null>(null)
   // 只信任与当前激活文件、当前预览类型都匹配的上报结果
@@ -207,6 +218,77 @@ function App(): React.JSX.Element {
     void window.api.listRecentProjects().then(setRecentProjects)
   }, [])
 
+  /** 关闭全部浏览器页签：销毁页面并清空页签状态（切换/关闭项目时调用） */
+  const closeAllBrowserTabs = useCallback((): void => {
+    for (const tab of browserTabs) {
+      void window.api.browser.close(tab.sessionId).catch(() => undefined)
+    }
+    setBrowserTabs([])
+    setActiveBrowserSession(null)
+  }, [browserTabs])
+
+  /** 关闭全部页签：文件与 AI 浏览器一起收掉 */
+  const closeAllTabs = useCallback((): void => {
+    closeAll()
+    closeAllBrowserTabs()
+  }, [closeAll, closeAllBrowserTabs])
+
+  /** 关闭一个浏览器页签（同时销毁页面与登录状态） */
+  const closeBrowserTab = useCallback((sessionId: string): void => {
+    setBrowserTabs((prev) => prev.filter((tab) => tab.sessionId !== sessionId))
+    setActiveBrowserSession((prev) => (prev === sessionId ? null : prev))
+    void window.api.browser.close(sessionId).catch(() => undefined)
+  }, [])
+
+  /** 激活浏览器页签：收起改动视图，让原生页面回到编辑器内容区 */
+  const activateBrowserTab = useCallback((sessionId: string): void => {
+    setActiveBrowserSession(sessionId)
+    setDiffView(null)
+  }, [])
+
+  // 浏览器页签事件：AI 每打开一个页面就新增（或更新）页签并激活；
+  // 之后跟随主进程推送的地址、标题与加载状态更新标签文案。
+  useEffect(() => {
+    return window.api.browser.onEvent((event) => {
+      if (event.type === 'closed') {
+        setBrowserTabs((prev) => prev.filter((tab) => tab.sessionId !== event.sessionId))
+        setActiveBrowserSession((prev) => (prev === event.sessionId ? null : prev))
+        return
+      }
+      const { tab } = event
+      setBrowserTabs((prev) => {
+        const index = prev.findIndex((item) => item.sessionId === tab.sessionId)
+        if (index === -1) {
+          return [...prev, tab]
+        }
+        const next = [...prev]
+        next[index] = tab
+        return next
+      })
+      if (event.type === 'open') {
+        setActiveBrowserSession(tab.sessionId)
+        setDiffView(null)
+      }
+    })
+  }, [])
+
+  // 渲染进程重载（开发态 HMR）后主进程里的页面仍在：按主进程清单恢复页签。
+  // 已有页签时不覆盖，避免清单请求返回前刚打开的页签被旧快照冲掉。
+  useEffect(() => {
+    let cancelled = false
+    void window.api.browser
+      .list()
+      .then((tabs) => {
+        if (!cancelled) {
+          setBrowserTabs((prev) => (prev.length > 0 ? prev : tabs))
+        }
+      })
+      .catch(() => undefined)
+    return (): void => {
+      cancelled = true
+    }
+  }, [])
+
   /** 打开一个具体目录：同步工作区状态、清空上一个项目的标签与脏标记，并写入最近项目 */
   const openProjectPath = useCallback(
     (dirPath: string): void => {
@@ -215,6 +297,7 @@ function App(): React.JSX.Element {
       setProjectEpoch((epoch) => epoch + 1)
       setSearchPalette(null)
       closeAll()
+      closeAllBrowserTabs()
       setDirtyPaths(new Set())
       // 附件属于上一个项目，切换项目后不再继续待发送
       setAiAttachments([])
@@ -227,7 +310,7 @@ function App(): React.JSX.Element {
       tabsHydratedProjectRef.current = dirPath
       void window.api.recordProjectOpened(dirPath).then(refreshRecent)
     },
-    [closeAll, refreshRecent]
+    [closeAll, closeAllBrowserTabs, refreshRecent]
   )
 
   const handleOpenProject = useCallback(async (): Promise<void> => {
@@ -247,10 +330,11 @@ function App(): React.JSX.Element {
     setProjectPath(null)
     setSearchPalette(null)
     closeAll()
+    closeAllBrowserTabs()
     setDirtyPaths(new Set())
     setAiAttachments([])
     setDiffView(null)
-  }, [closeAll, projectPath])
+  }, [closeAll, closeAllBrowserTabs, projectPath])
 
   // 应用启动：读取上次未手动关闭的目录并自动打开，恢复其未关闭的编辑器页签，同时加载最近项目列表
   useEffect(() => {
@@ -320,8 +404,9 @@ function App(): React.JSX.Element {
       if (absolute === null) {
         return
       }
-      // 打开普通文件时收起 AI 改动视图，避免它一直盖住刚打开的文件
+      // 打开普通文件时收起 AI 改动视图与浏览器页签，避免原生页面盖住刚打开的文件
       setDiffView(null)
+      setActiveBrowserSession(null)
       open({ path: absolute, name: basename(absolute) })
       if (line !== undefined) {
         setEditorRevealRequest((prev) => ({
@@ -351,10 +436,11 @@ function App(): React.JSX.Element {
     [aiSessions.activeId, resolveWorkspacePath]
   )
 
-  /** 点击编辑器标签：先收起 AI 改动视图，再激活目标文件 */
+  /** 点击编辑器标签：先收起 AI 改动视图与浏览器页面，再激活目标文件 */
   const handleActivateTab = useCallback(
     (path: string): void => {
       setDiffView(null)
+      setActiveBrowserSession(null)
       activate(path)
     },
     [activate]
@@ -514,6 +600,7 @@ function App(): React.JSX.Element {
     (path: string): void => {
       setSidebarVisible(true)
       // 文件树的选中态受控于当前激活文件：先激活对应标签，展开定位时目标行才会高亮选中
+      setActiveBrowserSession(null)
       activate(path)
       setRevealRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
     },
@@ -622,6 +709,18 @@ function App(): React.JSX.Element {
     openTerminal()
     terminalPanelRef.current?.createSession()
   }, [openTerminal])
+
+  /**
+   * 标题栏「打开浏览器」：打开或切回应用内浏览器页签（地址栏留空，由用户自己输入）。
+   * 页签的新增/激活由主进程推送的 open 事件完成，这里只发起请求；
+   * 系统配置页以覆盖层形式盖住工作区，打开浏览器前先收起它，否则新页签看不见。
+   */
+  const handleOpenBrowser = useCallback((): void => {
+    if (settingsOpen) {
+      closeSettings()
+    }
+    void window.api.browser.openTab().catch(() => undefined)
+  }, [closeSettings, settingsOpen])
 
   const handleTerminalResizeStart = useCallback((): void => {
     // 收起状态下从底部拖出时，以 0 为起点向上生长
@@ -765,6 +864,7 @@ function App(): React.JSX.Element {
         onOpenThemeSettings={openThemeSettings}
         onNewTerminal={handleNewTerminal}
         onToggleAiPanel={toggleAiPanel}
+        onOpenBrowser={handleOpenBrowser}
         onToggleSettings={toggleSettings}
       />
       <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -787,7 +887,7 @@ function App(): React.JSX.Element {
               <FileTree
                 key={`${projectPath}:${projectEpoch}`}
                 rootPath={projectPath}
-                selectedPath={activePath}
+                selectedPath={activeBrowserTab === null ? activePath : null}
                 dirtyPaths={dirtyPaths}
                 revealRequest={revealRequest}
                 onSelectFile={openFileByPath}
@@ -813,28 +913,38 @@ function App(): React.JSX.Element {
           />
           <main ref={editorAreaRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {files.length > 0 ? (
+              {files.length > 0 || browserTabs.length > 0 ? (
                 <EditorTabs
                   files={files}
-                  activePath={activePath}
+                  activePath={activeBrowserTab === null ? activePath : null}
+                  browserTabs={browserTabs}
+                  activeBrowserSession={activeBrowserTab?.sessionId ?? null}
                   dirtyPaths={dirtyPaths}
                   gitStatuses={gitStatuses}
                   onActivate={handleActivateTab}
                   onClose={close}
                   onCloseOthers={closeOthers}
                   onCloseToRight={closeToRight}
-                  onCloseAll={closeAll}
+                  onCloseAll={closeAllTabs}
+                  onActivateBrowser={activateBrowserTab}
+                  onCloseBrowser={closeBrowserTab}
                   projectPath={projectPath}
                   onReveal={handleRevealInTree}
                   onSendToAi={handleAttachTabToAi}
                 />
               ) : null}
               <div className="relative flex min-h-0 min-w-0 flex-1">
-                {/* 二进制预览时编辑器保持挂载（模型缓存与实例不丢），只是隐藏起来让位给预览 */}
-                <div className={previewKind !== null ? 'hidden' : 'flex min-h-0 min-w-0 flex-1'}>
+                {/* 二进制预览/浏览器页签激活时编辑器保持挂载（模型缓存与实例不丢），只是隐藏起来让位 */}
+                <div
+                  className={
+                    previewKind !== null || activeBrowserTab !== null
+                      ? 'hidden'
+                      : 'flex min-h-0 min-w-0 flex-1'
+                  }
+                >
                   <CodeEditor
                     ref={editorRef}
-                    file={previewKind === null ? activeFile : null}
+                    file={previewKind === null && activeBrowserTab === null ? activeFile : null}
                     onDirtyChange={handleDirtyChange}
                     onSendSelectionToAi={attachToAi}
                     onDeletedFromDisk={handleEntryDeleted}
@@ -846,8 +956,15 @@ function App(): React.JSX.Element {
                     revealRequest={editorRevealRequest}
                   />
                 </div>
-                {previewKind !== null && activeFile !== null ? (
+                {activeBrowserTab === null && previewKind !== null && activeFile !== null ? (
                   <FilePreview key={activeFile.path} file={activeFile} />
+                ) : null}
+                {activeBrowserTab !== null ? (
+                  <BrowserPanel
+                    key={activeBrowserTab.sessionId}
+                    tab={activeBrowserTab}
+                    visible={!settingsOpen && searchPalette === null && diffView === null}
+                  />
                 ) : null}
                 {diffView !== null ? (
                   <div className="absolute inset-0 z-30 flex min-h-0 min-w-0 bg-base">
@@ -911,10 +1028,12 @@ function App(): React.JSX.Element {
           </div>
         ) : null}
       </div>
-      {/* 整个窗口的最底部：右侧显示当前文件编码（设置页打开时不展示） */}
+      {/* 整个窗口的最底部：右侧显示当前文件编码（设置页/浏览器页签激活时不展示） */}
       <StatusBar
-        encoding={settingsOpen ? null : (activeEncodingState?.encoding ?? null)}
-        candidates={activeEncodingState?.candidates ?? []}
+        encoding={
+          settingsOpen || activeBrowserTab !== null ? null : (activeEncodingState?.encoding ?? null)
+        }
+        candidates={activeBrowserTab !== null ? [] : (activeEncodingState?.candidates ?? [])}
         onChange={handleEncodingChange}
       />
       {searchPalette !== null && projectPath !== null ? (

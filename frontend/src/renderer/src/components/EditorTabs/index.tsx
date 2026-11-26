@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown, X } from 'lucide-react'
+import { ChevronDown, Globe, X } from 'lucide-react'
+import type { BrowserTabState } from '@shared/browser/types'
+import { browserTabKey, browserTabTitle, parseBrowserTabKey } from '../../lib/browserTab'
 import { isAtOrUnder, relativePathNative } from '../../lib/filePath'
 import { GIT_STATUS_TEXT_CLASS } from '../../lib/gitStatus'
 import ContextMenu from '../ContextMenu'
 import type { ContextMenuEntry } from '../ContextMenu/types'
 import FileRow from '../FileRow'
 import GitStatusBadge from '../GitStatusBadge'
-import type { EditorTabsProps, TabMenuState, TabOverflowMenuState } from './types'
+import type {
+  BrowserTabMenuState,
+  EditorTabsProps,
+  TabMenuState,
+  TabOverflowMenuState
+} from './types'
 
 /**
- * 收集被横向滚动挤出可视区的标签路径（按打开顺序）。
+ * 收集被横向滚动挤出可视区的标签 key（按打开顺序）。
  * 用视口坐标比较而不是 offsetLeft：标签与滚动容器的 offsetParent 可能不同层级。
  */
 function collectHiddenPaths(strip: HTMLDivElement): string[] {
@@ -40,10 +47,12 @@ function scrollTabIntoView(strip: HTMLDivElement, path: string): void {
   }
 }
 
-/** 编辑器标签栏：切换/关闭打开的文件，右键标签弹出操作菜单 */
+/** 编辑器标签栏：切换/关闭打开的文件与 AI 浏览器页签，右键标签弹出操作菜单 */
 export default function EditorTabs({
   files,
   activePath,
+  browserTabs,
+  activeBrowserSession,
   dirtyPaths,
   gitStatuses,
   onActivate,
@@ -51,11 +60,15 @@ export default function EditorTabs({
   onCloseOthers,
   onCloseToRight,
   onCloseAll,
+  onActivateBrowser,
+  onCloseBrowser,
   projectPath,
   onReveal,
   onSendToAi
 }: EditorTabsProps): React.JSX.Element {
   const [menu, setMenu] = useState<TabMenuState | null>(null)
+  // 浏览器页签的右键菜单：与会文件菜单分开，避免把浏览器 key 当文件路径处理
+  const [browserMenu, setBrowserMenu] = useState<BrowserTabMenuState | null>(null)
   // 「更多」下拉的锚点坐标；null 表示未展开，列表内容取当前被挤出的标签
   const [overflowMenu, setOverflowMenu] = useState<TabOverflowMenuState | null>(null)
   // 被横向滚动挤出可视区的标签（只在这里露出入口，避免标签栏把布局撑宽）
@@ -64,6 +77,19 @@ export default function EditorTabs({
 
   // 右键后目标标签可能已被其它操作关闭：失效时不再展示菜单
   const menuIndex = menu ? files.findIndex((file) => file.path === menu.path) : -1
+  const browserMenuTab = browserMenu
+    ? (browserTabs.find((tab) => tab.sessionId === browserMenu.sessionId) ?? null)
+    : null
+  // 文件与浏览器共用一条标签栏：用 key 判断激活项与滚动定位
+  const activeTabKey =
+    activeBrowserSession !== null ? browserTabKey(activeBrowserSession) : activePath
+
+  /** 关闭全部浏览器页签：文件页签的“关闭其它/关闭右侧/关闭全部”也把它们算进来 */
+  const closeBrowserTabs = (): void => {
+    for (const tab of browserTabs) {
+      onCloseBrowser(tab.sessionId)
+    }
+  }
 
   /** 重算被挤出的标签：容器尺寸、滚动位置或标签集合变化后调用（内容不变时不触发重渲染） */
   const refreshHidden = useCallback((): void => {
@@ -80,7 +106,7 @@ export default function EditorTabs({
   // 标签增删、脏点或文件名变化都会改变宽度：提交后立即重算
   useLayoutEffect(() => {
     refreshHidden()
-  }, [refreshHidden, files, dirtyPaths])
+  }, [refreshHidden, files, dirtyPaths, browserTabs])
 
   // 容器尺寸变化（窗口/面板拖拽、下拉按钮出现后标签区变窄）时重算
   useEffect(() => {
@@ -96,10 +122,10 @@ export default function EditorTabs({
   // 切换激活项后把它滚进可视区：从「更多」下拉、文件树或 AI 附件打开时都能看到对应标签
   useEffect(() => {
     const strip = stripRef.current
-    if (strip && activePath !== null) {
-      scrollTabIntoView(strip, activePath)
+    if (strip && activeTabKey !== null) {
+      scrollTabIntoView(strip, activeTabKey)
     }
-  }, [activePath, files])
+  }, [activeTabKey, files, browserTabs])
 
   // 标签栏隐藏了横向滚动条，这里把滚轮的纵向增量转成横向滚动（与 IDEA 一致）
   useEffect(() => {
@@ -124,7 +150,7 @@ export default function EditorTabs({
   }, [])
 
   /**
-   * 构建标签右键菜单条目（数据驱动）。
+   * 构建文件标签右键菜单条目（数据驱动）。
    * 定位显示、发送给 AI、复制路径与关闭系列各成一组，以 null 作为分隔线。
    */
   const buildMenuEntries = (index: number, path: string): ContextMenuEntry[] => {
@@ -159,29 +185,73 @@ export default function EditorTabs({
       {
         id: 'close-others',
         label: '关闭其它',
-        disabled: files.length <= 1,
-        disabledReason: '没有其它已打开的文件',
-        onSelect: () => onCloseOthers(path)
+        disabled: files.length <= 1 && browserTabs.length === 0,
+        disabledReason: '没有其它已打开的页签',
+        onSelect: () => {
+          onCloseOthers(path)
+          closeBrowserTabs()
+        }
       },
       {
         id: 'close-right',
         label: '关闭右侧',
-        disabled: index === files.length - 1,
-        disabledReason: '右侧没有已打开的文件',
-        onSelect: () => onCloseToRight(path)
+        disabled: index === files.length - 1 && browserTabs.length === 0,
+        disabledReason: '右侧没有已打开的页签',
+        onSelect: () => {
+          onCloseToRight(path)
+          closeBrowserTabs()
+        }
       },
       { id: 'close-all', label: '关闭全部', onSelect: onCloseAll }
     ]
   }
 
+  /** 浏览器页签右键菜单：只做页面级操作，不混入文件路径相关项 */
+  const buildBrowserMenuEntries = (tab: BrowserTabState): ContextMenuEntry[] => [
+    {
+      id: 'browser-reload',
+      label: '刷新页面',
+      onSelect: () => void window.api.browser.reload(tab.sessionId).catch(() => undefined)
+    },
+    {
+      id: 'browser-open-external',
+      label: '在系统浏览器中打开',
+      disabled: tab.url.length === 0,
+      onSelect: () => void window.api.browser.openExternal(tab.sessionId).catch(() => undefined)
+    },
+    null,
+    {
+      id: 'browser-copy-url',
+      label: '复制页面地址',
+      disabled: tab.url.length === 0,
+      onSelect: () => void navigator.clipboard.writeText(tab.url)
+    },
+    null,
+    { id: 'browser-close', label: '关闭页签', onSelect: () => onCloseBrowser(tab.sessionId) },
+    { id: 'browser-close-all', label: '关闭全部页签', onSelect: onCloseAll }
+  ]
+
   /** 「更多」下拉条目：列出被挤出的标签，点击即切换（激活后会自动滚进可视区） */
   const buildOverflowEntries = (): ContextMenuEntry[] =>
-    hiddenPaths.map((path) => {
-      const name = files.find((file) => file.path === path)?.name ?? path
+    hiddenPaths.map((key) => {
+      const sessionId = parseBrowserTabKey(key)
+      if (sessionId !== null) {
+        const tab = browserTabs.find((item) => item.sessionId === sessionId)
+        return {
+          id: `overflow:${key}`,
+          label: tab ? browserTabTitle(tab) : '浏览器',
+          onSelect: () => onActivateBrowser(sessionId)
+        }
+      }
+      const file = files.find((item) => item.path === key)
       return {
-        id: `overflow:${path}`,
-        label: dirtyPaths.has(path) ? `${name} ·` : name,
-        onSelect: () => onActivate(path)
+        id: `overflow:${key}`,
+        label: file ? (dirtyPaths.has(key) ? `${file.name} ·` : file.name) : key,
+        onSelect: () => {
+          if (file) {
+            onActivate(file.path)
+          }
+        }
       }
     })
 
@@ -193,7 +263,7 @@ export default function EditorTabs({
         ref={stripRef}
         className="scrollbar-none flex min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
         role="tablist"
-        aria-label="已打开的文件"
+        aria-label="已打开的页签"
         onScroll={refreshHidden}
       >
         {files.map((file) => {
@@ -254,15 +324,62 @@ export default function EditorTabs({
             </div>
           )
         })}
+        {browserTabs.map((tab) => {
+          const active = tab.sessionId === activeBrowserSession
+          const title = browserTabTitle(tab)
+          return (
+            <div
+              key={browserTabKey(tab.sessionId)}
+              role="tab"
+              aria-selected={active}
+              className={
+                active
+                  ? 'group flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-t border-r-line border-t-accent-hover bg-base pl-3 pr-1.5 text-fg select-none'
+                  : 'group flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-t border-r-line border-t-transparent text-dim select-none hover:bg-hover'
+              }
+              title={tab.url.length > 0 ? `${title}\n${tab.url}` : title}
+              data-tab-path={browserTabKey(tab.sessionId)}
+              onClick={() => onActivateBrowser(tab.sessionId)}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setBrowserMenu({ x: event.clientX, y: event.clientY, sessionId: tab.sessionId })
+              }}
+            >
+              <Globe
+                className={
+                  tab.loading
+                    ? 'size-3.5 shrink-0 animate-pulse text-accent-hover'
+                    : 'size-3.5 shrink-0'
+                }
+              />
+              <span className="min-w-0 truncate text-[12px]">{title}</span>
+              <span className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+                <button
+                  type="button"
+                  className="absolute inset-0 inline-flex cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent p-0 text-inherit opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--text)_14%,transparent)]"
+                  aria-label={`关闭 ${title}`}
+                  title="关闭"
+                  onClick={(event) => {
+                    // 阻止冒泡，避免同时触发标签激活
+                    event.stopPropagation()
+                    onCloseBrowser(tab.sessionId)
+                  }}
+                >
+                  <X className="size-2.5" />
+                </button>
+              </span>
+            </div>
+          )
+        })}
       </div>
       {hiddenPaths.length > 0 ? (
         <button
           type="button"
           className="flex w-7 shrink-0 cursor-pointer items-center justify-center border-l border-line text-dim hover:bg-hover hover:text-fg"
-          aria-label={`还有 ${hiddenPaths.length} 个已打开的文件`}
+          aria-label={`还有 ${hiddenPaths.length} 个页签`}
           aria-haspopup="menu"
           aria-expanded={overflowMenu !== null}
-          title={`还有 ${hiddenPaths.length} 个已打开的文件`}
+          title={`还有 ${hiddenPaths.length} 个页签`}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             setOverflowMenu({ x: rect.left, y: rect.bottom })
@@ -277,6 +394,14 @@ export default function EditorTabs({
           y={menu.y}
           entries={buildMenuEntries(menuIndex, menu.path)}
           onClose={() => setMenu(null)}
+        />
+      ) : null}
+      {browserMenu && browserMenuTab !== null ? (
+        <ContextMenu
+          x={browserMenu.x}
+          y={browserMenu.y}
+          entries={buildBrowserMenuEntries(browserMenuTab)}
+          onClose={() => setBrowserMenu(null)}
         />
       ) : null}
       {overflowMenu ? (

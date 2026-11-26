@@ -6,6 +6,7 @@
 import type { AiAPI } from './ai/types'
 import type { AiRuntimeSettings } from './ai/settings'
 import type { AppInfo } from './app/types'
+import type { BrowserAPI } from './browser/types'
 import type {
   ContentSearchMatch,
   ContentSearchResult,
@@ -233,4 +234,6 @@ export interface ScoderAPI {
   getOpenTabs: (path: string) => Promise<EditorTabsSnapshot | null>
   /** AI 助手通道：会话、流式事件与中止 */
   ai: AiAPI
+  /** 浏览器页签（AI 工具与标题栏「打开浏览器」共用）：状态推送、原生页面布局与控制 */
+  browser: BrowserAPI
 }

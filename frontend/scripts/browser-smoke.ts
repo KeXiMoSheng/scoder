@@ -1,20 +1,28 @@
 /**
- * 浏览器代理冒烟测试：用真实的 Electron 隐藏窗口跑一遍导航 → 快照 → 点击 →
+ * 浏览器代理冒烟测试：用真实的 Electron WebContentsView 跑一遍导航 → 快照 → 点击 →
  * 输入 → 截图 → 关闭，并验证截图确实落进了图片对象存储。
  *
- * 为什么不用普通 node 跑：浏览器工具依赖 BrowserWindow 与 nativeImage，
+ * 为什么不用普通 node 跑：浏览器工具依赖 WebContentsView 与 nativeImage，
  * 只能在 Electron 主进程里执行。脚本由 scripts/run-browser-smoke.mjs 拉起
  * （Linux 下用 ozone headless，无需真实显示器），见 package.json 的 test:browser。
  */
 
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
-import { normalizeBrowserUrl } from '../src/main/browser/manager'
+import { join } from 'node:path'
+import type { BrowserEvent } from '../src/shared/browser/types'
+import { browserManager, normalizeBrowserUrl } from '../src/main/browser/manager'
 import { toolImagePreviewPath } from '../src/main/ai/images/store'
 import { createBrowserTools } from '../src/main/ai/tools/browser'
 import type { ToolContext, ToolDefinition } from '../src/main/ai/tools/registry'
+
+// 图片对象存储落在 userData 下：测试环境把它指到工作区（.browser-smoke 已被忽略），
+// 否则只读的默认 userData 会让截图在落盘阶段失败。
+const userData = join(process.cwd(), '.browser-smoke', 'user-data')
+mkdirSync(userData, { recursive: true })
+app.setPath('userData', userData)
 
 /** 断言失败即退出，避免后续断言给出误导性的连锁错误 */
 function assert(condition: boolean, message: string): void {
@@ -58,6 +66,13 @@ const PAGE = `<!doctype html>
 </body>
 </html>`
 
+/** 地址栏导航用的第二页：标题不同，便于断言同一页面确实发生了导航 */
+const NEXT_PAGE = `<!doctype html>
+<html>
+<head><title>Browser Smoke Next</title></head>
+<body><h1>Second Page</h1></body>
+</html>`
+
 /**
  * 用工具层走一遍完整的浏览器流程。
  * @param url 本机 fixture 地址
@@ -74,6 +89,7 @@ async function exerciseTools(url: string, ctx: ToolContext): Promise<void> {
   const opened = await tool(tools, 'browser_open').execute({ url, width: 900, height: 600 }, ctx)
   assert(opened.text.includes('<title>Browser Smoke</title>'), 'browser_open 返回标题')
   assert(opened.text.includes('<viewport>900×600</viewport>'), 'browser_open 返回视口')
+  assert(browserManager.list().length === 1, 'list 返回当前打开的页签')
 
   const snapshot = await tool(tools, 'browser_snapshot').execute({}, ctx)
   assert(snapshot.text.includes('[e1] button "Click Me"'), 'browser_snapshot 给出按钮引用')
@@ -104,8 +120,31 @@ async function exerciseTools(url: string, ctx: ToolContext): Promise<void> {
   // 便于失败时人工核对：保留最后一张截图（目录被 .gitignore 忽略）
   writeFileSync('.browser-smoke/last-screenshot.png', png)
 
+  // 地址栏导航复用同一个页面：同一会话不应新建窗口/页签
+  await browserManager.navigate(ctx.sessionId, `${url}next`)
+  const navigated = await tool(tools, 'browser_snapshot').execute({}, ctx)
+  assert(navigated.text.includes('<title>Browser Smoke Next</title>'), 'navigate 在同一页签内导航')
+  assert(browserManager.list().length === 1, '导航后仍只有一个页签')
+
   const closed = await tool(tools, 'browser_close').execute({}, ctx)
-  assert(closed.text.includes('已关闭'), 'browser_close 关闭窗口')
+  assert(closed.text.includes('已关闭'), 'browser_close 关闭页签')
+  assert(browserManager.list().length === 0, '关闭后页签列表为空')
+}
+
+/**
+ * 标题栏「打开浏览器」的手动页签：不预载地址、重复打开复用同一个页签，
+ * 之后靠地址栏导航，与 AI 页面共用同一套视图管理。
+ */
+async function exerciseManualTab(url: string): Promise<void> {
+  const sessionId = browserManager.openManual()
+  const [opened] = browserManager.list()
+  assert(opened?.sessionId === sessionId, 'openManual 建出独立的手动浏览页签')
+  assert(opened?.url === '', '手动页签不预载地址')
+  assert(browserManager.openManual() === sessionId, '再次打开复用同一个页签')
+  assert(browserManager.list().length === 1, '重复打开不会堆出多个页签')
+  await browserManager.navigate(sessionId, url)
+  assert(browserManager.list()[0]?.url === url, '手动页签可以用地址栏导航')
+  assert(browserManager.close(sessionId), '手动页签可以关闭')
 }
 
 /** 入口：启动 fixture 服务，先验证 URL 规则，再跑工具流程 */
@@ -119,9 +158,9 @@ async function main(): Promise<void> {
   }
   assert(rejected, '拒绝 file: 协议')
 
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    response.end(PAGE)
+    response.end(request.url === '/next' ? NEXT_PAGE : PAGE)
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -136,10 +175,37 @@ async function main(): Promise<void> {
     fs: {} as never,
     observation: {} as never
   } as ToolContext
+  // 浏览器页面是挂在主窗口上的 WebContentsView：测试里用一个窗口模拟主窗口。
+  // show: true 是截图所需——隐藏窗口里的视图不会产生合成画面；Linux 下由 ozone headless 提供虚拟显示。
+  const host = new BrowserWindow({
+    show: true,
+    width: 1200,
+    height: 900,
+    webPreferences: { sandbox: true }
+  })
+  await host.loadURL('data:text/html,<html><body></body></html>')
+  browserManager.attachWindow(host)
+  const events: BrowserEvent[] = []
+  browserManager.setNotifier((event) => events.push(event))
   try {
     await exerciseTools(url, ctx)
+    assert(
+      events.some((event) => event.type === 'open'),
+      '打开页面会推送 open 页签事件'
+    )
+    assert(
+      events.some((event) => event.type === 'state' && event.tab.title === 'Browser Smoke'),
+      '页签状态事件带页面标题'
+    )
+    assert(events.at(-1)?.type === 'closed', '关闭页面会推送 closed 页签事件')
+    await exerciseManualTab(url)
     console.log('浏览器代理冒烟测试全部通过')
   } finally {
+    browserManager.setNotifier(null)
+    browserManager.disposeAll()
+    if (!host.isDestroyed()) {
+      host.destroy()
+    }
     server.close()
   }
 }

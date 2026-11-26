@@ -3,7 +3,7 @@
  *
  * 与 read_image 的关系：两者产出的图片走完全相同的通路 —— 工具只负责把
  * PNG 交给 images/store，循环在工具结果之后补一条图片消息给模型。
- * 差别只在图片来源：read_image 读工作区文件，browser_screenshot 读隐藏浏览器。
+ * 差别只在图片来源：read_image 读工作区文件，browser_screenshot 读 AI 浏览器页面。
  */
 import { prepareImageForModel, formatBytes } from '../images/prepare'
 import { readImageFacts } from '../images/probe'
@@ -77,14 +77,15 @@ function screenshotCard(image: ToolImageRef | undefined): {
   }
 }
 
-/** browser_open：在隐藏浏览器里打开页面 */
+/** browser_open：在编辑器的浏览器页签里打开页面 */
 function createBrowserOpenTool(): ToolDefinition {
   return {
     name: 'browser_open',
     description:
-      '在隐藏的 Chromium 浏览器里打开一个 http/https 页面（同一会话复用同一个窗口，跨轮次保留页面与登录状态）。' +
-      '前端联调时先用 bash 启动 dev server，再用它打开 http://localhost:<端口>；随后用 browser_snapshot 看页面结构，' +
-      '用 browser_screenshot 看真实渲染效果。file: 等本地协议不支持，纯静态页面请起一个本地 HTTP 服务。',
+      '在编辑器的浏览器页签里打开一个 http/https 页面（同一会话复用同一个页面，跨轮次保留页面与登录状态）。' +
+      '前端联调时先用 bash 启动 dev server，再用它打开 http://localhost:<端口>；页面会直接显示在编辑器新增的页签里，' +
+      '随后用 browser_snapshot 看页面结构，用 browser_screenshot 看真实渲染效果。' +
+      'file: 等本地协议不支持，纯静态页面请起一个本地 HTTP 服务。',
     parameters: {
       type: 'object',
       properties: {
@@ -94,11 +95,11 @@ function createBrowserOpenTool(): ToolDefinition {
         },
         width: {
           type: 'number',
-          description: '视口宽度（CSS 像素），默认 1280；范围 320–3840。'
+          description: '初始视口宽度（CSS 像素），默认 1280；页签显示后以编辑器实际大小为准。'
         },
         height: {
           type: 'number',
-          description: '视口高度（CSS 像素），默认 800；范围 240–2160。'
+          description: '初始视口高度（CSS 像素），默认 800；页签显示后以编辑器实际大小为准。'
         }
       },
       required: ['url'],
@@ -313,13 +314,13 @@ function createBrowserScreenshotTool(): ToolDefinition {
   }
 }
 
-/** browser_close：关闭当前会话的浏览器窗口 */
+/** browser_close：关闭当前会话的浏览器页签 */
 function createBrowserCloseTool(): ToolDefinition {
   return {
     name: 'browser_close',
     description:
-      '关闭当前会话的浏览器窗口，释放页面与登录状态。需要干净环境重新测试，或本轮浏览器工作结束时用它；' +
-      '下次 browser_open 会创建新的窗口。',
+      '关闭当前会话的浏览器页签，释放页面与登录状态。需要干净环境重新测试，或本轮浏览器工作结束时用它；' +
+      '下次 browser_open 会创建新的页面与页签。',
     parameters: {
       type: 'object',
       properties: {},

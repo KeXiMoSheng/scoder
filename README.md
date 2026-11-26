@@ -15,7 +15,8 @@ scoder（全称 **Super Coder**）是一款本地运行的 AI 编码桌面应用
 - 主动询问：模型不清楚需求、需要在几个方案里取舍，或即将做不可逆的改动时，调用 `ask_user_question` 提出带选项的问题（支持多问题、多选与自由输入）；多个问题用分页逐题切换，不把整组问题平铺出来，等待回答、已停止和已回答之后都可以翻页回看，本轮暂停并等待用户回答后再继续；问题与回答随工具卡片进入会话日志，重开会话时按原样回放
 
 - 识图：`read_image` 把工作区里的 PNG / JPEG / WebP / GIF 直接交给视觉模型查看（不是文字描述）。单张源文件上限 20 MB；超过 2048 px 的长边或 4 MB 的编码体积会自动缩小/重编码（PNG、JPEG 可本地缩放，WebP / GIF 超限时提示转格式）。图片按内容寻址存在 `userData/ai-images`，会话日志只记引用，历史重放时图片与当初完全一致
-- 浏览器自测：AI 可以在隐藏的 Chromium 窗口里打开 http/https 页面、读取标题 / 可见文字 / 可交互元素（eN 引用）并点击或输入，再把当前视口截图交给自己查看，用于前端联调与回归自测。同一会话跨轮次保留页面与登录状态，窗口随会话关闭、主窗口关闭或应用退出销毁；页面运行在独立的内存分区里，禁用 Node 与弹窗，摄像头 / 定位等权限一律拒绝
+- 浏览器自测：AI 打开 http/https 页面时，编辑器会新增一个浏览器页签显示当前页面；AI 可以在同一个页面上读取标题 / 可见文字 / 可交互元素（eN 引用）并点击或输入，再把当前视口截图交给自己查看，用于前端联调与回归自测。同一会话跨轮次保留页面与登录状态，页面随页签关闭、主窗口关闭或应用退出销毁；页面运行在独立的内存分区里，禁用 Node 与弹窗，摄像头 / 定位等权限一律拒绝
+- 内置浏览器：标题栏「打开浏览器」（地球图标）随时打开一个手动浏览页签，地址栏输入地址即可访问 http/https 页面；它和 AI 打开页面共用同一套页签管理（前进 / 后退 / 刷新 / 在系统浏览器中打开），页签关闭、切换项目或应用退出时销毁，重复点击只是切回同一个页签
 - 剪切板贴图：输入框里 `Ctrl/Cmd+V` 直接粘贴截图或复制的图片（一条消息最多 6 张、单张 20 MB）。粘贴的图片与文件、目录、选中行走**同一种文件行标签**，悬停可移除；粘贴时图片就已入库，因此**草稿和消息里的图片标签都能点开**，在编辑器里以图片预览打开（页签显示原始文件名）。只发图片、不写文字也可以；纯文本粘贴保持原样
 - 图片仅在模型支持图片输入时发送：能力由 `src/main/ai/capabilities.ts` 统一解析，文本模型看不到 `read_image`，历史里的图片也不会被回放
 - 文件读写工具限制在当前工作区内，写操作遵循“先读后改”；`bash` 固定工作目录并限制超时与输出上限
@@ -101,13 +102,14 @@ scoder/
 
 ### 浏览器代理的扩展点
 
-浏览器能力分两层：`frontend/src/main/browser/manager.ts` 管隐藏窗口、导航、DOM 快照与截图；`frontend/src/main/ai/tools/browser.ts` 把能力包成模型工具与卡片。两者都不依赖 AI 循环，可以单独测试。
+浏览器能力分三层：`frontend/src/main/browser/manager.ts` 管理挂在主窗口上的 `WebContentsView`、导航、DOM 快照与截图；`frontend/src/main/ai/tools/browser.ts` 把能力包成模型工具与卡片；编辑器页签由 `frontend/src/main/browser/ipc.ts` 与渲染进程的 `BrowserPanel` 负责布局——渲染进程只上报页签内容区的位置，原生页面在覆盖层（菜单、对话框、设置页）出现时隐藏而不销毁。三层都不依赖 AI 循环，可以单独测试。
 
 | 想扩展的方向 | 改哪里 |
 | --- | --- |
 | 新增页面操作（滚动、下拉选择、读取控制台） | 在 `manager.ts` 加方法（动作脚本统一交给 `executeJavaScript`），再在 `tools/browser.ts` 注册 `browser_*` 工具 |
 | 调整视口、快照上限或允许的协议 | `manager.ts` 顶部的常量与 `normalizeBrowserUrl()`；目前只放行 http/https |
-| 浏览器窗口的显示方式（隐藏 / 可见） | `manager.ts` 的 `ensureWindow()`：`show: false` 改可见需要同时调整 `skipTaskbar` 与主窗口关闭时的清理 |
+| 浏览器页签的工具栏/标题与布局 | `frontend/src/renderer/src/components/BrowserPanel`；页签外观在 `EditorTabs`，通道在 `frontend/src/shared/browser` |
+| 手动浏览页签的入口与默认行为 | `frontend/src/main/browser/manager.ts` 的 `openManual()`（固定一个手动页签，复用不重建）；按钮在 `renderer/src/components/TitleBar`，`openManual` 不预载地址，地址栏留空由用户输入 |
 | 工具卡片的标题与摘要 | `frontend/src/renderer/src/lib/toolRow.ts` 的 `TOOL_ROW_DEFINITIONS`；截图走现成的 `image` 卡片 |
 
 ## 技术栈
@@ -176,7 +178,7 @@ npm run typecheck   # 主进程 + 渲染进程类型检查
 npm run lint        # ESLint
 npm run format      # Prettier 格式化
 npm run test:image  # 图片格式识别冒烟测试（纯函数，不需要 Electron）
-npm run test:browser # 浏览器代理冒烟测试（Electron 隐藏窗口；Linux 下自动使用 ozone headless）
+npm run test:browser # 浏览器代理冒烟测试（Electron WebContentsView；Linux 下自动使用 ozone headless）
 ```
 
 ```bash

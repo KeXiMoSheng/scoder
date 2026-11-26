@@ -12,6 +12,8 @@ import type {
 } from '../shared/ai/types'
 import type { ScoderAPI } from '../shared/api'
 import { APP_CHANNELS } from '../shared/app/events'
+import { BROWSER_CHANNELS } from '../shared/browser/events'
+import type { BrowserAPI, BrowserBounds, BrowserEvent } from '../shared/browser/types'
 import { FILES_CHANNELS } from '../shared/files/events'
 import { GIT_CHANNELS } from '../shared/git/events'
 import { GIT_SETTINGS_CHANNELS } from '../shared/git/settings'
@@ -78,6 +80,26 @@ const ai: AiAPI = {
     ipcRenderer.invoke(AI_CHANNELS.exportSession, cwd, id),
   exportSessions: (cwd: string, ids: string[]) =>
     ipcRenderer.invoke(AI_CHANNELS.exportSessions, cwd, ids)
+}
+
+// 浏览器页签：状态由主进程推送，布局、导航与打开走 invoke
+const browser: BrowserAPI = {
+  onEvent: (callback: (event: BrowserEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: BrowserEvent): void => callback(payload)
+    ipcRenderer.on(BROWSER_CHANNELS.event, listener)
+    return () => ipcRenderer.removeListener(BROWSER_CHANNELS.event, listener)
+  },
+  list: () => ipcRenderer.invoke(BROWSER_CHANNELS.list),
+  openTab: () => ipcRenderer.invoke(BROWSER_CHANNELS.openTab),
+  setBounds: (sessionId: string, bounds: BrowserBounds, visible: boolean) =>
+    ipcRenderer.invoke(BROWSER_CHANNELS.setBounds, sessionId, bounds, visible),
+  close: (sessionId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.close, sessionId),
+  navigate: (sessionId: string, url: string) =>
+    ipcRenderer.invoke(BROWSER_CHANNELS.navigate, sessionId, url),
+  reload: (sessionId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.reload, sessionId),
+  goBack: (sessionId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.goBack, sessionId),
+  goForward: (sessionId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.goForward, sessionId),
+  openExternal: (sessionId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.openExternal, sessionId)
 }
 
 // Custom APIs for renderer
@@ -261,7 +283,8 @@ const api: ScoderAPI = {
   saveOpenTabs: (path: string, snapshot: EditorTabsSnapshot) =>
     ipcRenderer.invoke(WORKSPACE_CHANNELS.saveOpenTabs, path, snapshot),
   getOpenTabs: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.getOpenTabs, path),
-  ai
+  ai,
+  browser
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

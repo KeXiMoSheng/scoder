@@ -18,6 +18,7 @@ import icon from '../../resources/icon.png?asset'
 import { closeDatabase, getTerminalSettings, initDatabase, registerDatabaseHandlers } from './db'
 import { abortAllAiRuns, registerAiHandlers } from './ai'
 import { registerAppHandlers } from './app'
+import { registerBrowserHandlers } from './browser/ipc'
 import { browserManager } from './browser/manager'
 import { disposeAllFileStreams, registerFileStreamHandlers } from './files/stream'
 import { decodeWholeText, TextStreamError } from './files/textStream'
@@ -51,6 +52,7 @@ import type {
   TerminalShellInfo
 } from '../shared/terminal/types'
 import { WINDOW_CHANNELS } from '../shared/window/events'
+import { BROWSER_CHANNELS } from '../shared/browser/events'
 
 // GB 级文本 + Monaco 的行模型与全文索引需要更大的老生代空间：
 // 默认约 4GB 在 1GB 文本叠加全文特性对象时容易触发 V8 OOM
@@ -624,8 +626,23 @@ function createWindow(): void {
     mainWindow.show()
   })
 
-  // 主窗口关闭时销毁隐藏的 AI 浏览器窗口：否则它们会挡住 window-all-closed，应用退不干净
+  // AI 浏览器以 WebContentsView 的形式挂在主窗口上，由渲染进程上报页签位置；
+  // 主窗口关闭时一并销毁，否则隐藏页面会挡住 window-all-closed，应用退不干净。
+  browserManager.attachWindow(mainWindow)
+  browserManager.setNotifier((event) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(BROWSER_CHANNELS.event, event)
+    }
+  })
+  // 渲染进程重载/崩溃时，原生的浏览器页面不会自动消失：先全部隐藏，等新界面重新上报布局
+  mainWindow.webContents.on('did-start-loading', () => {
+    browserManager.hideAll()
+  })
+  mainWindow.webContents.on('render-process-gone', () => {
+    browserManager.hideAll()
+  })
   mainWindow.on('closed', () => {
+    browserManager.setNotifier(null)
     browserManager.disposeAll()
   })
 
@@ -673,6 +690,8 @@ app.whenReady().then(() => {
   registerFileWriteHandlers()
   registerTerminalHandlers()
   registerWindowHandlers()
+  // AI 浏览器页签：渲染进程上报原生页面位置、控制前进后退与关闭
+  registerBrowserHandlers()
   // 应用信息（版本号 / 仓库跳转）不依赖数据库，窗口创建前注册即可
   registerAppHandlers()
   // 导入主题：读写 userData/themes，不依赖数据库

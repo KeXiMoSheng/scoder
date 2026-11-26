@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Copy as RestoreWindow,
+  Globe,
   Minus,
   PanelRight,
   Settings,
@@ -37,7 +38,7 @@ const MENU_ITEM_CLASS = 'px-2.5 py-1 text-[12px]'
 
 /**
  * 无边框窗口（frame: false）的自绘标题栏，同时充当应用菜单栏：
- * 左侧为「文件 / 主题」菜单，中间展示当前工作区名称，右侧为面板开关与窗口控制。
+ * 左侧为「文件 / 主题」菜单，中间展示当前工作区名称，右侧为内置浏览器按钮、面板开关与窗口控制。
  * 整条栏通过 CSS `-webkit-app-region: drag` 可拖动窗口，交互元素设为 no-drag 以保持可点击。
  */
 export default function TitleBar({
@@ -54,6 +55,7 @@ export default function TitleBar({
   onOpenThemeSettings,
   onNewTerminal,
   onToggleAiPanel,
+  onOpenBrowser,
   onToggleSettings
 }: TitleBarProps): React.JSX.Element {
   const [maximized, setMaximized] = useState(false)
@@ -177,6 +179,18 @@ export default function TitleBar({
           aria-pressed={aiPanelVisible}
         >
           <PanelRight className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="h-7 w-7 rounded-sm text-dim"
+          onClick={onOpenBrowser}
+          title="打开浏览器"
+          aria-label="打开浏览器"
+        >
+          {/* 与应用内浏览器页签同一套图标语义：地球 = 内置浏览器，不会调用系统浏览器 */}
+          <Globe className="size-4" />
         </Button>
         <Button
           type="button"

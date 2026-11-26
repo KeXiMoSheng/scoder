@@ -29,6 +29,8 @@ export interface TitleBarProps {
   onNewTerminal: () => void
   /** 展开/收起 AI 助手 */
   onToggleAiPanel: () => void
+  /** 打开（或切回）应用内浏览器页签 */
+  onOpenBrowser: () => void
   /** 打开/关闭系统配置页 */
   onToggleSettings: () => void
 }

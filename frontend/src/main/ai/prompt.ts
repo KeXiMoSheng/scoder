@@ -152,12 +152,12 @@ function failureSection(): string {
 
 /**
  * 浏览器：前端联调时用工具代替人眼看页面。
- * 讲清顺序（先快照再操作）、元素引用的生命周期，以及截图只截视口。
+ * 讲清顺序（先快照再操作）、元素引用的生命周期、截图只截视口，以及页面会显示在编辑器页签里。
  */
 function browserSection(vision: boolean): string {
   return [
     '浏览器测试的规则：',
-    '1. 测试前端页面前，先用 bash 启动 dev server 并确认端口可用，再用 browser_open 打开对应地址（默认按 http:// 补全）。',
+    '1. 测试前端页面前，先用 bash 启动 dev server 并确认端口可用，再用 browser_open 打开对应地址（默认按 http:// 补全）；页面会显示在编辑器新增的浏览器页签里。',
     '2. 操作页面前先 browser_snapshot：它给出标题、可见文字与 eN 引用的可交互元素；点击/输入都使用引用，不要猜选择器。',
     '3. 页面更新后引用可能失效，重新快照再继续；不要原样重复同一次点击。',
     vision
